@@ -1,5 +1,0 @@
-<map id="SignalingClientCallbacks" name="SignalingClientCallbacks">
-<area shape="rect" id="node1" title="Register Signaling client callbacks." alt="" coords="13,184,180,211"/>
-<area shape="rect" id="node2" href="$structReceivedSignalingMessage.html" title="Structure defining the signaling message to be received." alt="" coords="5,95,188,121"/>
-<area shape="rect" id="node3" href="$structSignalingMessage.html" title="Structure defining the basic signaling message." alt="" coords="33,5,161,32"/>
-</map>
