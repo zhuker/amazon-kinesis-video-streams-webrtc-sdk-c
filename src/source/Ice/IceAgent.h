@@ -112,7 +112,7 @@ typedef struct {
     BOOL firstStunRequestTimestampRecorded;
     BOOL lastStunRequestTimestampRecorded;
     UINT64 priority;
-    ICE_CANDIDATE_PAIR_STATE state;
+    RTC_ICE_CANDIDATE_PAIR_STATE state;
     PTransactionIdStore pTransactionIdStore;
     UINT64 lastDataSentTime;
     PHashTable requestSentTime;

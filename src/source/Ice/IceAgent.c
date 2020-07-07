@@ -571,7 +571,7 @@ STATUS iceAgentSendPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen)
     CHK(bufferLen != 0, STATUS_INVALID_ARG);
 
     CHK_WARN(pIceAgent->pDataSendingIceCandidatePair != NULL, retStatus, "No valid ice candidate pair available to send data");
-    CHK_WARN(pIceAgent->pDataSendingIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED,
+    CHK_WARN(pIceAgent->pDataSendingIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED,
              retStatus, "Invalid state for data sending candidate pair.");
 
     pIceAgent->pDataSendingIceCandidatePair->lastDataSentTime = GETTIME();
@@ -596,7 +596,7 @@ STATUS iceAgentSendPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen)
         if (retStatus == STATUS_SOCKET_CONNECTION_CLOSED_ALREADY) {
             DLOGW("IceAgent connection closed unexpectedly");
             pIceAgent->iceAgentStatus = STATUS_SOCKET_CONNECTION_CLOSED_ALREADY;
-            pIceAgent->pDataSendingIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_FAILED;
+            pIceAgent->pDataSendingIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_FAILED;
         }
         retStatus = STATUS_SUCCESS;
     }
@@ -988,7 +988,7 @@ STATUS createIceCandidatePairs(PIceAgent pIceAgent, PIceCandidate pIceCandidate,
             pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.nominated = pIceCandidatePair->nominated;
 
             // ensure the new pair will go through connectivity check as soon as possible
-            pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_WAITING;
+            pIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_WAITING;
             pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.state = pIceCandidatePair->state;
 
             STRNCPY(pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.localCandidateId, pIceCandidatePair->local->id, STRLEN(pIceCandidatePair->local->id));
@@ -1100,7 +1100,7 @@ STATUS findIceCandidatePairWithLocalSocketConnectionAndRemoteAddr(PIceAgent pIce
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
         pCurNode = pCurNode->pNext;
 
-        if (pIceCandidatePair->state != ICE_CANDIDATE_PAIR_STATE_FAILED &&
+        if (pIceCandidatePair->state != RTC_ICE_CANDIDATE_PAIR_STATE_FAILED &&
             pIceCandidatePair->local->pSocketConnection == pSocketConnection &&
             pIceCandidatePair->remote->ipAddress.family == pRemoteAddr->family &&
             MEMCMP(pIceCandidatePair->remote->ipAddress.address, pRemoteAddr->address, addrLen) == 0 &&
@@ -1133,7 +1133,7 @@ STATUS pruneUnconnectedIceCandidatePair(PIceAgent pIceAgent)
     while (pCurNode != NULL) {
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
 
-        if (pIceCandidatePair->state != ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+        if (pIceCandidatePair->state != RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
             // backup next node as we will lose that after deleting pCurNode.
             pNextNode = pCurNode->pNext;
             CHK_STATUS(freeIceCandidatePair(&pIceCandidatePair));
@@ -1222,7 +1222,7 @@ STATUS iceAgentSendStunPacket(PStunPacket pStunPacket, PBYTE password, UINT32 pa
 
         if (pIceCandidatePair != NULL) {
             DLOGD("mark candidate pair %s_%s as failed", pIceCandidatePair->local->id, pIceCandidatePair->remote->id);
-            pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_FAILED;
+            pIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_FAILED;
             pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.state = pIceCandidatePair->state;
         }
     }
@@ -1352,11 +1352,11 @@ STATUS iceAgentCheckCandidatePairConnection(PIceAgent pIceAgent)
             pCurNode = pCurNode->pNext;
 
             switch (pIceCandidatePair->state) {
-                case ICE_CANDIDATE_PAIR_STATE_WAITING:
-                    pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS;
+                case RTC_ICE_CANDIDATE_PAIR_STATE_WAITING:
+                    pIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS;
                     pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.state = pIceCandidatePair->state;
                     // NOTE: Explicit fall-through
-                case ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS:
+                case RTC_ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS:
                     CHK_STATUS(iceCandidatePairCheckConnection(pIceAgent->pBindingRequest, pIceAgent, pIceCandidatePair));
                     break;
                 default:
@@ -1399,7 +1399,7 @@ STATUS iceAgentSendKeepAliveTimerCallback(UINT32 timerId, UINT64 currentTime, UI
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
         pCurNode = pCurNode->pNext;
 
-        if (pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+        if (pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
 
             pIceCandidatePair->lastDataSentTime = currentTime;
             DLOGV("send keep alive");
@@ -1786,7 +1786,7 @@ STATUS iceAgentCheckConnectionStateSetup(PIceAgent pIceAgent)
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
         pCurNode = pCurNode->pNext;
 
-        pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_WAITING;
+        pIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_WAITING;
     }
 
     if (pIceAgent->pBindingRequest != NULL) {
@@ -1864,7 +1864,7 @@ STATUS iceAgentConnectedStateSetup(PIceAgent pIceAgent)
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
         pCurNode = pCurNode->pNext;
 
-        if (pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+        if (pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
             pIceAgent->pDataSendingIceCandidatePair = pIceCandidatePair;
             break;
         }
@@ -1960,7 +1960,7 @@ STATUS iceAgentReadyStateSetup(PIceAgent pIceAgent)
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
         pCurNode = pCurNode->pNext;
 
-        if (pIceCandidatePair->nominated && pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+        if (pIceCandidatePair->nominated && pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
             pNominatedAndValidCandidatePair = pIceCandidatePair;
             break;
         }
@@ -2040,7 +2040,7 @@ STATUS iceAgentNominateCandidatePair(PIceAgent pIceAgent)
 
         // nominate first connected iceCandidatePair. it should have the highest priority since
         // iceCandidatePairs is already sorted by priority.
-        if (pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+        if (pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
             pNominatedCandidatePair = pIceCandidatePair;
         }
     }
@@ -2060,7 +2060,7 @@ STATUS iceAgentNominateCandidatePair(PIceAgent pIceAgent)
         pCurNode = pCurNode->pNext;
 
         if (!pIceCandidatePair->nominated) {
-            pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_FROZEN;
+            pIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_FROZEN;
             pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.state = pIceCandidatePair->state;
         }
     }
@@ -2090,7 +2090,7 @@ STATUS iceAgentInvalidateCandidatePair(PIceAgent pIceAgent)
         pCurNode = pCurNode->pNext;
 
         if (pIceCandidatePair->local->state != ICE_CANDIDATE_STATE_VALID) {
-            pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_FAILED;
+            pIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_FAILED;
             pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.state = pIceCandidatePair->state;
         }
     }
@@ -2285,9 +2285,9 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
             }
 
             // schedule a connectivity check for the pair
-            if (pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_FROZEN ||
-                pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_WAITING ||
-                pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS) {
+            if (pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_FROZEN ||
+                pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_WAITING ||
+                pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS) {
                 CHK_STATUS(stackQueueEnqueue(pIceAgent->triggeredCheckQueue, (UINT64) pIceCandidatePair));
             }
 
@@ -2339,7 +2339,7 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
                 CHK(FALSE, retStatus);
             }
 
-            if (pIceCandidatePair->state != ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+            if (pIceCandidatePair->state != RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
                 checkSum = COMPUTE_CRC32(pBuffer + STUN_PACKET_TRANSACTION_ID_OFFSET, STUN_TRANSACTION_ID_LEN);
                 CHK_STATUS(hashTableGet(pIceCandidatePair->requestSentTime, checkSum, &requestSentTime));
                 pIceCandidatePair->roundTripTime = GETTIME() - requestSentTime;
@@ -2347,7 +2347,7 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
                       pIceCandidatePair->local->id,
                       pIceCandidatePair->remote->id,
                       pIceCandidatePair->roundTripTime / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
-                pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_SUCCEEDED;
+                pIceCandidatePair->state = RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED;
                 pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.currentRoundTripTime = (DOUBLE)(pIceCandidatePair->roundTripTime);
                 pIceAgent->rtcIceMetrics.rtcIceCandidatePairStats.totalRoundTripTime += (DOUBLE) (pIceCandidatePair->roundTripTime);
             }

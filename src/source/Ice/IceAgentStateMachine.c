@@ -222,7 +222,7 @@ STATUS fromCheckConnectionIceAgentState(UINT64 customData, PUINT64 pState)
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
         pCurNode = pCurNode->pNext;
 
-        if (pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+        if (pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
             connectedCandidatePairFound = TRUE;
             state = ICE_AGENT_STATE_CONNECTED;
         }
@@ -381,7 +381,7 @@ STATUS fromNominatingIceAgentState(UINT64 customData, PUINT64 pState)
         pIceCandidatePair = (PIceCandidatePair) pCurNode->data;
         pCurNode = pCurNode->pNext;
 
-        if (pIceCandidatePair->nominated && pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
+        if (pIceCandidatePair->nominated && pIceCandidatePair->state == RTC_ICE_CANDIDATE_PAIR_STATE_SUCCEEDED) {
             nominatedAndValidCandidatePairFound = TRUE;
             break;
         }

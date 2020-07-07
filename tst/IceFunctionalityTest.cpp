@@ -588,7 +588,7 @@ namespace com { namespace amazonaws { namespace kinesis { namespace video { name
         for (i = 0; i < 5; ++i) {
             iceCandidatePairs[i] = (PIceCandidatePair) MEMCALLOC(1, SIZEOF(IceCandidatePair));
             iceCandidatePairs[i]->priority = i * 100;
-            iceCandidatePairs[i]->state = (ICE_CANDIDATE_PAIR_STATE) i;
+            iceCandidatePairs[i]->state = (RTC_ICE_CANDIDATE_PAIR_STATE) i;
             EXPECT_EQ(STATUS_SUCCESS, createTransactionIdStore(DEFAULT_MAX_STORED_TRANSACTION_ID_COUNT,
                                                                &iceCandidatePairs[i]->pTransactionIdStore));
             EXPECT_EQ(STATUS_SUCCESS, insertIceCandidatePair(iceAgent.iceCandidatePairs, iceCandidatePairs[i]));
