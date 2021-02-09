@@ -14,6 +14,8 @@ struct MySession {
     RTC_PEER_CONNECTION_STATE connectionState;
 
     BOOL iceGatheringDone;
+    GstElement* encoder264; // to manipulate bitrate
+    GstElement* texttopleft;
 };
 
 static const char* ConnectionStateNames[] = {
@@ -90,7 +92,16 @@ void onRemoteDataChannel(UINT64 session64, PRtcDataChannel pRtcDataChannel)
 
 void onBandwidthEstimation(UINT64 session64, DOUBLE bitrate)
 {
-    printf("onBandwidthEstimation %dkbps\n", (int) (bitrate / 1000));
+    int kbps = (int) (bitrate / 1000);
+    printf("onBandwidthEstimation %dkbps\n", kbps);
+    if (session.encoder264 != NULL && kbps > 50) {
+        g_object_set(session.encoder264, "bitrate", kbps, NULL);
+    }
+    if (session.texttopleft != NULL) {
+        char kbpsstr[80] = {0};
+        snprintf(kbpsstr, 80, "%dkbps", kbps);
+        g_object_set(session.texttopleft, "text", kbpsstr, NULL);
+    }
 }
 
 GstFlowReturn on_new_sample(GstElement* sink, gpointer data, UINT64 trackid)
@@ -209,11 +220,16 @@ PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration)
         goto CleanUp;
     }
 
-    pipeline = gst_parse_launch(
-        "v4l2src device=/dev/video1 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec ! videoconvert !"
-        "x264enc bframes=0 speed-preset=veryfast bitrate=512 byte-stream=TRUE tune=zerolatency ! "
-        "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! appsink sync=TRUE emit-signals=TRUE name=appsink-video",
-        &error);
+    char* description =
+        "v4l2src device=/dev/video1 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec "
+        "! videoconvert "
+        "! textoverlay halignment=left valignment=top name=texttopleft "
+        "! video/x-raw,format=I420 "
+        "! videoconvert "
+        "! x264enc bframes=0 speed-preset=veryfast bitrate=512 byte-stream=TRUE tune=zerolatency name=encoder264 ! "
+        "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! appsink sync=TRUE emit-signals=TRUE name=appsink-video";
+    printf("%s\n", description);
+    pipeline = gst_parse_launch(description, &error);
 
     if (pipeline == NULL) {
         printf("[KVS GStreamer Master] sendGstreamerAudioVideo(): Failed to launch gstreamer, operation returned status code: 0x%08x \n",
@@ -222,6 +238,8 @@ PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration)
     }
 
     appsinkVideo = gst_bin_get_by_name(GST_BIN(pipeline), "appsink-video");
+    session.encoder264 = gst_bin_get_by_name(GST_BIN(pipeline), "encoder264");
+    session.texttopleft = gst_bin_get_by_name(GST_BIN(pipeline), "texttopleft");
 
     if (appsinkVideo == NULL) {
         printf("[KVS GStreamer Master] sendGstreamerVideo(): cant find appsink, operation returned status code: 0x%08x \n", STATUS_INTERNAL_ERROR);
@@ -319,7 +337,7 @@ INT32 main(INT32 argc, CHAR* argv[])
         config.sampleStreamingSessionList[0] = &sampleStreamingSession;
         sendGstreamerVideo(&config);
     }
-
+    printf("done\n");
     return 0;
 CleanUp:
     return retStatus;
