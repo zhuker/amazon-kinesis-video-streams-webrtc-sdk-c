@@ -63,11 +63,19 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/opusSampleFrames" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h264SampleFrames" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h265SampleFrames" DESTINATION .)
 
+
+
 add_executable(
   kvsWebrtcClientMaster
   Common.c
   kvsWebRTCClientMaster.c)
 target_link_libraries(kvsWebrtcClientMaster kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
+
+add_executable(
+        customSignaling
+        Common.c
+        customSignaling.c)
+target_link_libraries(customSignaling kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
 
 add_executable(
   kvsWebrtcClientViewer

@@ -504,6 +504,7 @@ if (BUILD_SAMPLE)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h264SampleFrames" DESTINATION .)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h265SampleFrames" DESTINATION .)
 
+  
   add_subdirectory(samples)
 endif()
 
