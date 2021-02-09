@@ -75,6 +75,12 @@ endif ()
 
 if (ENABLE_SIGNALING)
 add_executable(
+        customSignaling
+        Common.c
+        customSignaling.c)
+target_link_libraries(customSignaling kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
+
+add_executable(
   kvsWebrtcClientViewer
   Common.c
   kvsWebRTCClientViewer.c)
