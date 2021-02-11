@@ -185,6 +185,10 @@ STATUS onRtcpTwccPacket(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerConn
     baseSeqNum = getUnalignedInt16BigEndian(pRtcpPacket->payload + 8);
     packetStatusCount = TWCC_PACKET_STATUS_COUNT(pRtcpPacket->payload);
 
+    PBYTE string = pRtcpPacket->payload + 12;
+    UINT32 referenceTime = (string[0] << 16) | (string[1] << 8) | (string[2] & 0xff);
+    DLOGD("twcc %u %u", baseSeqNum, referenceTime);
+
     packetsRemaining = packetStatusCount;
     chunkOffset = 16;
     while (packetsRemaining > 0 && chunkOffset < pRtcpPacket->payloadLength) {

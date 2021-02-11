@@ -181,6 +181,20 @@ CleanUp:
     return retStatus;
 }
 
+VOID hmsmsNow(PCHAR dst)
+{
+    if (dst == NULL)
+        return;
+    struct timeval t = {0};
+    struct timezone tz = {0};
+    uint64_t prev = 0;
+    gettimeofday(&t, &tz);
+    struct tm tm = {0};
+    localtime_r(&t.tv_sec, &tm);
+
+    SNPRINTF(dst, 42, "%02d:%02d:%02d:%03zu", tm.tm_hour, tm.tm_min, tm.tm_sec, t.tv_usec / 1000);
+}
+
 STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
 {
     STATUS retStatus = STATUS_SUCCESS;
@@ -303,6 +317,10 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
         }
 
         CHK_STATUS(encryptRtpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
+        UINT64 lastSentTime = pKvsPeerConnection->lastDataPacketSentTime;
+//        char hmsms[64] = {0};
+//        hmsmsNow(hmsms);
+//        DLOGD("send packet %u", packetLen);
         sendStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen);
         if (sendStatus == STATUS_SEND_DATA_FAILED) {
             packetsDiscardedOnSend++;
@@ -311,6 +329,11 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             framesDiscardedOnSend = 1;
             SAFE_MEMFREE(rawPacket);
             continue;
+        } else if (sendStatus == STATUS_SUCCESS) {
+            pRtpPacket->sentTime = GETTIME();
+            pRtpPacket->sendDelta = pRtpPacket->sentTime - lastSentTime;
+            twccRollingBufferAddRtpPacket(pKvsPeerConnection, pRtpPacket);
+            pKvsPeerConnection->lastDataPacketSentTime = pRtpPacket->sentTime;
         }
         CHK_STATUS(sendStatus);
         if (bufferAfterEncrypt) {

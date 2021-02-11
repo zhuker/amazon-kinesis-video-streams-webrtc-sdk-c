@@ -18,7 +18,7 @@ typedef struct {
 
 STATUS createRtpRollingBuffer(UINT32, PRtpRollingBuffer*);
 STATUS freeRtpRollingBuffer(PRtpRollingBuffer*);
-STATUS freeRtpRollingBufferData(PUINT64);
+STATUS freeRtpRollingBufferData(UINT64, PUINT64);
 STATUS rtpRollingBufferAddRtpPacket(PRtpRollingBuffer, PRtpPacket);
 STATUS rtpRollingBufferGetValidSeqIndexList(PRtpRollingBuffer, PUINT16, UINT32, PUINT64, PUINT32);
 

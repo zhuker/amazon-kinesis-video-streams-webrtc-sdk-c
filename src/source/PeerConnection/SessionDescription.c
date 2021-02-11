@@ -334,7 +334,7 @@ PCHAR fmtpForPayloadType(UINT64 payloadType, PSessionDescription pSessionDescrip
 BOOL readHexValue(PCHAR input, PCHAR prefix, PUINT32 value)
 {
     PCHAR substr = STRSTR(input, prefix);
-    if (substr != NULL && SSCANF(substr + STRLEN(prefix), "%x", value) == 1) {
+    if (substr != NULL && sscanf(substr + STRLEN(prefix), "%x", value) == 1) {
         return TRUE;
     }
     return FALSE;

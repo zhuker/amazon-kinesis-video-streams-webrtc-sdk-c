@@ -118,6 +118,10 @@ typedef struct {
     UINT64 onPacketReceivedCustomData;
     RtcpCCOnPacketNotReceived onPacketNotReceived;
     RtcpCCOnPacketReceived onPacketReceived;
+    MUTEX twccLock;
+    PRollingBuffer pTwccRollingBuffer;
+    PHashTable packetByTwcc; // look up packet by its twcc sequence number
+    UINT64 lastDataPacketSentTime;
 } KvsPeerConnection, *PKvsPeerConnection;
 
 typedef struct {
@@ -134,6 +138,11 @@ VOID onSctpSessionDataChannelOpen(UINT64, UINT32, PBYTE, UINT32);
 
 STATUS sendPacketToRtpReceiver(PKvsPeerConnection, PBYTE, UINT32);
 STATUS changePeerConnectionState(PKvsPeerConnection, RTC_PEER_CONNECTION_STATE);
+
+STATUS twccRollingBufferFreeRtpPacket(UINT64 self, PUINT64 pData);
+STATUS twccRollingBufferAddRtpPacket(PKvsPeerConnection pc, PRtpPacket pRtpPacket);
+VOID twccOnPacketNotReceived(UINT64 customData, UINT16 seqNum);
+VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, INT32 receiveDeltaUsec);
 
 #ifdef __cplusplus
 }

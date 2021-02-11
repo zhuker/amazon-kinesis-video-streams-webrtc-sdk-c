@@ -714,6 +714,16 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
 
     NULLABLE_SET_EMPTY(pKvsPeerConnection->canTrickleIce);
 
+    CHK_STATUS(createRollingBuffer(JITTER_BUFFER_HASH_TABLE_BUCKET_COUNT, twccRollingBufferFreeRtpPacket, &pKvsPeerConnection->pTwccRollingBuffer));
+    pKvsPeerConnection->pTwccRollingBuffer->freeDataFnCustomData = (UINT64) pKvsPeerConnection;
+    CHK_STATUS(
+        hashTableCreateWithParams(JITTER_BUFFER_HASH_TABLE_BUCKET_COUNT, JITTER_BUFFER_HASH_TABLE_BUCKET_LENGTH, &pKvsPeerConnection->packetByTwcc));
+    pKvsPeerConnection->onPacketReceivedCustomData = (UINT64) pKvsPeerConnection;
+    pKvsPeerConnection->onPacketNotReceivedCustomData = (UINT64) pKvsPeerConnection;
+    pKvsPeerConnection->onPacketReceived = twccOnPacketReceived;
+    pKvsPeerConnection->onPacketNotReceived = twccOnPacketNotReceived;
+    pKvsPeerConnection->twccLock = MUTEX_CREATE(TRUE);
+
     *ppPeerConnection = (PRtcPeerConnection) pKvsPeerConnection;
 
 CleanUp:
@@ -796,6 +806,9 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
         timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
     }
+
+    CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->packetByTwcc));
+    CHK_LOG_ERR(freeRollingBuffer(&pKvsPeerConnection->pTwccRollingBuffer));
 
     SAFE_MEMFREE(pKvsPeerConnection);
 
@@ -1350,4 +1363,109 @@ CleanUp:
 
     LEAVES();
     return retStatus;
+}
+
+STATUS twccRollingBufferFreeRtpPacket(UINT64 self, PUINT64 pData)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pc = (PKvsPeerConnection) self;
+    CHK(pData != NULL && pc != NULL, STATUS_NULL_ARG);
+    PRtpPacket pPacket = *(PRtpPacket*) pData;
+    CHK(pPacket != NULL, STATUS_NULL_ARG);
+    // if twcc packet, remove from packetByTwcc lookup hashtable
+    if (TWCC_EXT_PROFILE == pPacket->header.extensionProfile) {
+        UINT16 seqNum = TWCC_SEQNUM(pPacket->header.extensionPayload);
+        if (STATUS_FAILED(hashTableRemove(pc->packetByTwcc, seqNum))) {
+            DLOGD("cant remove from hash table %d", seqNum);
+        } else {
+            DLOGV("removed from hash table %d", seqNum);
+        }
+    }
+
+    CHK_STATUS(freeRtpPacket((PRtpPacket*) pData));
+
+CleanUp:
+    CHK_LOG_ERR(retStatus);
+    LEAVES();
+    return retStatus;
+}
+
+STATUS twccRollingBufferAddRtpPacket(PKvsPeerConnection pc, PRtpPacket pRtpPacket)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PRtpPacket copy = NULL;
+    BOOL locked = FALSE;
+    PBYTE rawPacket = NULL;
+    UINT32 packetLen = 0;
+    CHK(pc != NULL && pRtpPacket != NULL, STATUS_NULL_ARG);
+    CHK(TWCC_EXT_PROFILE == pRtpPacket->header.extensionProfile, STATUS_SUCCESS);
+
+    MUTEX_LOCK(pc->twccLock);
+    locked = TRUE;
+
+    copy = MEMALLOC(sizeof(RtpPacket));
+    CHK(NULL != (copy = MEMALLOC(sizeof(RtpPacket))), STATUS_NOT_ENOUGH_MEMORY);
+    MEMCPY(copy, pRtpPacket, sizeof(RtpPacket));
+    copy->payload = NULL;
+    copy->payloadLength = 0;
+
+    packetLen = RTP_GET_RAW_PACKET_SIZE(copy);
+    CHK(NULL != (rawPacket = (PBYTE) MEMALLOC(packetLen)), STATUS_NOT_ENOUGH_MEMORY);
+    CHK_STATUS(createBytesFromRtpPacket(copy, rawPacket, &packetLen));
+
+    copy->pRawPacket = rawPacket;
+    copy->rawPacketLength = packetLen;
+    setRtpPacketFromBytes(rawPacket, packetLen, copy);
+    copy->payload = NULL;
+    copy->payloadLength = 0;
+
+    UINT16 seqNum = TWCC_SEQNUM(copy->header.extensionPayload);
+    DLOGV("inserting twcc %d", seqNum);
+    CHK_STATUS(rollingBufferAppendData(pc->pTwccRollingBuffer, (UINT64) copy, NULL));
+    CHK_STATUS(hashTableUpsert(pc->packetByTwcc, seqNum, (UINT64) copy));
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pc->twccLock);
+    }
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
+VOID twccOnPacketNotReceived(UINT64 customData, UINT16 seqNum)
+{
+    DLOGD("packet not received %u", seqNum);
+}
+
+VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, INT32 receiveDeltaUsec)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pc = (PKvsPeerConnection) customData;
+    BOOL contains = FALSE, locked = FALSE;
+    INT64 sendDeltaUsec = -42420;
+    INT64 deltaOfDelta = -42420;
+    PRtpPacket packet = NULL;
+    UINT64 packet64 = 0;
+
+    MUTEX_LOCK(pc->twccLock);
+    locked = TRUE;
+
+    CHK_STATUS(hashTableContains(pc->packetByTwcc, seqNum, &contains));
+    CHK_STATUS(hashTableGet(pc->packetByTwcc, seqNum, &packet64));
+    if (packet64 != 0) {
+        packet = (PRtpPacket) packet64;
+    }
+    sendDeltaUsec = KVS_CONVERT_TIMESCALE(packet->sendDelta, HUNDREDS_OF_NANOS_IN_A_SECOND, MICROSECONDS_PER_SECOND);
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pc->twccLock);
+    }
+    deltaOfDelta = receiveDeltaUsec - sendDeltaUsec;
+    DLOGD("packet received [%d] %u %d - %ld == %ld", contains, seqNum, receiveDeltaUsec, sendDeltaUsec, deltaOfDelta);
+    CHK_LOG_ERR(retStatus);
 }

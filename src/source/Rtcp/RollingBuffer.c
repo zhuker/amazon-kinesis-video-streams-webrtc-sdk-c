@@ -51,7 +51,7 @@ STATUS freeRollingBuffer(PRollingBuffer* ppRollingBuffer)
     while (pRollingBuffer->tailIndex < pRollingBuffer->headIndex) {
         pCurData = pRollingBuffer->dataBuffer + ROLLING_BUFFER_MAP_INDEX(pRollingBuffer, pRollingBuffer->tailIndex);
         if (pRollingBuffer->freeDataFn != NULL) {
-            pRollingBuffer->freeDataFn(pCurData);
+            pRollingBuffer->freeDataFn(pRollingBuffer->freeDataFnCustomData, pCurData);
             *pCurData = (UINT64) NULL;
         }
         pRollingBuffer->tailIndex++;
@@ -84,8 +84,9 @@ STATUS rollingBufferAppendData(PRollingBuffer pRollingBuffer, UINT64 data, PUINT
     } else {
         if (pRollingBuffer->headIndex == pRollingBuffer->tailIndex + pRollingBuffer->capacity) {
             if (pRollingBuffer->freeDataFn != NULL) {
-                CHK_STATUS(
-                    pRollingBuffer->freeDataFn(pRollingBuffer->dataBuffer + ROLLING_BUFFER_MAP_INDEX(pRollingBuffer, pRollingBuffer->tailIndex)));
+                UINT64 i = pRollingBuffer->dataBuffer[ROLLING_BUFFER_MAP_INDEX(pRollingBuffer, pRollingBuffer->headIndex)];
+                PUINT64 x = pRollingBuffer->dataBuffer + ROLLING_BUFFER_MAP_INDEX(pRollingBuffer, pRollingBuffer->tailIndex);
+                CHK_STATUS(pRollingBuffer->freeDataFn(pRollingBuffer->freeDataFnCustomData, x));
             }
             pRollingBuffer->tailIndex++;
         }
@@ -121,7 +122,7 @@ STATUS rollingBufferInsertData(PRollingBuffer pRollingBuffer, UINT64 index, UINT
 
     pData = pRollingBuffer->dataBuffer + ROLLING_BUFFER_MAP_INDEX(pRollingBuffer, index);
     if (*pData != (UINT64) NULL && pRollingBuffer->freeDataFn != NULL) {
-        pRollingBuffer->freeDataFn(pData);
+        pRollingBuffer->freeDataFn(pRollingBuffer->freeDataFnCustomData, pData);
     }
     *pData = data;
 
