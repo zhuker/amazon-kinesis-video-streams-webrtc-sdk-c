@@ -397,6 +397,7 @@ STATUS fromNominatingIceAgentState(UINT64 customData, PUINT64 pState)
     if (nominatedAndValidCandidatePairFound) {
         state = ICE_AGENT_STATE_READY;
     } else if (currentTime >= pIceAgent->stateEndTime) {
+        DLOGD("timeout nominating candidate pair");
         CHK(FALSE, STATUS_ICE_FAILED_TO_NOMINATE_CANDIDATE_PAIR);
     }
 

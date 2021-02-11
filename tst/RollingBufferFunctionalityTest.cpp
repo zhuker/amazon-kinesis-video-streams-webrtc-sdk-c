@@ -5,7 +5,7 @@ namespace com { namespace amazonaws { namespace kinesis { namespace video { name
 class RollingBufferFunctionalityTest : public WebRtcClientTestBase {
 };
 
-STATUS RollingBufferFunctionalityTestFreeBufferFunc(PUINT64 data) {
+STATUS RollingBufferFunctionalityTestFreeBufferFunc(UINT64 self, PUINT64 data) {
     if (data == NULL) {
         return STATUS_NULL_ARG;
     }

@@ -40,9 +40,10 @@ CleanUp:
     return retStatus;
 }
 
-STATUS freeRtpRollingBufferData(PUINT64 pData)
+STATUS freeRtpRollingBufferData(UINT64 self, PUINT64 pData)
 {
     ENTERS();
+    UNUSED_PARAM(self);
     STATUS retStatus = STATUS_SUCCESS;
     CHK(pData != NULL, STATUS_NULL_ARG);
     CHK_STATUS(freeRtpPacket((PRtpPacket*) pData));

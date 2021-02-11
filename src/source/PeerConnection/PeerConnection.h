@@ -128,6 +128,10 @@ typedef struct {
     PTwccManager pTwccManager;
     RtcOnSenderBandwidthEstimation onSenderBandwidthEstimation;
     UINT64 onSenderBandwidthEstimationCustomData;
+    MUTEX twccLock;
+    PRollingBuffer pTwccRollingBuffer;
+    PHashTable packetByTwcc; // look up packet by its twcc sequence number
+    UINT64 lastDataPacketSentTime;
 } KvsPeerConnection, *PKvsPeerConnection;
 
 typedef struct {
@@ -148,6 +152,11 @@ STATUS twccManagerOnPacketSent(PKvsPeerConnection, PRtpPacket);
 
 // visible for testing only
 VOID onIceConnectionStateChange(UINT64, UINT64);
+
+STATUS twccRollingBufferFreeRtpPacket(UINT64 self, PUINT64 pData);
+STATUS twccRollingBufferAddRtpPacket(PKvsPeerConnection pc, PRtpPacket pRtpPacket);
+VOID twccOnPacketNotReceived(UINT64 customData, UINT16 seqNum);
+VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, INT32 receiveDeltaUsec);
 
 #ifdef __cplusplus
 }

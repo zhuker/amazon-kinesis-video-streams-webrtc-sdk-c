@@ -143,6 +143,7 @@ GstFlowReturn on_new_sample(GstElement* sink, gpointer data, UINT64 trackid)
         // convert from segment timestamp to running time in live mode.
         segment = gst_sample_get_segment(sample);
         buf_pts = gst_segment_to_running_time(segment, GST_FORMAT_TIME, buffer->pts);
+        DLOGD("buf_pts %lu", buf_pts);
         if (!GST_CLOCK_TIME_IS_VALID(buf_pts)) {
             printf("[KVS GStreamer Master] Frame contains invalid PTS dropping the frame. \n");
         }
@@ -171,8 +172,8 @@ GstFlowReturn on_new_sample(GstElement* sink, gpointer data, UINT64 trackid)
                     SAMPLE_AUDIO_FRAME_DURATION; // assume audio frame size is 20ms, which is default in opusenc
             } else {
                 pRtcRtpTransceiver = pSampleStreamingSession->pVideoRtcRtpTransceiver;
-                frame.presentationTs = pSampleStreamingSession->videoTimestamp;
-                frame.decodingTs = frame.presentationTs;
+                frame.presentationTs = buf_pts / 100LL;
+                frame.decodingTs = buf_pts / 100LL;
                 pSampleStreamingSession->videoTimestamp += SAMPLE_VIDEO_FRAME_DURATION; // assume video fps is 30
             }
             status = writeFrame(pRtcRtpTransceiver, &frame);
@@ -272,6 +273,12 @@ CleanUp:
     }
 
     return (PVOID)(ULONG_PTR) retStatus;
+}
+
+INT32 main1(INT32 argc, CHAR* argv[])
+{
+    UINT64 now = GETTIME();
+    printf("%lu\n", now);
 }
 
 INT32 main(INT32 argc, CHAR* argv[])

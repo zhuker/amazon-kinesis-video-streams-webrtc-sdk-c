@@ -10,7 +10,7 @@ RTCP Rolling Buffer include file
 extern "C" {
 #endif
 
-typedef STATUS (*FreeDataFunc)(PUINT64);
+typedef STATUS (*FreeDataFunc)(UINT64, PUINT64);
 
 typedef struct {
     // Lock guarding the rolling buffer
@@ -25,6 +25,8 @@ typedef struct {
     PUINT64 dataBuffer;
     // Function being called when data pointer is removed from buffer
     FreeDataFunc freeDataFn;
+    // Function being called when data pointer is removed from buffer
+    UINT64 freeDataFnCustomData;
 } RollingBuffer, *PRollingBuffer;
 
 #define ROLLING_BUFFER_MAP_INDEX(pRollingBuffer, index) ((index) % (pRollingBuffer)->capacity)
