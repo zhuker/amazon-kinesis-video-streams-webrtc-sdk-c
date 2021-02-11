@@ -40,6 +40,7 @@ if(NOT KVSWEBRTC_HAVE_GETIFADDRS)
 endif()
 endif()
 
+set(BUILD_TEST TRUE)
 set(CMAKE_MACOSX_RPATH TRUE)
 get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 
@@ -384,6 +385,13 @@ if (BUILD_SAMPLE)
       ${KINESIS_VIDEO_WEBRTC_CLIENT_SRC}/samples/kvsWebRTCClientMasterGstreamerSample.c
     )
     target_link_libraries(kvsWebrtcClientMasterGstSample kvsWebrtcClient kvsWebrtcSignalingClient ${GST_SAMPLE_LIBRARIES} kvspicUtils)
+
+    add_executable(
+            customSignalingGst
+            ${KINESIS_VIDEO_WEBRTC_CLIENT_SRC}/samples/Common.c
+            ${KINESIS_VIDEO_WEBRTC_CLIENT_SRC}/samples/customSignalingGstreamer.c
+    )
+    target_link_libraries(customSignalingGst kvsWebrtcClient kvsWebrtcSignalingClient ${GST_SAMPLE_LIBRARIES} kvspicUtils)
 
     install(TARGETS kvsWebrtcClientMasterGstSample
       RUNTIME DESTINATION bin
