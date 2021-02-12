@@ -723,6 +723,10 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection->onPacketReceived = twccOnPacketReceived;
     pKvsPeerConnection->onPacketNotReceived = twccOnPacketNotReceived;
     pKvsPeerConnection->twccLock = MUTEX_CREATE(TRUE);
+    CHK_STATUS(stackQueueCreate(&pKvsPeerConnection->receivedBytesQ));
+    CHK_STATUS(stackQueueCreate(&pKvsPeerConnection->receivedTimesQ));
+    CHK_STATUS(stackQueueCreate(&pKvsPeerConnection->sentBytesQ));
+    CHK_STATUS(stackQueueCreate(&pKvsPeerConnection->sentTimesQ));
 
     *ppPeerConnection = (PRtcPeerConnection) pKvsPeerConnection;
 
@@ -1419,12 +1423,26 @@ STATUS twccRollingBufferAddRtpPacket(PKvsPeerConnection pc, PRtpPacket pRtpPacke
     copy->rawPacketLength = packetLen;
     setRtpPacketFromBytes(rawPacket, packetLen, copy);
     copy->payload = NULL;
-    copy->payloadLength = 0;
+    copy->payloadLength = pRtpPacket->payloadLength; // used for bitrate calculation
 
     UINT16 seqNum = TWCC_SEQNUM(copy->header.extensionPayload);
     DLOGV("inserting twcc %d", seqNum);
     CHK_STATUS(rollingBufferAppendData(pc->pTwccRollingBuffer, (UINT64) copy, NULL));
     CHK_STATUS(hashTableUpsert(pc->packetByTwcc, seqNum, (UINT64) copy));
+
+    // keep a 2 second window of sent bytes to estimate received bitrate
+    CHK_STATUS(stackQueueEnqueue(pc->sentTimesQ, copy->sendDelta));
+    CHK_STATUS(stackQueueEnqueue(pc->sentBytesQ, copy->payloadLength));
+    pc->sentTimes += copy->sendDelta;
+    pc->sentBytes += copy->payloadLength;
+    while (pc->sentTimes >= (2 * HUNDREDS_OF_NANOS_IN_A_SECOND)) {
+        UINT64 timeusec = 0;
+        UINT64 bytes = 0;
+        CHK_STATUS(stackQueueDequeue(pc->sentTimesQ, &timeusec));
+        CHK_STATUS(stackQueueDequeue(pc->sentBytesQ, &bytes));
+        pc->sentTimes -= timeusec;
+        pc->sentBytes -= bytes;
+    }
 
 CleanUp:
     if (locked) {
@@ -1461,11 +1479,28 @@ VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, INT32 receiveDeltaUs
     }
     sendDeltaUsec = KVS_CONVERT_TIMESCALE(packet->sendDelta, HUNDREDS_OF_NANOS_IN_A_SECOND, MICROSECONDS_PER_SECOND);
 
+    // keep a 2 second window of received bytes to estimate received bitrate
+    CHK_STATUS(stackQueueEnqueue(pc->receivedTimesQ, receiveDeltaUsec));
+    CHK_STATUS(stackQueueEnqueue(pc->receivedBytesQ, packet->payloadLength));
+    pc->receivedTimes += receiveDeltaUsec;
+    pc->receivedBytes += packet->payloadLength;
+    while (pc->receivedTimes >= (2 * MICROSECONDS_PER_SECOND)) {
+        UINT64 timeusec = 0;
+        UINT64 bytes = 0;
+        CHK_STATUS(stackQueueDequeue(pc->receivedTimesQ, &timeusec));
+        CHK_STATUS(stackQueueDequeue(pc->receivedBytesQ, &bytes));
+        pc->receivedTimes -= timeusec;
+        pc->receivedBytes -= bytes;
+    }
+
 CleanUp:
     if (locked) {
         MUTEX_UNLOCK(pc->twccLock);
     }
     deltaOfDelta = receiveDeltaUsec - sendDeltaUsec;
-    DLOGD("packet received [%d] %u %d - %ld == %ld", contains, seqNum, receiveDeltaUsec, sendDeltaUsec, deltaOfDelta);
+    UINT64 rxkbps = (pc->receivedBytes * 8 / 1024) / (pc->receivedTimes / 1000000.);
+    UINT64 txkbps = (pc->sentBytes * 8 / 1024) / (pc->sentTimes / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_SECOND);
+    DLOGD("packet received [tx/rx %lu/%lu kbps] [%d] %u %d - %ld == %ld", txkbps, rxkbps, contains, seqNum, receiveDeltaUsec, sendDeltaUsec,
+          deltaOfDelta);
     CHK_LOG_ERR(retStatus);
 }

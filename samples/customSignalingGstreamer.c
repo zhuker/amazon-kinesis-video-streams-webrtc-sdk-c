@@ -1,9 +1,10 @@
-#include <termios.h>
 #include <unistd.h>
-#include <dirent.h>
+#include <string.h>
+#include <signal.h>
 #include "Samples.h"
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
+#include "MySignaling.h"
 
 struct MySession {
     RtcConfiguration rtcConfig;
@@ -16,6 +17,8 @@ struct MySession {
     BOOL iceGatheringDone;
     GstElement* encoder264; // to manipulate bitrate
     GstElement* texttopleft;
+    RtcSessionDescriptionInit answerSdp;
+    struct SimpleSignaling* signaling;
 };
 
 static const char* ConnectionStateNames[] = {
@@ -29,24 +32,6 @@ static const char* connection_state_to_string(RTC_PEER_CONNECTION_STATE state)
     return rangeok ? ConnectionStateNames[state] : "RTC_PEER_CONNECTION_TOTAL_STATE_UNKNOWN";
 }
 
-// https://stackoverflow.com/questions/39546500/how-to-make-scanf-to-read-more-than-4095-characters-given-as-input
-int clear_icanon(void)
-{
-    struct termios settings = {0};
-    if (tcgetattr(STDIN_FILENO, &settings) < 0) {
-        perror("error in tcgetattr");
-        return 0;
-    }
-
-    settings.c_lflag &= ~ICANON;
-
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &settings) < 0) {
-        perror("error in tcsetattr");
-        return 0;
-    }
-    return 1;
-}
-
 static struct MySession session = {0};
 VOID onIceCandidate(UINT64 session64, PCHAR candidate)
 {
@@ -54,15 +39,8 @@ VOID onIceCandidate(UINT64 session64, PCHAR candidate)
 
     printf("onIceCandidate: %s\n", candidate != NULL ? candidate : "NULL");
     if (candidate == NULL) {
-        RtcSessionDescriptionInit answerSdp = {0};
-        CHK_STATUS(createAnswer(session.pPeerConnection, &answerSdp));
-        CHK_STATUS(setLocalDescription(session.pPeerConnection, &answerSdp));
-        printf("answer: '%s'\n", answerSdp.sdp);
-        char json[8192] = {0};
-        UINT32 sz = 8192;
-        CHK_STATUS(serializeSessionDescriptionInit(&answerSdp, json, &sz));
-        printf("---- Please copy and send this message to the other peer ----\n");
-        printf("%s\n", json);
+        CHK_STATUS(createAnswer(session.pPeerConnection, &session.answerSdp));
+        CHK_STATUS(setLocalDescription(session.pPeerConnection, &session.answerSdp));
         session.iceGatheringDone = TRUE;
     }
 CleanUp:
@@ -274,30 +252,30 @@ CleanUp:
 
     return (PVOID)(ULONG_PTR) retStatus;
 }
-
-INT32 main1(INT32 argc, CHAR* argv[])
+static void sigint_handler(int sig)
 {
-    UINT64 now = GETTIME();
-    printf("%lu\n", now);
+    session.signaling->interrupted = TRUE;
 }
 
 INT32 main(INT32 argc, CHAR* argv[])
 {
+    signal(SIGINT, sigint_handler);
     SET_LOGGER_LOG_LEVEL(LOG_LEVEL_DEBUG);
-    clear_icanon(); // Changes the input mode of terminal from canonical mode to non canonical mode to allow copy-paste of over 4096 bytes
-    // equivalent to running "stty -icanon"
     gst_init(&argc, &argv);
 
     STATUS retStatus = 0;
     CHK_STATUS(initKvsWebRtc());
+    //    struct CopyPasteSignaling copyPasteSignaling = {0};
+    //    copyPasteSignalingInit(&copyPasteSignaling);
+    struct WebsocketSignaling realSignaling = {0};
+    websocketSignalingInit(&realSignaling);
+    struct SimpleSignaling* signaling = (struct SimpleSignaling*) &realSignaling;
+    session.signaling = signaling;
 
-    printf("---- Please paste in the message here from the other peer ----\n");
-    RtcSessionDescriptionInit offerSdp = {SDP_TYPE_OFFER};
+    CHK_STATUS(signaling->connect(signaling));
 
-    char offer[8192] = {0};
-    fgets(offer, 8192, stdin);
-    CHK_STATUS(deserializeSessionDescriptionInit(offer, STRLEN(offer), &offerSdp));
-    printf("%s\n", offerSdp.sdp);
+    RtcSessionDescriptionInit offerSdp = {0};
+    CHK_STATUS(signaling->receiveOffer(signaling, &offerSdp));
 
     session.rtcConfig.kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = (5 * HUNDREDS_OF_NANOS_IN_A_SECOND);
     session.rtcConfig.kvsRtcConfiguration.iceCandidateNominationTimeout = (120 * HUNDREDS_OF_NANOS_IN_A_SECOND);
@@ -320,20 +298,27 @@ INT32 main(INT32 argc, CHAR* argv[])
     CHK_STATUS(addTransceiver(session.pPeerConnection, &session.videoTrack, &trackinit, &session.transceiver));
     CHK_STATUS(transceiverOnBandwidthEstimation(session.transceiver, session64, onBandwidthEstimation));
 
-    RtcSessionDescriptionInit answerSdp = {0};
+    RtcSessionDescriptionInit emptyAnswer = {0};
 
     CHK_STATUS(setRemoteDescription(session.pPeerConnection, &offerSdp));
-    CHK_STATUS(setLocalDescription(session.pPeerConnection, &answerSdp));
+    CHK_STATUS(setLocalDescription(session.pPeerConnection, &emptyAnswer));
 
+    BOOL answerSent = FALSE;
     while (1) {
         if (!session.iceGatheringDone) {
             printf("gathering...\n");
+        } else if (!answerSent) {
+            printf("sendAnswer\n");
+            session.signaling->sendAnswer(session.signaling, &session.answerSdp);
+            answerSent = TRUE;
         }
         if (session.connectionState == RTC_PEER_CONNECTION_STATE_CONNECTED) {
             break;
         }
         sleep(1);
     }
+    session.signaling->destroy(session.signaling);
+
     if (session.connectionState == RTC_PEER_CONNECTION_STATE_CONNECTED) {
         // send frames
         SampleConfiguration config = {0};
@@ -348,4 +333,20 @@ INT32 main(INT32 argc, CHAR* argv[])
     return 0;
 CleanUp:
     return retStatus;
+}
+
+int main2(int argc, const char** argv)
+{
+    signal(SIGINT, sigint_handler);
+    struct WebsocketSignaling wssig = {0};
+    struct SimpleSignaling* signaling = (struct SimpleSignaling*) &wssig;
+    websocketSignalingInit(&wssig);
+
+    signaling->connect(signaling);
+    RtcSessionDescriptionInit offer = {0};
+    signaling->receiveOffer(signaling, &offer);
+    printf("offer: '%s'", offer.sdp);
+
+    signaling->destroy(signaling);
+    return 0;
 }
