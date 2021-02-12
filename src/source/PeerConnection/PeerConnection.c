@@ -1446,6 +1446,20 @@ STATUS twccManagerOnPacketSent(PKvsPeerConnection pc, PRtpPacket pRtpPacket)
         }
     } while (!isEmpty);
 
+    // keep a 2 second window of sent bytes to estimate received bitrate
+    CHK_STATUS(stackQueueEnqueue(pc->sentTimesQ, copy->sendDelta));
+    CHK_STATUS(stackQueueEnqueue(pc->sentBytesQ, copy->payloadLength));
+    pc->sentTimes += copy->sendDelta;
+    pc->sentBytes += copy->payloadLength;
+    while (pc->sentTimes >= (2 * HUNDREDS_OF_NANOS_IN_A_SECOND)) {
+        UINT64 timeusec = 0;
+        UINT64 bytes = 0;
+        CHK_STATUS(stackQueueDequeue(pc->sentTimesQ, &timeusec));
+        CHK_STATUS(stackQueueDequeue(pc->sentBytesQ, &bytes));
+        pc->sentTimes -= timeusec;
+        pc->sentBytes -= bytes;
+    }
+
 CleanUp:
     if (locked) {
         MUTEX_UNLOCK(pc->twccLock);

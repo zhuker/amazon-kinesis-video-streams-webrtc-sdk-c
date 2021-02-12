@@ -132,6 +132,16 @@ typedef struct {
     PRollingBuffer pTwccRollingBuffer;
     PHashTable packetByTwcc; // look up packet by its twcc sequence number
     UINT64 lastDataPacketSentTime;
+    PStackQueue receivedBytesQ;
+    PStackQueue receivedTimesQ;
+    UINT64 receivedBytes;
+    UINT64 receivedTimes;
+
+    PStackQueue sentBytesQ;
+    PStackQueue sentTimesQ;
+    UINT64 sentBytes;
+    UINT64 sentTimes;
+
 } KvsPeerConnection, *PKvsPeerConnection;
 
 typedef struct {
