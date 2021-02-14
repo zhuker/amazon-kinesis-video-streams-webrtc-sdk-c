@@ -1459,6 +1459,13 @@ VOID twccOnPacketNotReceived(UINT64 customData, UINT16 seqNum)
     DLOGD("packet not received %u", seqNum);
 }
 
+
+#define FOREACH_IN_DOUBLELIST(pdlist)                                                                                                                \
+    PDoubleListNode pCurNode = NULL;                                                                                                                 \
+    UINT64 item = 0;                                                                                                                                 \
+    CHK_STATUS(doubleListGetHeadNode(pdlist, &pCurNode));                                                                                            \
+    for (; pCurNode != NULL && STATUS_SUCCEEDED(doubleListGetNodeData(pCurNode, &item)); pCurNode = pCurNode->pNext)
+
 VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, INT32 receiveDeltaUsec)
 {
     STATUS retStatus = STATUS_SUCCESS;
@@ -1493,6 +1500,13 @@ VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, INT32 receiveDeltaUs
         pc->receivedBytes -= bytes;
     }
 
+    UINT64 rtt = 0;
+    FOREACH_IN_DOUBLELIST(pc->pTransceivers)
+    {
+        PKvsRtpTransceiver pTransceiver = (PKvsRtpTransceiver) item;
+        rtt = MAX(rtt, pTransceiver->remoteInboundStats.roundTripTime);
+    }
+
 CleanUp:
     if (locked) {
         MUTEX_UNLOCK(pc->twccLock);
@@ -1500,7 +1514,7 @@ CleanUp:
     deltaOfDelta = receiveDeltaUsec - sendDeltaUsec;
     UINT64 rxkbps = (pc->receivedBytes * 8 / 1024) / (pc->receivedTimes / 1000000.);
     UINT64 txkbps = (pc->sentBytes * 8 / 1024) / (pc->sentTimes / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_SECOND);
-    DLOGD("packet received [tx/rx %lu/%lu kbps] [%d] %u %d - %ld == %ld", txkbps, rxkbps, contains, seqNum, receiveDeltaUsec, sendDeltaUsec,
+    DLOGD("packet received rtt %lu msec [tx/rx %lu/%lu kbps] [%d] %u %d - %ld == %ld", rtt, txkbps, rxkbps, contains, seqNum, receiveDeltaUsec, sendDeltaUsec,
           deltaOfDelta);
     CHK_LOG_ERR(retStatus);
 }

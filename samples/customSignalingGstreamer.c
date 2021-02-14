@@ -350,3 +350,25 @@ int main2(int argc, const char** argv)
     signaling->destroy(signaling);
     return 0;
 }
+
+#define FOREACH_IN_DOUBLELIST(pdlist)                                                                                                                \
+    PDoubleListNode pCurNode = NULL;                                                                                                                 \
+    UINT64 item = 0;                                                                                                                                 \
+    CHK_STATUS(doubleListGetHeadNode(pdlist, &pCurNode));                                                                                            \
+    for (; pCurNode != NULL && STATUS_SUCCEEDED(doubleListGetNodeData(pCurNode, &item)); pCurNode = pCurNode->pNext)
+
+int main3(int argc, const char** argv)
+{
+    STATUS retStatus;
+    DoubleList dlist = {0};
+    doubleListInsertItemTail(&dlist, 11);
+    doubleListInsertItemTail(&dlist, 22);
+    doubleListInsertItemTail(&dlist, 33);
+
+    FOREACH_IN_DOUBLELIST(&dlist)
+    {
+        printf("%lu\n", item);
+    }
+CleanUp:
+    return 0;
+}
