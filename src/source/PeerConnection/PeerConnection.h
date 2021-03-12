@@ -132,16 +132,9 @@ typedef struct {
     PRollingBuffer pTwccRollingBuffer;
     PHashTable packetByTwcc; // look up packet by its twcc sequence number
     UINT64 lastDataPacketSentTime;
-    PStackQueue receivedBytesQ;
-    PStackQueue receivedTimesQ;
-    UINT64 receivedBytes;
-    UINT64 receivedTimes;
-
-    PStackQueue sentBytesQ;
-    PStackQueue sentTimesQ;
-    UINT64 sentBytes;
-    UINT64 sentTimes;
-
+    TwccBitrate txrate;
+    TwccBitrate rxrate;
+    RtcOnBandwidth onBandwidth;
 } KvsPeerConnection, *PKvsPeerConnection;
 
 typedef struct {
@@ -166,7 +159,7 @@ VOID onIceConnectionStateChange(UINT64, UINT64);
 STATUS twccRollingBufferFreeRtpPacket(UINT64 self, PUINT64 pData);
 STATUS twccRollingBufferAddRtpPacket(PKvsPeerConnection pc, PRtpPacket pRtpPacket);
 VOID twccOnPacketNotReceived(UINT64 customData, UINT16 seqNum);
-VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, INT32 receiveDeltaUsec);
+VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, UINT64 receiveTimeKvs);
 
 #ifdef __cplusplus
 }

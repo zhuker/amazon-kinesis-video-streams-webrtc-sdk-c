@@ -5,6 +5,104 @@
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 #include "MySignaling.h"
+#include "../source/Include_i.h"
+
+STATUS myGenerateTimestampStr(UINT64 timestamp, PCHAR formatStr, PCHAR pDestBuffer, UINT32 destBufferLen, PUINT32 pFormattedStrLen)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    time_t timestampSeconds;
+    UINT32 formattedStrLen;
+    CHK(pDestBuffer != NULL, STATUS_NULL_ARG);
+    CHK(STRNLEN(formatStr, MAX_TIMESTAMP_FORMAT_STR_LEN + 1) <= MAX_TIMESTAMP_FORMAT_STR_LEN, STATUS_MAX_TIMESTAMP_FORMAT_STR_LEN_EXCEEDED);
+
+    UINT64 timestampMillis = (timestamp / HUNDREDS_OF_NANOS_IN_A_MILLISECOND) % 1000;
+    timestampSeconds = timestamp / HUNDREDS_OF_NANOS_IN_A_SECOND;
+    formattedStrLen = 0;
+    *pFormattedStrLen = 0;
+
+    char hms[128] = {0};
+    formattedStrLen = (UINT32) STRFTIME(hms, 127, formatStr, GMTIME(&timestampSeconds));
+    CHK(formattedStrLen != 0, STATUS_STRFTIME_FALIED);
+
+    SNPRINTF(pDestBuffer, destBufferLen, "%s%03lu ", hms, timestampMillis);
+    formattedStrLen += 4;
+
+    pDestBuffer[formattedStrLen] = '\0';
+    *pFormattedStrLen = formattedStrLen;
+
+CleanUp:
+
+    return retStatus;
+}
+
+PCHAR myGetLogLevelStr(UINT32 loglevel)
+{
+    switch (loglevel) {
+        case LOG_LEVEL_VERBOSE:
+            return LOG_LEVEL_VERBOSE_STR;
+        case LOG_LEVEL_DEBUG:
+            return LOG_LEVEL_DEBUG_STR;
+        case LOG_LEVEL_INFO:
+            return LOG_LEVEL_INFO_STR;
+        case LOG_LEVEL_WARN:
+            return LOG_LEVEL_WARN_STR;
+        case LOG_LEVEL_ERROR:
+            return LOG_LEVEL_ERROR_STR;
+        case LOG_LEVEL_FATAL:
+            return LOG_LEVEL_FATAL_STR;
+        default:
+            return LOG_LEVEL_SILENT_STR;
+    }
+}
+
+VOID myAddLogMetadata(PCHAR buffer, UINT32 bufferLen, PCHAR fmt, UINT32 logLevel)
+{
+    UINT32 timeStrLen = 0;
+    /* space for "yyyy-mm-dd HH:MM:SS\0" + msec + space + null */
+    CHAR timeString[MAX_TIMESTAMP_FORMAT_STR_LEN + 4 + 1 + 1];
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT32 offset = 0;
+
+#ifdef ENABLE_LOG_THREAD_ID
+    // MAX_THREAD_ID_STR_LEN + null
+    CHAR tidString[MAX_THREAD_ID_STR_LEN + 1];
+    TID threadId = GETTID();
+    SNPRINTF(tidString, ARRAY_SIZE(tidString), "(thread-0x%" PRIx64 ")", threadId);
+#endif
+
+    /* if something fails in getting time, still print the log, just without timestamp */
+    retStatus = myGenerateTimestampStr(globalGetTime(), "%Y-%m-%d %H:%M:%S.", timeString, (UINT32) ARRAY_SIZE(timeString), &timeStrLen);
+    if (STATUS_FAILED(retStatus)) {
+        PRINTF("Fail to get time with status code is %08x\n", retStatus);
+        timeString[0] = '\0';
+    }
+
+    offset = (UINT32) SNPRINTF(buffer, bufferLen, "%s%-*s ", timeString, MAX_LOG_LEVEL_STRLEN, myGetLogLevelStr(logLevel));
+#ifdef ENABLE_LOG_THREAD_ID
+    offset += SNPRINTF(buffer + offset, bufferLen - offset, "%s ", tidString);
+#endif
+    SNPRINTF(buffer + offset, bufferLen - offset, "%s\n", fmt);
+}
+
+//
+// Default logger function
+//
+VOID myDefaultLogPrint(UINT32 level, PCHAR tag, PCHAR fmt, ...)
+{
+    CHAR logFmtString[MAX_LOG_FORMAT_LENGTH + 1];
+    UINT32 logLevel = GET_LOGGER_LOG_LEVEL();
+
+    UNUSED_PARAM(tag);
+
+    if (level >= logLevel) {
+        myAddLogMetadata(logFmtString, (UINT32) ARRAY_SIZE(logFmtString), fmt, level);
+
+        va_list valist;
+        va_start(valist, fmt);
+        vprintf(logFmtString, valist);
+        va_end(valist);
+    }
+}
 
 struct MySession {
     RtcConfiguration rtcConfig;
@@ -70,7 +168,7 @@ void onRemoteDataChannel(UINT64 session64, PRtcDataChannel pRtcDataChannel)
 
 void onBandwidthEstimation(UINT64 session64, DOUBLE bitrate)
 {
-    int kbps = (int) (bitrate / 1000);
+    int kbps = (int) (bitrate / 1024);
     printf("onBandwidthEstimation %dkbps\n", kbps);
     if (session.encoder264 != NULL && kbps > 50) {
         g_object_set(session.encoder264, "bitrate", kbps, NULL);
@@ -79,6 +177,41 @@ void onBandwidthEstimation(UINT64 session64, DOUBLE bitrate)
         char kbpsstr[80] = {0};
         snprintf(kbpsstr, 80, "%dkbps", kbps);
         g_object_set(session.texttopleft, "text", kbpsstr, NULL);
+    }
+}
+
+void onBandwidth(UINT64 session64, UINT32 txkbps, UINT32 rxkbps)
+{
+    printf("onBandwidth %u/%u kbps\n", txkbps, rxkbps);
+    if (session.encoder264 == NULL)
+        return;
+    UINT32 current = 0;
+    g_object_get(session.encoder264, "bitrate", &current, NULL);
+    DLOGD("current: %u", current);
+
+    DOUBLE suggested = 0;
+    if (rxkbps >= txkbps * 0.98) {
+        suggested = (current * 1.02);
+        DLOGD("increase current to %.0f next", suggested);
+    } else if (rxkbps < txkbps * 0.9) {
+        suggested = (current * 0.9);
+        DLOGD("decrease current to %.0f next", suggested);
+    }
+    if (suggested > 0) {
+        INT32 next = MAX(200, (INT32) suggested);
+        next = MIN(4096, next);
+        DLOGD("next: %d", next);
+
+        INT32 i = current - next;
+        if (ABS(i) > 0) {
+            DLOGD("current - next: %d", ABS(i));
+            g_object_set(session.encoder264, "bitrate", next, NULL);
+            if (session.texttopleft != NULL) {
+                char kbpsstr[80] = {0};
+                snprintf(kbpsstr, 80, "%dkbps", next);
+                g_object_set(session.texttopleft, "text", kbpsstr, NULL);
+            }
+        }
     }
 }
 
@@ -200,12 +333,12 @@ PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration)
     }
 
     char* description =
-        "v4l2src device=/dev/video1 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec "
+        "v4l2src device=/dev/video0 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec "
         "! videoconvert "
         "! textoverlay halignment=left valignment=top name=texttopleft "
         "! video/x-raw,format=I420 "
         "! videoconvert "
-        "! x264enc bframes=0 speed-preset=veryfast bitrate=512 byte-stream=TRUE tune=zerolatency name=encoder264 ! "
+        "! x264enc bframes=0 speed-preset=fast bitrate=1024 byte-stream=TRUE tune=zerolatency name=encoder264 ! "
         "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! appsink sync=TRUE emit-signals=TRUE name=appsink-video";
     printf("%s\n", description);
     pipeline = gst_parse_launch(description, &error);
@@ -259,7 +392,8 @@ static void sigint_handler(int sig)
 
 INT32 main(INT32 argc, CHAR* argv[])
 {
-    signal(SIGINT, sigint_handler);
+    globalCustomLogPrintFn = myDefaultLogPrint;
+    //    signal(SIGINT, sigint_handler);
     SET_LOGGER_LOG_LEVEL(LOG_LEVEL_DEBUG);
     gst_init(&argc, &argv);
 
@@ -296,7 +430,8 @@ INT32 main(INT32 argc, CHAR* argv[])
     STRNCPY(session.videoTrack.trackId, "trackId", MAX_MEDIA_STREAM_ID_LEN);
 
     CHK_STATUS(addTransceiver(session.pPeerConnection, &session.videoTrack, &trackinit, &session.transceiver));
-    CHK_STATUS(transceiverOnBandwidthEstimation(session.transceiver, session64, onBandwidthEstimation));
+    //    CHK_STATUS(transceiverOnBandwidthEstimation(session.transceiver, session64, onBandwidthEstimation));
+    ((PKvsPeerConnection) session.pPeerConnection)->onBandwidth = onBandwidth;
 
     RtcSessionDescriptionInit emptyAnswer = {0};
 

@@ -268,6 +268,14 @@ STATUS parseRtcpTwccPacket(PRtcpPacket pRtcpPacket, PTwccManager pTwccManager)
         }
         chunkOffset += TWCC_FB_PACKETCHUNK_SIZE;
     }
+    UINT32 txkbps = pKvsPeerConnection->txrate.kbps;
+    UINT32 rxkbps = pKvsPeerConnection->rxrate.kbps;
+    DLOGD("tx/rx %u/%u kbps", txkbps, rxkbps);
+    if (txkbps > 0 && rxkbps > 0) {
+        if (pKvsPeerConnection->onBandwidth != NULL) {
+            pKvsPeerConnection->onBandwidth(0, txkbps, rxkbps);
+        }
+    }
 
 CleanUp:
     CHK_LOG_ERR(retStatus);

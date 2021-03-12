@@ -881,6 +881,8 @@ typedef VOID (*RtcOnFrame)(UINT64, PFrame);
  */
 typedef VOID (*RtcOnBandwidthEstimation)(UINT64, DOUBLE);
 
+typedef VOID (*RtcOnBandwidth)(UINT64, UINT32 txkbps, UINT32 rxkbps);
+
 /**
  * @brief RtcOnSenderBandwidthEstimation is fired everytime a bandwidth estimation value
  * is computed by sender. This is an estimate of ALL packets sent across all transceivers.
