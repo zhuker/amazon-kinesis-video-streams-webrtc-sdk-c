@@ -322,6 +322,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             packetsDiscardedOnSend++;
             bytesDiscardedOnSend += packetLen - headerLen;
             // TODO is frame considered discarded when at least one of its packets is discarded or all of its packets discarded?
+            DLOGW("packet discarded %u:%u:%u %lu", pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp, pRtpPacket->payloadLength, GETTIME());
             framesDiscardedOnSend = 1;
             SAFE_MEMFREE(rawPacket);
             continue;

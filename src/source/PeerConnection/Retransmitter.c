@@ -102,6 +102,8 @@ STATUS resendPacketOnNack(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerCo
                 twccManagerOnPacketSent(pKvsPeerConnection, pRtpPacket);
             } else {
                 DLOGV("Resent packet ssrc %lu seq %lu failed 0x%08x", pRtpPacket->header.ssrc, pRtpPacket->header.sequenceNumber, retStatus);
+                DLOGD("resend packet failed %u:%u:%u %lu", pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp, pRtpPacket->payloadLength,
+                      GETTIME());
             }
             // putBackPacketToRollingBuffer
             retStatus =

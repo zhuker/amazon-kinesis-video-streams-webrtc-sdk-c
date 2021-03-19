@@ -1414,7 +1414,7 @@ UINT32 twccUpdate(PTwccBitrate prate, UINT64 packetSize, UINT64 timestampKvs)
     INT64 b = 0, t = 0;
     INT64 deltaTime = prate->lastTimestamp > 0 ? timestampKvs - prate->lastTimestamp : 0;
     deltaTime = MAX(0, deltaTime);
-    prate->lastTimestamp = timestampKvs;
+    prate->lastTimestamp = MAX(prate->lastTimestamp, timestampKvs);
     BOOL empty = TRUE;
     while ((prate->windowTime + deltaTime) > (2 * HUNDREDS_OF_NANOS_IN_A_SECOND)) {
         CHK_STATUS(stackQueueIsEmpty(&prate->bytesq, &empty));
@@ -1425,12 +1425,14 @@ UINT32 twccUpdate(PTwccBitrate prate, UINT64 packetSize, UINT64 timestampKvs)
         CHK_STATUS(stackQueueDequeue(&prate->timesq, &t));
         prate->windowTime -= t;
         prate->windowBytes -= b;
+        prate->windowPackets--;
     }
 
     CHK_STATUS(stackQueueEnqueue(&prate->timesq, deltaTime));
     CHK_STATUS(stackQueueEnqueue(&prate->bytesq, packetSize));
     prate->windowBytes += packetSize;
     prate->windowTime += deltaTime;
+    prate->windowPackets++;
     if (prate->windowTime < 0) {
         DLOGW("windowTime negative %ld bytes: %lu", prate->windowTime, prate->windowBytes);
     }
