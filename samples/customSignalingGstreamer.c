@@ -467,6 +467,7 @@ INT32 main(INT32 argc, CHAR* argv[])
     printf("done\n");
     return 0;
 CleanUp:
+    printf("error %x\n", retStatus);
     return retStatus;
 }
 
