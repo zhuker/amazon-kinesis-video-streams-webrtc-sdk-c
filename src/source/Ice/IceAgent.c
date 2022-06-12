@@ -343,7 +343,10 @@ STATUS iceAgentAddRemoteCandidate(PIceAgent pIceAgent, PCHAR pIceCandidateString
     curr = pIceCandidateString;
     tail = pIceCandidateString + STRLEN(pIceCandidateString);
     state = SDP_ICE_CANDIDATE_PARSER_STATE_FOUNDATION;
-
+    struct addrinfo hints;
+    struct addrinfo *ai, *pai;
+    struct sockaddr_in *addr_in;
+    struct sockaddr_in6 *addr_in6;
     while ((next = STRNCHR(curr, tail - curr, ' ')) != NULL && !foundType) {
         tokenLen = (UINT32) (next - curr);
 
@@ -366,10 +369,43 @@ STATUS iceAgentAddRemoteCandidate(PIceAgent pIceAgent, PCHAR pIceCandidateString
                 len = MIN(next - curr, KVS_IP_ADDRESS_STRING_BUFFER_LEN - 1);
                 STRNCPY(ipBuf, curr, len);
                 ipBuf[len] = '\0';
-                if ((foundIp = inet_pton(AF_INET, ipBuf, candidateIpAddr.address) == 1 ? TRUE : FALSE)) {
-                    candidateIpAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
-                } else if ((foundIp = inet_pton(AF_INET6, ipBuf, candidateIpAddr.address) == 1 ? TRUE : FALSE)) {
-                    candidateIpAddr.family = KVS_IP_FAMILY_TYPE_IPV6;
+//                if (STRSTR(ipBuf, ".local")) {
+                if (FALSE) { //disabling for now - it takes too long to resolve mdns address
+                    //looks like mDNS address eg 76bfaf76-aabf-412a-abd3-90b32c7e5887.local
+                    MEMSET(&hints, 0, sizeof(hints));
+                    hints.ai_family = AF_INET;
+                    hints.ai_socktype = SOCK_DGRAM;
+                    hints.ai_flags = AI_V4MAPPED | AI_ADDRCONFIG;
+                    hints.ai_protocol = 0;
+
+                    DLOGD("getaddrinfo %s", ipBuf);
+                    if (0 != getaddrinfo(ipBuf, NULL, &hints, &ai)) {
+                        break;
+                    }
+                    for (pai = ai; pai != NULL; pai = pai->ai_next) {
+                        if (pai->ai_family == AF_INET) {
+                            addr_in = (struct sockaddr_in *)pai->ai_addr;
+                            MEMCPY(candidateIpAddr.address, &addr_in->sin_addr, pai->ai_addrlen);
+                            DLOGD("ip address %d.%d.%d.%d for %s", candidateIpAddr.address[0], candidateIpAddr.address[1], candidateIpAddr.address[2], candidateIpAddr.address[3], ipBuf);
+                            candidateIpAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
+                            foundIp = TRUE;
+                            break;
+                        } else if (pai->ai_family == AF_INET6) {
+                            addr_in6 = (struct sockaddr_in6 *)pai->ai_addr;
+                            MEMCPY(candidateIpAddr.address, &addr_in6->sin6_addr, pai->ai_addrlen);
+                            candidateIpAddr.family = KVS_IP_FAMILY_TYPE_IPV6;
+                            foundIp = TRUE;
+                            break;
+                        }
+                    }
+                    freeaddrinfo(ai);
+                    DLOGD("getaddrinfo finished for %s", ipBuf);
+                } else {
+                    if ((foundIp = inet_pton(AF_INET, ipBuf, candidateIpAddr.address) == 1 ? TRUE : FALSE)) {
+                        candidateIpAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
+                    } else if ((foundIp = inet_pton(AF_INET6, ipBuf, candidateIpAddr.address) == 1 ? TRUE : FALSE)) {
+                        candidateIpAddr.family = KVS_IP_FAMILY_TYPE_IPV6;
+                    }
                 }
                 CHK(foundIp, STATUS_ICE_CANDIDATE_STRING_MISSING_IP);
                 break;
@@ -1234,12 +1270,17 @@ STATUS iceCandidatePairCheckConnection(PStunPacket pStunBindingRequest, PIceAgen
     CHK(pStunAttributePriority != NULL, STATUS_INVALID_ARG);
 
     if (pIceCandidatePair->local->ipAddress.family == KVS_IP_FAMILY_TYPE_IPV4) {
-        DLOGD("remote ip:%u.%u.%u.%u, port:%u, local ip:%u.%u.%u.%u, port:%u", pIceCandidatePair->remote->ipAddress.address[0],
-              pIceCandidatePair->remote->ipAddress.address[1], pIceCandidatePair->remote->ipAddress.address[2],
-              pIceCandidatePair->remote->ipAddress.address[3], pIceCandidatePair->remote->ipAddress.address[0],
-              pIceCandidatePair->remote->ipAddress.port, pIceCandidatePair->local->ipAddress.address[1],
-              pIceCandidatePair->local->ipAddress.address[2], pIceCandidatePair->local->ipAddress.address[3],
-              pIceCandidatePair->local->ipAddress.address[0], pIceCandidatePair->local->ipAddress.port);
+//        DLOGD("remote ip:%u.%u.%u.%u:%u, local ip:%u.%u.%u.%u:%u",
+//              pIceCandidatePair->remote->ipAddress.address[0],
+//              pIceCandidatePair->remote->ipAddress.address[1],
+//              pIceCandidatePair->remote->ipAddress.address[2],
+//              pIceCandidatePair->remote->ipAddress.address[3],
+//              pIceCandidatePair->remote->ipAddress.port,
+//              pIceCandidatePair->local->ipAddress.address[0],
+//              pIceCandidatePair->local->ipAddress.address[1],
+//              pIceCandidatePair->local->ipAddress.address[2],
+//              pIceCandidatePair->local->ipAddress.address[3],
+//              pIceCandidatePair->local->ipAddress.port);
     }
 
     // update priority and transaction id
@@ -2381,6 +2422,7 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
     UINT32 priority = 0;
     PIceCandidate pIceCandidate = NULL;
     CHAR ipAddrStr[KVS_IP_ADDRESS_STRING_BUFFER_LEN], ipAddrStr2[KVS_IP_ADDRESS_STRING_BUFFER_LEN];
+    CHAR ipAddrSrc[KVS_IP_ADDRESS_STRING_BUFFER_LEN] = {0}, ipAddrDst[KVS_IP_ADDRESS_STRING_BUFFER_LEN] = {0};
     PCHAR hexStr = NULL;
     UINT32 hexStrLen = 0, checkSum = 0;
     UINT64 requestSentTime = 0;
@@ -2391,8 +2433,14 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
     // need to determine stunPacketType before deserializing because different password should be used depending on the packet type
     stunPacketType = (UINT16) getInt16(*((PUINT16) pBuffer));
 
+    CHK_STATUS(getIpAddrStr(pSrcAddr, ipAddrSrc, ARRAY_SIZE(ipAddrSrc)));
+    if (pDestAddr) {
+        CHK_STATUS(getIpAddrStr(pDestAddr, ipAddrDst, ARRAY_SIZE(ipAddrDst)));
+    }
+
     switch (stunPacketType) {
         case STUN_PACKET_TYPE_BINDING_REQUEST:
+            DLOGD("STUN_PACKET_TYPE_BINDING_REQUEST '%s' -> '%s'", ipAddrSrc, ipAddrDst);
             connectivityCheckRequestsReceived++;
             CHK_STATUS(deserializeStunPacket(pBuffer, bufferLen, (PBYTE) pIceAgent->localPassword,
                                              (UINT32) STRLEN(pIceAgent->localPassword) * SIZEOF(CHAR), &pStunPacket));
@@ -2440,6 +2488,7 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
             break;
 
         case STUN_PACKET_TYPE_BINDING_RESPONSE_SUCCESS:
+            DLOGD("STUN_PACKET_TYPE_BINDING_RESPONSE_SUCCESS %s -> %s", ipAddrSrc, ipAddrDst);
             connectivityCheckResponsesReceived++;
             checkSum = COMPUTE_CRC32(pBuffer + STUN_PACKET_TRANSACTION_ID_OFFSET, STUN_TRANSACTION_ID_LEN);
             // check if Binding Response is for finding srflx candidate
@@ -2491,8 +2540,8 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
                 pIceCandidatePair->rtcIceCandidatePairDiagnostics.currentRoundTripTime =
                     (DOUBLE) (pIceCandidatePair->roundTripTime) / HUNDREDS_OF_NANOS_IN_A_SECOND;
             }
-            CHK_WARN(transactionIdStoreHasId(pIceCandidatePair->pTransactionIdStore, pBuffer + STUN_PACKET_TRANSACTION_ID_OFFSET), retStatus,
-                     "Dropping response packet because transaction id does not match");
+//            CHK_WARN(transactionIdStoreHasId(pIceCandidatePair->pTransactionIdStore, pBuffer + STUN_PACKET_TRANSACTION_ID_OFFSET), retStatus,
+//                     "Dropping response packet because transaction id does not match");
 
             // Update round trip time and responses received only for relay candidates.
             if (pIceCandidatePair->local->iceCandidateType == ICE_CANDIDATE_TYPE_RELAYED) {
@@ -2551,10 +2600,11 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
             break;
 
         case STUN_PACKET_TYPE_BINDING_INDICATION:
-            DLOGD("Received STUN binding indication");
+            DLOGD("Received STUN binding indication %s -> %s", ipAddrSrc, ipAddrDst);
             break;
 
         default:
+            DLOGD("unhandled STUN packet %s -> %s", ipAddrSrc, ipAddrDst);
             if (!IS_STUN_PACKET(pBuffer)) {
                 CHK_STATUS(hexEncode(pBuffer, bufferLen, NULL, &hexStrLen));
                 hexStr = MEMCALLOC(1, hexStrLen * SIZEOF(CHAR));

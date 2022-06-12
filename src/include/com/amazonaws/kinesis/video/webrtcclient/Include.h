@@ -881,8 +881,6 @@ typedef VOID (*RtcOnFrame)(UINT64, PFrame);
  */
 typedef VOID (*RtcOnBandwidthEstimation)(UINT64, DOUBLE);
 
-typedef VOID (*RtcOnBandwidth)(UINT64, UINT32 txkbps, UINT32 rxkbps);
-
 /**
  * @brief RtcOnSenderBandwidthEstimation is fired everytime a bandwidth estimation value
  * is computed by sender. This is an estimate of ALL packets sent across all transceivers.
@@ -895,10 +893,11 @@ typedef VOID (*RtcOnBandwidth)(UINT64, UINT32 txkbps, UINT32 rxkbps);
  * @param[in] UINT32 rxBytes - bytes reported as received
  * @param[in] UINT32 txPackets - number of packets sent over the transport
  * @param[in] UINT32 rxPackets - number of packets reported as received
- * @param[in] UINT64 duration - time window for txBytes, rxBytes, txPackets, rxPackets
+ * @param[in] UINT64 localDuration - time window for txBytes, txPackets
+* @param[in] UINT64 remoteDuration - time window for rxBytes, rxPackets
  *
  */
-typedef VOID (*RtcOnSenderBandwidthEstimation)(UINT64, UINT32, UINT32, UINT32, UINT32, UINT64);
+typedef VOID (*RtcOnSenderBandwidthEstimation)(UINT64, UINT32, UINT32, UINT32, UINT32, UINT64, UINT64);
 
 /**
  * @brief RtcOnPictureLoss is fired everytime a Picture Loss Indication (PLI)

@@ -117,6 +117,9 @@ struct MySession {
     GstElement* texttopleft;
     RtcSessionDescriptionInit answerSdp;
     struct SimpleSignaling* signaling;
+    StackQueue txKbpsHistory;
+    StackQueue rxKbpsHistory;
+    UINT32 bandwidthEstimationsSinceLastBitrateChange;
 };
 
 static const char* ConnectionStateNames[] = {
@@ -150,6 +153,10 @@ VOID onConnectionStateChange_(UINT64 session64, RTC_PEER_CONNECTION_STATE state)
 {
     printf("onConnectionStateChange: %s\n", connection_state_to_string(state));
     session.connectionState = state;
+    if (RTC_PEER_CONNECTION_STATE_FAILED == state) {
+        printf("connection failed exiting\n");
+        exit(1);
+    }
 }
 
 void onRemoteMessage(UINT64 session64, PRtcDataChannel pRtcDataChannel, BOOL binary, PBYTE data, UINT32 len)
@@ -179,7 +186,95 @@ void onBandwidthEstimation(UINT64 session64, DOUBLE bitrate)
         g_object_set(session.texttopleft, "text", kbpsstr, NULL);
     }
 }
+#define FOREACH_IN_SINGLELIST(pdlist)                                                                                                                \
+    PSingleListNode pCurNode = NULL;                                                                                                                 \
+    UINT64 item = 0;                                                                                                                                 \
+    if (STATUS_SUCCESS == singleListGetHeadNode(pdlist, &pCurNode))                                                                                  \
+        for (; pCurNode != NULL && STATUS_SUCCEEDED(singleListGetNodeData(pCurNode, &item)); pCurNode = pCurNode->pNext)
 
+VOID onSenderBandwidth(UINT64 ipPeerConnection, UINT32 txBytes, UINT32 rxBytes, UINT32 txPacketsCnt, UINT32 rxPacketsCnt, UINT64 localDuration,
+                       UINT64 remoteDuration)
+{
+    UINT64 localMsec = KVS_CONVERT_TIMESCALE(localDuration, HUNDREDS_OF_NANOS_IN_A_SECOND, MILLISECONDS_PER_SECOND);
+    UINT64 remoteMsec = KVS_CONVERT_TIMESCALE(remoteDuration, HUNDREDS_OF_NANOS_IN_A_SECOND, MILLISECONDS_PER_SECOND);
+    UINT64 txkbps = localMsec == 0 ? 0 : (txBytes * 8 * 1000 / 1024) / localMsec;
+    UINT64 rxkbps = remoteMsec == 0 ? 0 : (rxBytes * 8 * 1000 / 1024) / remoteMsec;
+    DLOGD("TX: %lu kbps RX: %lu kbps TX %u b (%u pkts) in %lu msec RX %u b (%u pkts) in %lu msec", txkbps, rxkbps, txBytes, txPacketsCnt, localMsec,
+          rxBytes, rxPacketsCnt, remoteMsec);
+    if (session.encoder264 == NULL)
+        return;
+    stackQueueEnqueue(&session.txKbpsHistory, txkbps);
+    stackQueueEnqueue(&session.rxKbpsHistory, rxkbps);
+    session.bandwidthEstimationsSinceLastBitrateChange++;
+    if (session.txKbpsHistory.count < 30) {
+        //        printf("not enough tx history\n");
+        // not enough data
+        return;
+    }
+    while (session.txKbpsHistory.count > 30) {
+        UINT64 unused = 0;
+        stackQueueDequeue(&session.txKbpsHistory, &unused);
+    }
+    if (session.rxKbpsHistory.count > 30) {
+        UINT64 unused = 0;
+        stackQueueDequeue(&session.rxKbpsHistory, &unused);
+    }
+
+    if (session.bandwidthEstimationsSinceLastBitrateChange < 10) {
+        return ;
+    }
+    session.bandwidthEstimationsSinceLastBitrateChange = 0;
+
+    UINT64 sumtx = 0;
+    {
+        FOREACH_IN_SINGLELIST(&session.txKbpsHistory)
+        {
+            sumtx += item;
+        }
+    }
+
+    UINT64 sumrx = 0;
+    {
+        FOREACH_IN_SINGLELIST(&session.rxKbpsHistory)
+        {
+            sumrx += item;
+        }
+    }
+
+    txkbps = sumtx / session.txKbpsHistory.count;
+    rxkbps = sumrx / session.rxKbpsHistory.count;
+
+    UINT32 current = 0;
+    g_object_get(session.encoder264, "bitrate", &current, NULL);
+//    DLOGD("current: %u", current);
+
+    DOUBLE suggested = 0;
+    if (rxkbps >= txkbps * 0.98) {
+        suggested = (current * 1.02);
+        DLOGD("increase current %u to %.0f next", current, suggested);
+    } else if (rxkbps < txkbps * 0.9) {
+        suggested = (current * 0.9);
+        DLOGD("decrease current %u to %.0f next", current, suggested);
+    }
+    INT32 reportedNext = current;
+    if (suggested > 0) {
+        INT32 next = MAX(200, (INT32) suggested);
+        next = MIN(1024, next);
+        reportedNext = next;
+//        DLOGD("next: %d", next);
+
+        INT32 i = current - next;
+        if (ABS(i) > 0) {
+            DLOGS("current - next: %d", ABS(i));
+            g_object_set(session.encoder264, "bitrate", next, NULL);
+        }
+    }
+    if (session.texttopleft != NULL) {
+        char kbpsstr[80] = {0};
+        snprintf(kbpsstr, 80, "%lu/%lu %u/%d kbps", txkbps, rxkbps, current, reportedNext);
+        g_object_set(session.texttopleft, "text", kbpsstr, NULL);
+    }
+}
 void onBandwidth(UINT64 session64, UINT32 txkbps, UINT32 rxkbps)
 {
     printf("onBandwidth %u/%u kbps\n", txkbps, rxkbps);
@@ -254,7 +349,7 @@ GstFlowReturn on_new_sample(GstElement* sink, gpointer data, UINT64 trackid)
         // convert from segment timestamp to running time in live mode.
         segment = gst_sample_get_segment(sample);
         buf_pts = gst_segment_to_running_time(segment, GST_FORMAT_TIME, buffer->pts);
-        DLOGD("buf_pts %lu", buf_pts);
+        DLOGS("buf_pts %lu", buf_pts);
         if (!GST_CLOCK_TIME_IS_VALID(buf_pts)) {
             printf("[KVS GStreamer Master] Frame contains invalid PTS dropping the frame. \n");
         }
@@ -332,14 +427,16 @@ PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration)
         goto CleanUp;
     }
 
-    char* description =
-        "v4l2src device=/dev/video0 ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec "
-        "! videoconvert "
-        "! textoverlay halignment=left valignment=top name=texttopleft "
-        "! video/x-raw,format=I420 "
-        "! videoconvert "
-        "! x264enc bframes=0 speed-preset=fast bitrate=1024 byte-stream=TRUE tune=zerolatency name=encoder264 ! "
-        "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! appsink sync=TRUE emit-signals=TRUE name=appsink-video";
+    CHAR description[512] = {0};
+    SNPRINTF(description, SIZEOF(description),
+             "v4l2src device=%s ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec "
+             "! videoconvert "
+             "! textoverlay halignment=left valignment=top name=texttopleft "
+             "! video/x-raw,format=I420 "
+             "! videoconvert "
+             "! x264enc bframes=0 speed-preset=fast bitrate=1024 byte-stream=TRUE tune=zerolatency name=encoder264 ! "
+             "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! appsink sync=TRUE emit-signals=TRUE name=appsink-video",
+             pSampleConfiguration->videoDev);
     printf("%s\n", description);
     pipeline = gst_parse_launch(description, &error);
 
@@ -390,18 +487,68 @@ static void sigint_handler(int sig)
     session.signaling->interrupted = TRUE;
 }
 
+BOOL allowInterface(UINT64 customData, PCHAR networkInt)
+{
+    PCHAR allowedInterface = (PCHAR) customData;
+    BOOL useInterface = FALSE;
+    if (STRNCMP(networkInt, allowedInterface, STRLEN(allowedInterface)) == 0) {
+        useInterface = TRUE;
+    }
+    DLOGD("%s %s", networkInt, (useInterface) ? ("allowed. Candidates to be gathered") : ("blocked. Candidates will not be gathered"));
+    return useInterface;
+}
+#define NETWORK_INTERFACE_NAME_PARAM "-i"
+#define SIGNALING_LOCAL_ID_PARAM     "--our-id"
+#define SIGNALING_REMOTE_ID_PARAM    "--remote-id"
+#define STUN_HOSTNAME_PARAM          "-s"
+#define VIDEO_DEV_PARAM              "-v"
+//"stun:stun.l.google.com:19302"
+
 INT32 main(INT32 argc, CHAR* argv[])
 {
     globalCustomLogPrintFn = myDefaultLogPrint;
     //    signal(SIGINT, sigint_handler);
     SET_LOGGER_LOG_LEVEL(LOG_LEVEL_DEBUG);
     gst_init(&argc, &argv);
+    PCHAR interfaceName = NULL;
+    PCHAR ourId = NULL;
+    PCHAR remoteId = NULL;
+    PCHAR stunServer = NULL;
+    PCHAR videoDev = "/dev/video0";
+    for (int i = 1; i < argc; ++i) {
+        CHAR* param = argv[i];
+        if (STRCMP(param, NETWORK_INTERFACE_NAME_PARAM) == 0) {
+            interfaceName = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, SIGNALING_LOCAL_ID_PARAM) == 0) {
+            ourId = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, SIGNALING_REMOTE_ID_PARAM) == 0) {
+            remoteId = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, STUN_HOSTNAME_PARAM) == 0) {
+            stunServer = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, VIDEO_DEV_PARAM) == 0) {
+            videoDev = argv[i + 1];
+            i++;
+        } else {
+            printf("Unknown param %s\n", param);
+        }
+    }
+    if (!ourId || !remoteId) {
+        printf("Usage: ./customSignalingGst -v /dev/video0 -s stun:server.com:port -i network-interface-name --our-id OURID --remote-id REMOTEID\n");
+        return(2);
+    }
 
     STATUS retStatus = 0;
     CHK_STATUS(initKvsWebRtc());
+    DLOGD("init ok");
     //    struct CopyPasteSignaling copyPasteSignaling = {0};
     //    copyPasteSignalingInit(&copyPasteSignaling);
     struct WebsocketSignaling realSignaling = {0};
+    STRNCPY(realSignaling.ourId, ourId, STRLEN(ourId));
+    STRNCPY(realSignaling.remoteId, remoteId, STRLEN(remoteId));
     websocketSignalingInit(&realSignaling);
     struct SimpleSignaling* signaling = (struct SimpleSignaling*) &realSignaling;
     session.signaling = signaling;
@@ -414,10 +561,20 @@ INT32 main(INT32 argc, CHAR* argv[])
     session.rtcConfig.kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = (5 * HUNDREDS_OF_NANOS_IN_A_SECOND);
     session.rtcConfig.kvsRtcConfiguration.iceCandidateNominationTimeout = (120 * HUNDREDS_OF_NANOS_IN_A_SECOND);
     session.rtcConfig.kvsRtcConfiguration.iceConnectionCheckTimeout = (60 * HUNDREDS_OF_NANOS_IN_A_SECOND);
+    if (interfaceName) {
+        session.rtcConfig.kvsRtcConfiguration.iceSetInterfaceFilterFunc = allowInterface;
+        session.rtcConfig.kvsRtcConfiguration.filterCustomData = (UINT64) interfaceName;
+    }
     UINT64 session64 = (UINT64) &session;
-    STRNCPY(session.rtcConfig.iceServers[0].urls, "stun:stun.l.google.com:19302", MAX_ICE_CONFIG_URI_LEN);
+    if (stunServer) {
+        DLOGD("using stun %s", stunServer);
+        STRNCPY(session.rtcConfig.iceServers[0].urls, stunServer, MAX_ICE_CONFIG_URI_LEN);
+    }
 
     CHK_STATUS(createPeerConnection(&session.rtcConfig, &session.pPeerConnection));
+    // twcc bandwidth estimation
+    CHK_STATUS(peerConnectionOnSenderBandwidthEstimation(session.pPeerConnection, (UINT64) session.pPeerConnection, onSenderBandwidth));
+
     CHK_STATUS(peerConnectionOnIceCandidate(session.pPeerConnection, session64, onIceCandidate));
     CHK_STATUS(peerConnectionOnConnectionStateChange(session.pPeerConnection, session64, onConnectionStateChange_));
     CHK_STATUS(peerConnectionOnDataChannel(session.pPeerConnection, session64, onRemoteDataChannel));
@@ -431,7 +588,6 @@ INT32 main(INT32 argc, CHAR* argv[])
 
     CHK_STATUS(addTransceiver(session.pPeerConnection, &session.videoTrack, &trackinit, &session.transceiver));
     //    CHK_STATUS(transceiverOnBandwidthEstimation(session.transceiver, session64, onBandwidthEstimation));
-    ((PKvsPeerConnection) session.pPeerConnection)->onBandwidth = onBandwidth;
 
     RtcSessionDescriptionInit emptyAnswer = {0};
 
@@ -462,6 +618,7 @@ INT32 main(INT32 argc, CHAR* argv[])
         sampleStreamingSession.pVideoRtcRtpTransceiver = session.transceiver;
         config.streamingSessionCount = 1;
         config.sampleStreamingSessionList[0] = &sampleStreamingSession;
+        config.videoDev = videoDev;
         sendGstreamerVideo(&config);
     }
     printf("done\n");

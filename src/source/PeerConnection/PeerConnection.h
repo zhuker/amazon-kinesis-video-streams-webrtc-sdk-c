@@ -51,9 +51,10 @@ typedef struct {
 } TwccPacket, *PTwccPacket;
 
 typedef struct {
-    StackQueue twccPackets;
+    StackQueue twccPackets; // twcc sequence numbers in send order
     TwccPacket twccPacketBySeqNum[65536]; // twccPacketBySeqNum takes about 1.2MB of RAM but provides great cache locality
     UINT64 lastLocalTimeKvs;
+    UINT64 lastRemoteTimeKvs;
     UINT16 lastReportedSeqNum;
 } TwccManager, *PTwccManager;
 
@@ -128,13 +129,6 @@ typedef struct {
     PTwccManager pTwccManager;
     RtcOnSenderBandwidthEstimation onSenderBandwidthEstimation;
     UINT64 onSenderBandwidthEstimationCustomData;
-    MUTEX twccLock;
-    PRollingBuffer pTwccRollingBuffer;
-    PHashTable packetByTwcc; // look up packet by its twcc sequence number
-    UINT64 lastDataPacketSentTime;
-    TwccBitrate txrate;
-    TwccBitrate rxrate;
-    RtcOnBandwidth onBandwidth;
 } KvsPeerConnection, *PKvsPeerConnection;
 
 typedef struct {
@@ -155,11 +149,6 @@ STATUS twccManagerOnPacketSent(PKvsPeerConnection, PRtpPacket);
 
 // visible for testing only
 VOID onIceConnectionStateChange(UINT64, UINT64);
-
-STATUS twccRollingBufferFreeRtpPacket(UINT64 self, PUINT64 pData);
-STATUS twccRollingBufferAddRtpPacket(PKvsPeerConnection pc, PRtpPacket pRtpPacket);
-VOID twccOnPacketNotReceived(UINT64 customData, UINT16 seqNum);
-VOID twccOnPacketReceived(UINT64 customData, UINT16 seqNum, UINT64 receiveTimeKvs);
 
 #ifdef __cplusplus
 }

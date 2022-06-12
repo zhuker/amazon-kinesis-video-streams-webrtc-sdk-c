@@ -109,11 +109,15 @@ static int callback_simple_signaling(struct lws* wsi, enum lws_callback_reasons 
 
             if (!signaling->helloSent) {
                 signaling->helloSent = TRUE;
-                send_text(signaling, wsi, "HELLO 4243");
+                CHAR hello[32]={0};
+                SNPRINTF(hello, sizeof(hello) - 1, "HELLO %s", signaling->ourId);
+                send_text(signaling, wsi, hello);
             }
             if (signaling->helloReceived && !signaling->sessionRequested) {
                 signaling->sessionRequested = TRUE;
-                send_text(signaling, wsi, "SESSION 4242");
+                CHAR session[32] = {0};
+                SNPRINTF(session, sizeof(session) - 1, "SESSION %s", signaling->remoteId);
+                send_text(signaling, wsi, session);
             }
             if (signaling->sessionOk && !signaling->offerRequested) {
                 signaling->offerRequested = TRUE;
@@ -147,6 +151,8 @@ static int callback_simple_signaling(struct lws* wsi, enum lws_callback_reasons 
                 signaling->helloReceived = TRUE;
             } else if (!STRNCMP("SESSION_OK", in, strlen("SESSION_OK"))) {
                 signaling->sessionOk = TRUE;
+            } else if (in == STRSTR(in, "ERROR")) {
+                signaling->sessionError = TRUE;
             }
             if (lws_is_final_fragment(wsi)) {
                 signaling->bytesReceived = 0;
@@ -209,7 +215,7 @@ STATUS websocketSignalingReceiveOffer(struct SimpleSignaling* _self, PRtcSession
     STATUS retStatus = 0;
     struct WebsocketSignaling* self = (struct WebsocketSignaling*) _self;
     int n = 0;
-    while (n >= 0 && self->client_wsi && !self->offerReceived && !self->iface.interrupted)
+    while (n >= 0 && self->client_wsi && !(self->offerReceived || self->sessionError) && !self->iface.interrupted)
         n = lws_service(self->context, 0);
     CHK(self->offerReceived, STATUS_SIGNALING_INVALID_MESSAGE_TYPE);
     if (self->offerReceived) {

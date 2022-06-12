@@ -60,6 +60,7 @@ static STATUS onRtcpSenderReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKv
 
     if (pRtcpPacket->payloadLength != RTCP_PACKET_SENDER_REPORT_MINLEN) {
         // TODO: handle sender report containing receiver report blocks
+        DLOGW("unhandled packet type RTCP_PACKET_SENDER_REPORT size %d", pRtcpPacket->payloadLength);
         return STATUS_SUCCESS;
     }
 
@@ -91,6 +92,7 @@ static STATUS onRtcpReceiverReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection p
     // https://tools.ietf.org/html/rfc3550#section-6.4.2
     if (pRtcpPacket->payloadLength != RTCP_PACKET_RECEIVER_REPORT_MINLEN) {
         // TODO: handle multiple receiver report blocks
+        DLOGS("unhandled packet type RTCP_PACKET_TYPE_RECEIVER_REPORT size %d", pRtcpPacket->payloadLength);
         return STATUS_SUCCESS;
     }
 
@@ -137,6 +139,13 @@ CleanUp:
     return retStatus;
 }
 
+#define FOREACH_IN_DOUBLELIST(pdlist)                                                                                                                \
+    PDoubleListNode pCurNode = NULL;                                                                                                                 \
+    UINT64 item = 0;                                                                                                                                 \
+    CHK_STATUS(doubleListGetHeadNode(pdlist, &pCurNode));                                                                                            \
+    for (; pCurNode != NULL && STATUS_SUCCEEDED(doubleListGetNodeData(pCurNode, &item)); pCurNode = pCurNode->pNext)
+
+// TODO handle TWCC packet https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
 STATUS parseRtcpTwccPacket(PRtcpPacket pRtcpPacket, PTwccManager pTwccManager)
 {
     /*
@@ -183,7 +192,8 @@ STATUS parseRtcpTwccPacket(PRtcpPacket pRtcpPacket, PTwccManager pTwccManager)
 
     referenceTime = (pRtcpPacket->payload[12] << 16) | (pRtcpPacket->payload[13] << 8) | (pRtcpPacket->payload[14] & 0xff);
     referenceTime = KVS_CONVERT_TIMESCALE(referenceTime * 64, MILLISECONDS_PER_SECOND, HUNDREDS_OF_NANOS_IN_A_SECOND);
-    // TODO: handle lost twcc report packets
+    UINT8 fbPktCount = pRtcpPacket->payload[15];
+    DLOGS("twcc %u %lu %u", baseSeqNum, referenceTime, fbPktCount);
 
     packetsRemaining = packetStatusCount;
     chunkOffset = 16;
@@ -222,7 +232,7 @@ STATUS parseRtcpTwccPacket(PRtcpPacket pRtcpPacket, PTwccManager pTwccManager)
                         pTwccManager->lastReportedSeqNum = packetSeqNum;
                         break;
                     default:
-                        DLOGD("runLength unhandled statusSymbol %u", statusSymbol);
+                        DLOGS("runLength unhandled statusSymbol %u", statusSymbol);
                 }
                 if (recvDelta != MIN_INT16) {
                     referenceTime += KVS_CONVERT_TIMESCALE(recvDelta, TWCC_TICKS_PER_SECOND, HUNDREDS_OF_NANOS_IN_A_SECOND);
@@ -254,7 +264,7 @@ STATUS parseRtcpTwccPacket(PRtcpPacket pRtcpPacket, PTwccManager pTwccManager)
                         pTwccManager->lastReportedSeqNum = packetSeqNum;
                         break;
                     default:
-                        DLOGD("statusVector unhandled statusSymbol %u", statusSymbol);
+                        DLOGS("statusVector unhandled statusSymbol %u", statusSymbol);
                 }
                 if (recvDelta != MIN_INT16) {
                     referenceTime += KVS_CONVERT_TIMESCALE(recvDelta, TWCC_TICKS_PER_SECOND, HUNDREDS_OF_NANOS_IN_A_SECOND);
@@ -267,16 +277,6 @@ STATUS parseRtcpTwccPacket(PRtcpPacket pRtcpPacket, PTwccManager pTwccManager)
             }
         }
         chunkOffset += TWCC_FB_PACKETCHUNK_SIZE;
-    }
-    UINT32 txkbps = pKvsPeerConnection->txrate.kbps;
-    UINT32 txpackets = pKvsPeerConnection->txrate.windowPackets;
-    UINT32 rxkbps = pKvsPeerConnection->rxrate.kbps;
-    UINT32 rxpackets = pKvsPeerConnection->rxrate.windowPackets;
-    DLOGD("tx/rx %u/%u %u/%u kbps ", txpackets, rxpackets, txkbps, rxkbps);
-    if (txkbps > 0 && rxkbps > 0) {
-        if (pKvsPeerConnection->onBandwidth != NULL) {
-            pKvsPeerConnection->onBandwidth(0, txkbps, rxkbps);
-        }
     }
 
 CleanUp:
@@ -293,9 +293,11 @@ STATUS onRtcpTwccPacket(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerConn
     UINT64 sn = 0;
     INT64 ageOfOldestPacket;
     UINT64 localStartTimeKvs, localEndTimeKvs;
+    UINT64 remoteStartTimeKvs, remoteEndTimeKvs;
     UINT64 sentBytes = 0, receivedBytes = 0;
     UINT64 sentPackets = 0, receivedPackets = 0;
-    INT64 duration = 0;
+    UINT64 localDuration = 0;
+    INT64 remoteDuration = 0;
     UINT16 seqNum;
     PTwccPacket twccPacket;
 
@@ -305,6 +307,7 @@ STATUS onRtcpTwccPacket(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerConn
     MUTEX_LOCK(pKvsPeerConnection->twccLock);
     locked = TRUE;
     twcc = pKvsPeerConnection->pTwccManager;
+    remoteStartTimeKvs = twcc->lastRemoteTimeKvs;
     CHK_STATUS(parseRtcpTwccPacket(pRtcpPacket, twcc));
     CHK_STATUS(stackQueueIsEmpty(&twcc->twccPackets, &empty));
     CHK(!empty, STATUS_SUCCESS);
@@ -312,27 +315,43 @@ STATUS onRtcpTwccPacket(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerConn
     ageOfOldestPacket = twcc->lastLocalTimeKvs - twcc->twccPacketBySeqNum[(UINT16) sn].localTimeKvs;
     CHK(ageOfOldestPacket > TWCC_ESTIMATOR_TIME_WINDOW / 2, STATUS_SUCCESS);
     localStartTimeKvs = twcc->twccPacketBySeqNum[(UINT16) (sn - 1)].localTimeKvs;
+    remoteStartTimeKvs = twcc->twccPacketBySeqNum[(UINT16) (sn - 1)].remoteTimeKvs;
+//    if (remoteStartTimeKvs != TWCC_PACKET_UNITIALIZED_TIME) {
+//        DLOGD("remoteStartTimeKvs %lu", remoteStartTimeKvs);
+//    }
     if (localStartTimeKvs == TWCC_PACKET_UNITIALIZED_TIME) {
         // time not yet set (only happens for first rtp packet)
         localStartTimeKvs = twcc->twccPacketBySeqNum[(UINT16) sn].localTimeKvs;
     }
+    DLOGS("analyzing twcc packets from %u to %u", sn, twcc->lastReportedSeqNum);
     for (seqNum = sn; seqNum != twcc->lastReportedSeqNum; seqNum++) {
         twccPacket = &twcc->twccPacketBySeqNum[seqNum];
         localEndTimeKvs = twccPacket->localTimeKvs;
-        duration = localEndTimeKvs - localStartTimeKvs;
+        localDuration = localEndTimeKvs - localStartTimeKvs;
         sentBytes += twccPacket->packetSize;
         sentPackets++;
         if (twccPacket->remoteTimeKvs != TWCC_PACKET_LOST_TIME) {
+            if (remoteStartTimeKvs == TWCC_PACKET_UNITIALIZED_TIME || remoteStartTimeKvs == TWCC_PACKET_LOST_TIME) {
+                // time not yet set (only happens for first rtp packet)
+                remoteStartTimeKvs = twccPacket->remoteTimeKvs;
+//                DLOGD("remoteStartTimeKvs %lu", remoteStartTimeKvs);
+            }
+            remoteEndTimeKvs = twccPacket->remoteTimeKvs;
+            if (remoteStartTimeKvs != TWCC_PACKET_UNITIALIZED_TIME && remoteStartTimeKvs != TWCC_PACKET_LOST_TIME) {
+                INT64 dt = (INT64)remoteEndTimeKvs - (INT64)remoteStartTimeKvs;
+//                DLOGD("remoteEndTimeKvs %lu remoteStartTimeKvs %lu dt %ld", remoteEndTimeKvs, remoteStartTimeKvs, dt);
+                remoteDuration = MAX(remoteDuration, dt);
+            }
             receivedBytes += twccPacket->packetSize;
             receivedPackets++;
         }
     }
 
-    if (duration > 0) {
+    if (localDuration > 0) {
         MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
         locked = FALSE;
         pKvsPeerConnection->onSenderBandwidthEstimation(pKvsPeerConnection->onSenderBandwidthEstimationCustomData, sentBytes, receivedBytes,
-                                                        sentPackets, receivedPackets, duration);
+                                                        sentPackets, receivedPackets, localDuration, remoteDuration);
     }
 
 CleanUp:

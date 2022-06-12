@@ -16,6 +16,8 @@ STATUS onRtcpTwccPacket(PRtcpPacket, PKvsPeerConnection);
 // https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
 // Deltas are represented as multiples of 250us:
 #define TWCC_TICKS_PER_SECOND        (1000000LL / 250)
+// base time is represented as multiples of 64ms:
+#define TWCC_BASETIME_TICKS_PER_SECOND   (1000LL / 64)
 #define MICROSECONDS_PER_SECOND      1000000LL
 #define MILLISECONDS_PER_SECOND      1000LL
 #define TWCC_PACKET_LOST_TIME        ((UINT64) (-1LL))

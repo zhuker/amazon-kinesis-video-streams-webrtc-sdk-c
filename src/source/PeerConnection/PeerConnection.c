@@ -1408,40 +1408,6 @@ CleanUp:
     return retStatus;
 }
 
-UINT32 twccUpdate(PTwccBitrate prate, UINT64 packetSize, UINT64 timestampKvs)
-{
-    STATUS retStatus = STATUS_SUCCESS;
-    INT64 b = 0, t = 0;
-    INT64 deltaTime = prate->lastTimestamp > 0 ? timestampKvs - prate->lastTimestamp : 0;
-    deltaTime = MAX(0, deltaTime);
-    prate->lastTimestamp = MAX(prate->lastTimestamp, timestampKvs);
-    BOOL empty = TRUE;
-    while ((prate->windowTime + deltaTime) > (2 * HUNDREDS_OF_NANOS_IN_A_SECOND)) {
-        CHK_STATUS(stackQueueIsEmpty(&prate->bytesq, &empty));
-        if (empty) {
-            break;
-        }
-        CHK_STATUS(stackQueueDequeue(&prate->bytesq, &b));
-        CHK_STATUS(stackQueueDequeue(&prate->timesq, &t));
-        prate->windowTime -= t;
-        prate->windowBytes -= b;
-        prate->windowPackets--;
-    }
-
-    CHK_STATUS(stackQueueEnqueue(&prate->timesq, deltaTime));
-    CHK_STATUS(stackQueueEnqueue(&prate->bytesq, packetSize));
-    prate->windowBytes += packetSize;
-    prate->windowTime += deltaTime;
-    prate->windowPackets++;
-    if (prate->windowTime < 0) {
-        DLOGW("windowTime negative %ld bytes: %lu", prate->windowTime, prate->windowBytes);
-    }
-    prate->kbps = prate->windowTime > 0 ? (UINT32)((prate->windowBytes * 8ULL * 10000000ULL) / (prate->windowTime * 1024LL)) : 0;
-CleanUp:
-    CHK_LOG_ERR(retStatus);
-    return prate->kbps;
-}
-
 STATUS twccManagerOnPacketSent(PKvsPeerConnection pc, PRtpPacket pRtpPacket)
 {
     ENTERS();
@@ -1467,21 +1433,29 @@ STATUS twccManagerOnPacketSent(PKvsPeerConnection pc, PRtpPacket pRtpPacket)
     pc->pTwccManager->lastLocalTimeKvs = pRtpPacket->sentTime;
 
     // cleanup queue until it contains up to 2 seconds of sent packets
+    UINT16 firstCleaned = 0;
+    UINT16 lastCleaned = sn;
     do {
         CHK_STATUS(stackQueuePeek(&pc->pTwccManager->twccPackets, &sn));
+        if (firstCleaned == 0) {
+            firstCleaned = sn;
+            lastCleaned = sn;
+        }
         firstTimeKvs = pc->pTwccManager->twccPacketBySeqNum[(UINT16) sn].localTimeKvs;
         lastLocalTimeKvs = pRtpPacket->sentTime;
         ageOfOldest = lastLocalTimeKvs - firstTimeKvs;
-        if (ageOfOldest > TWCC_ESTIMATOR_TIME_WINDOW) {
+        if (ageOfOldest > TWCC_ESTIMATOR_TIME_WINDOW * 2) {
+            DLOGS("remove %lu because it is %ld old", sn, ageOfOldest);
             CHK_STATUS(stackQueueDequeue(&pc->pTwccManager->twccPackets, &sn));
+            lastCleaned = sn;
             CHK_STATUS(stackQueueIsEmpty(&pc->pTwccManager->twccPackets, &isEmpty));
         } else {
             break;
         }
     } while (!isEmpty);
-
-    // keep a 2 second window of sent bytes to estimate received bitrate
-    twccUpdate(&pc->txrate, copy->payloadLength, copy->sentTime);
+    if (firstCleaned != lastCleaned) {
+        DLOGS("cleaned twcc packets from %u to %u", firstCleaned, lastCleaned);
+    }
 
 CleanUp:
     if (locked) {
@@ -1492,3 +1466,9 @@ CleanUp:
     LEAVES();
     return retStatus;
 }
+
+#define FOREACH_IN_DOUBLELIST(pdlist)                                                                                                                \
+    PDoubleListNode pCurNode = NULL;                                                                                                                 \
+    UINT64 item = 0;                                                                                                                                 \
+    CHK_STATUS(doubleListGetHeadNode(pdlist, &pCurNode));                                                                                            \
+    for (; pCurNode != NULL && STATUS_SUCCEEDED(doubleListGetNodeData(pCurNode, &item)); pCurNode = pCurNode->pNext)

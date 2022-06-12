@@ -610,7 +610,7 @@ VOID sampleBandwidthEstimationHandler(UINT64 customData, DOUBLE maximumBitrate)
 }
 
 VOID sampleSenderBandwidthEstimationHandler(UINT64 customData, UINT32 txBytes, UINT32 rxBytes, UINT32 txPacketsCnt, UINT32 rxPacketsCnt,
-                                            UINT64 duration)
+                                            UINT64 duration, UINT64 remoteDuration)
 {
     UNUSED_PARAM(customData);
     UNUSED_PARAM(duration);

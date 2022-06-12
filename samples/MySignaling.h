@@ -17,6 +17,8 @@ STATUS copyPasteSignalingInit(struct CopyPasteSignaling* self);
 
 struct WebsocketSignaling {
     struct SimpleSignaling iface;
+    CHAR ourId[16];
+    CHAR remoteId[16];
     struct lws_protocols protocols[2];
     struct lws_context* context;
     struct lws* client_wsi;
@@ -31,6 +33,7 @@ struct WebsocketSignaling {
     UINT32 bytesAvailable;
     StackQueue pendingMessages;
     BOOL offerReceived;
+    BOOL sessionError;
 };
 
 void websocketSignalingInit(struct WebsocketSignaling* self);

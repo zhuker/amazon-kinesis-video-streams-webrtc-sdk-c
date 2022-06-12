@@ -292,7 +292,7 @@ More information about what environment variables you can configure can be found
 ### Filtering network interfaces
 
 This is useful to reduce candidate gathering time when it is known for certain network interfaces to not work well. A sample callback is available in `Common.c`. The `iceSetInterfaceFilterFunc` in `KvsRtcConfiguration` must be set to the required callback. In the sample, it can be done this way in `initializePeerConnection()`: 
-`configuration.kvsRtcConfiguration.iceSetInterfaceFilterFunc = sampleFilterNetworkInterfaces`
+`configuration.kvsRtcConfiguration.iceSetInterfaceFilterFunc = allowInterface`
 
 
 ## Documentation

@@ -70,6 +70,11 @@ if(GST_FOUND)
   )
   target_link_libraries(kvsWebrtcClientMasterGstSample kvsWebrtcClient kvsWebrtcSignalingClient ${GST_SAMPLE_LIBRARIES} kvsCommonLws kvspicUtils websockets)
 
+  add_executable(
+          customSignalingGst
+          customSignalingGstreamer.c MySignaling.c)
+  target_link_libraries(customSignalingGst kvsWebrtcClient kvspicUtils ${GST_SAMPLE_LIBRARIES} websockets)
+
   install(TARGETS kvsWebrtcClientMasterGstSample
     RUNTIME DESTINATION bin
   )
