@@ -153,7 +153,7 @@ VOID onConnectionStateChange_(UINT64 session64, RTC_PEER_CONNECTION_STATE state)
 {
     printf("onConnectionStateChange: %s\n", connection_state_to_string(state));
     session.connectionState = state;
-    if (RTC_PEER_CONNECTION_STATE_FAILED == state) {
+    if (RTC_PEER_CONNECTION_STATE_FAILED == state || RTC_PEER_CONNECTION_STATE_CLOSED == state) {
         printf("connection failed exiting\n");
         exit(1);
     }
