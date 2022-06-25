@@ -4,6 +4,7 @@
 #include "Samples.h"
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
+#include <stdio.h>
 #include "MySignaling.h"
 #include "../source/Include_i.h"
 
@@ -104,6 +105,39 @@ VOID myDefaultLogPrint(UINT32 level, PCHAR tag, PCHAR fmt, ...)
     }
 }
 
+typedef uint32_t (*GetBitrateKbpsFn)(GstElement*);
+typedef void (*SetBitrateKbpsFn)(GstElement*, uint32_t kbps);
+
+uint32_t x264enc_getbitrate(GstElement* encoder264)
+{
+    UINT32 current = 0;
+    g_object_get(encoder264, "bitrate", &current, NULL);
+    return current;
+}
+
+void x264enc_setbitrate(GstElement* encoder264, uint32_t kbps)
+{
+    g_object_set(encoder264, "bitrate", kbps, NULL);
+}
+
+uint32_t v4l2h264enc_getbitrate(GstElement* encoder264)
+{
+    UINT32 current = 0;
+    GstStructure* extra = NULL;
+    g_object_get(encoder264, "extra-controls", &extra, NULL);
+    if (extra != NULL) {
+        gst_structure_get_int(extra, "video_bitrate", &current);
+    }
+    return current / 1024;
+}
+
+void v4l2h264enc_setbitrate(GstElement* encoder264, uint32_t kbps)
+{
+    GstStructure* extra = gst_structure_new("s", "video_bitrate", G_TYPE_INT, kbps * 1024, NULL);
+    g_object_set(encoder264, "extra-controls", extra, NULL);
+    gst_structure_free(extra);
+}
+
 struct MySession {
     RtcConfiguration rtcConfig;
     PRtcPeerConnection pPeerConnection;
@@ -120,6 +154,8 @@ struct MySession {
     StackQueue txKbpsHistory;
     StackQueue rxKbpsHistory;
     UINT32 bandwidthEstimationsSinceLastBitrateChange;
+    GetBitrateKbpsFn getBitrateKbps;
+    SetBitrateKbpsFn setBitrateKbps;
 };
 
 static const char* ConnectionStateNames[] = {
@@ -221,7 +257,7 @@ VOID onSenderBandwidth(UINT64 ipPeerConnection, UINT32 txBytes, UINT32 rxBytes, 
     }
 
     if (session.bandwidthEstimationsSinceLastBitrateChange < 10) {
-        return ;
+        return;
     }
     session.bandwidthEstimationsSinceLastBitrateChange = 0;
 
@@ -244,8 +280,7 @@ VOID onSenderBandwidth(UINT64 ipPeerConnection, UINT32 txBytes, UINT32 rxBytes, 
     txkbps = sumtx / session.txKbpsHistory.count;
     rxkbps = sumrx / session.rxKbpsHistory.count;
 
-    UINT32 current = 0;
-    g_object_get(session.encoder264, "bitrate", &current, NULL);
+    UINT32 current = session.getBitrateKbps(session.encoder264);
 //    DLOGD("current: %u", current);
 
     DOUBLE suggested = 0;
@@ -266,7 +301,7 @@ VOID onSenderBandwidth(UINT64 ipPeerConnection, UINT32 txBytes, UINT32 rxBytes, 
         INT32 i = current - next;
         if (ABS(i) > 0) {
             DLOGS("current - next: %d", ABS(i));
-            g_object_set(session.encoder264, "bitrate", next, NULL);
+            session.setBitrateKbps(session.encoder264, next);
         }
     }
     if (session.texttopleft != NULL) {
@@ -409,12 +444,14 @@ CleanUp:
     return ret;
 }
 
+typedef GstFlowReturn (*OnNewVideoSample)(GstElement*, gpointer);
+
 GstFlowReturn on_new_video_sample(GstElement* sink, gpointer data)
 {
     return on_new_sample(sink, data, DEFAULT_VIDEO_TRACK_ID);
 }
 
-PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration)
+PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration, OnNewVideoSample on_video_sample)
 {
     STATUS retStatus = STATUS_SUCCESS;
     GstElement *appsinkVideo = NULL, *pipeline = NULL;
@@ -427,18 +464,7 @@ PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration)
         goto CleanUp;
     }
 
-    CHAR description[512] = {0};
-    SNPRINTF(description, SIZEOF(description),
-             "v4l2src device=%s ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec "
-             "! videoconvert "
-             "! textoverlay halignment=left valignment=top name=texttopleft "
-             "! video/x-raw,format=I420 "
-             "! videoconvert "
-             "! x264enc bframes=0 speed-preset=fast bitrate=1024 byte-stream=TRUE tune=zerolatency name=encoder264 ! "
-             "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! appsink sync=TRUE emit-signals=TRUE name=appsink-video",
-             pSampleConfiguration->videoDev);
-    printf("%s\n", description);
-    pipeline = gst_parse_launch(description, &error);
+    pipeline = gst_parse_launch(pSampleConfiguration->gstreamerInputPipeline, &error);
 
     if (pipeline == NULL) {
         printf("[KVS GStreamer Master] sendGstreamerAudioVideo(): Failed to launch gstreamer, operation returned status code: 0x%08x \n",
@@ -449,14 +475,25 @@ PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration)
     appsinkVideo = gst_bin_get_by_name(GST_BIN(pipeline), "appsink-video");
     session.encoder264 = gst_bin_get_by_name(GST_BIN(pipeline), "encoder264");
     session.texttopleft = gst_bin_get_by_name(GST_BIN(pipeline), "texttopleft");
-
+    gchar* encodertype = GST_OBJECT(gst_element_get_factory(session.encoder264))->name;
+    if (!STRCMP("x264enc", encodertype)) {
+        session.getBitrateKbps = x264enc_getbitrate;
+        session.setBitrateKbps = x264enc_setbitrate;
+    } else if (!STRCMP("v4l2h264enc", encodertype)) {
+        session.getBitrateKbps = v4l2h264enc_getbitrate;
+        session.setBitrateKbps = v4l2h264enc_setbitrate;
+    } else {
+        retStatus = STATUS_INTERNAL_ERROR;
+        printf("unsupported encoder type '%s'\n", encodertype);
+        goto CleanUp;
+    }
     if (appsinkVideo == NULL) {
         printf("[KVS GStreamer Master] sendGstreamerVideo(): cant find appsink, operation returned status code: 0x%08x \n", STATUS_INTERNAL_ERROR);
         goto CleanUp;
     }
 
     if (appsinkVideo != NULL) {
-        g_signal_connect(appsinkVideo, "new-sample", G_CALLBACK(on_new_video_sample), (gpointer) pSampleConfiguration);
+        g_signal_connect(appsinkVideo, "new-sample", G_CALLBACK(on_video_sample), (gpointer) pSampleConfiguration);
     }
 
     gst_element_set_state(pipeline, GST_STATE_PLAYING);
@@ -480,7 +517,7 @@ CleanUp:
         g_clear_error(&error);
     }
 
-    return (PVOID)(ULONG_PTR) retStatus;
+    return (PVOID) (ULONG_PTR) retStatus;
 }
 static void sigint_handler(int sig)
 {
@@ -502,7 +539,42 @@ BOOL allowInterface(UINT64 customData, PCHAR networkInt)
 #define SIGNALING_REMOTE_ID_PARAM    "--remote-id"
 #define STUN_HOSTNAME_PARAM          "-s"
 #define VIDEO_DEV_PARAM              "-v"
+#define HARDWARE_ENCODING_PARAM      "--hwenc"
 //"stun:stun.l.google.com:19302"
+
+GstFlowReturn noop_on_new_video_sample(GstElement* sink, gpointer data)
+{
+    GstFlowReturn ret = GST_FLOW_OK;
+    DLOGD("noop_on_new_video_sample");
+    return ret;
+}
+
+INT32 main5(INT32 argc, CHAR* argv[])
+{
+    globalCustomLogPrintFn = myDefaultLogPrint;
+    SET_LOGGER_LOG_LEVEL(LOG_LEVEL_DEBUG);
+    gst_init(&argc, &argv);
+    SampleConfiguration config = {0};
+    config.streamingSessionListReadLock = MUTEX_CREATE(FALSE);
+    SampleStreamingSession sampleStreamingSession = {0};
+    sampleStreamingSession.pVideoRtcRtpTransceiver = session.transceiver;
+    config.streamingSessionCount = 1;
+    config.sampleStreamingSessionList[0] = &sampleStreamingSession;
+    // v4l2src device=/dev/video0 name=camerainput num-buffers=200 ! image/jpeg,width=1280,height=720,framerate=30/1 ! v4l2jpegdec ! textoverlay
+    // halignment=left valignment=t op name=texttopleft  ! v4l2h264enc extra-controls=s,video_bitrate=1420000 name=encoder264 !
+    // 'video/x-h264,level=(string)3.2'
+    SNPRINTF(config.gstreamerInputPipeline, SIZEOF(config.gstreamerInputPipeline),
+             "v4l2src device=/dev/video0 name=camerainput"
+             " ! image/jpeg,width=1280,height=720,framerate=30/1"
+             " ! v4l2jpegdec "
+             " ! textoverlay halignment=left valignment=top name=texttopleft"
+             " ! v4l2h264enc extra-controls=s,video_bitrate=1000000 name=encoder264"
+             " ! video/x-h264,level=(string)3.2"
+             " ! appsink sync=TRUE emit-signals=TRUE name=appsink-video");
+    printf("%s\n", config.gstreamerInputPipeline);
+
+    sendGstreamerVideo(&config, noop_on_new_video_sample);
+}
 
 INT32 main(INT32 argc, CHAR* argv[])
 {
@@ -515,6 +587,7 @@ INT32 main(INT32 argc, CHAR* argv[])
     PCHAR remoteId = NULL;
     PCHAR stunServer = NULL;
     PCHAR videoDev = "/dev/video0";
+    BOOL hwEnc = FALSE;
     for (int i = 1; i < argc; ++i) {
         CHAR* param = argv[i];
         if (STRCMP(param, NETWORK_INTERFACE_NAME_PARAM) == 0) {
@@ -532,13 +605,22 @@ INT32 main(INT32 argc, CHAR* argv[])
         } else if (STRCMP(param, VIDEO_DEV_PARAM) == 0) {
             videoDev = argv[i + 1];
             i++;
+        } else if (STRCMP(param, HARDWARE_ENCODING_PARAM) == 0) {
+            hwEnc = TRUE;
         } else {
             printf("Unknown param %s\n", param);
         }
     }
     if (!ourId || !remoteId) {
-        printf("Usage: ./customSignalingGst -v /dev/video0 -s stun:server.com:port -i network-interface-name --our-id OURID --remote-id REMOTEID\n");
-        return(2);
+        printf("Usage: ./customSignalingGst"
+               " --hwenc"
+               " -v /dev/video0"
+               " -s stun:server.com:port"
+               " -i network-interface-name"
+               " --our-id OURID"
+               " --remote-id REMOTEID"
+               "\n");
+        return (2);
     }
 
     STATUS retStatus = 0;
@@ -618,8 +700,29 @@ INT32 main(INT32 argc, CHAR* argv[])
         sampleStreamingSession.pVideoRtcRtpTransceiver = session.transceiver;
         config.streamingSessionCount = 1;
         config.sampleStreamingSessionList[0] = &sampleStreamingSession;
-        config.videoDev = videoDev;
-        sendGstreamerVideo(&config);
+        PCHAR swEncFmt = "v4l2src device=%s name=camerainput"
+                         " ! image/jpeg,width=1280,height=720,framerate=30/1"
+                         " ! jpegdec"
+                         " ! videoconvert"
+                         " ! textoverlay halignment=left valignment=top name=texttopleft"
+                         " ! video/x-raw,format=I420"
+                         " ! videoconvert"
+                         " ! x264enc bframes=0 speed-preset=fast bitrate=1024 byte-stream=TRUE tune=zerolatency name=encoder264"
+                         " ! video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline"
+                         " ! appsink sync=TRUE emit-signals=TRUE name=appsink-video";
+
+        PCHAR hwEncFmt = "v4l2src device=%s name=camerainput"
+                         " ! image/jpeg,width=1280,height=720,framerate=30/1"
+                         " ! v4l2jpegdec "
+                         " ! textoverlay halignment=left valignment=top name=texttopleft"
+                         " ! v4l2h264enc extra-controls=s,video_bitrate=1000000 name=encoder264"
+                         " ! video/x-h264,level=(string)3.2"
+                         " ! appsink sync=TRUE emit-signals=TRUE name=appsink-video";
+
+        PCHAR pipelineFmt = hwEnc ? hwEncFmt : swEncFmt;
+        SNPRINTF(config.gstreamerInputPipeline, SIZEOF(config.gstreamerInputPipeline), pipelineFmt, videoDev);
+        printf("%s\n", config.gstreamerInputPipeline);
+        sendGstreamerVideo(&config, on_new_video_sample);
     }
     printf("done\n");
     return 0;

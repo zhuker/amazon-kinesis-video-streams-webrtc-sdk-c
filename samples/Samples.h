@@ -114,7 +114,7 @@ typedef struct {
 
     UINT32 pregenerateCertTimerId;
     PStackQueue pregeneratedCertificates; // Max MAX_RTCCONFIGURATION_CERTIFICATES certificates
-    PCHAR videoDev;
+    CHAR gstreamerInputPipeline[1024];
 } SampleConfiguration, *PSampleConfiguration;
 
 typedef struct {
