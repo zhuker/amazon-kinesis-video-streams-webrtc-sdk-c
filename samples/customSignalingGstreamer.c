@@ -156,6 +156,8 @@ struct MySession {
     UINT32 bandwidthEstimationsSinceLastBitrateChange;
     GetBitrateKbpsFn getBitrateKbps;
     SetBitrateKbpsFn setBitrateKbps;
+    UINT32 minBitrateKbps;
+    UINT32 maxBitrateKbps;
 };
 
 static const char* ConnectionStateNames[] = {
@@ -209,34 +211,25 @@ void onRemoteDataChannel(UINT64 session64, PRtcDataChannel pRtcDataChannel)
     dataChannelOnMessage(pRtcDataChannel, session64, onRemoteMessage);
 }
 
-void onBandwidthEstimation(UINT64 session64, DOUBLE bitrate)
-{
-    int kbps = (int) (bitrate / 1024);
-    printf("onBandwidthEstimation %dkbps\n", kbps);
-    if (session.encoder264 != NULL && kbps > 50) {
-        g_object_set(session.encoder264, "bitrate", kbps, NULL);
-    }
-    if (session.texttopleft != NULL) {
-        char kbpsstr[80] = {0};
-        snprintf(kbpsstr, 80, "%dkbps", kbps);
-        g_object_set(session.texttopleft, "text", kbpsstr, NULL);
-    }
-}
 #define FOREACH_IN_SINGLELIST(pdlist)                                                                                                                \
     PSingleListNode pCurNode = NULL;                                                                                                                 \
     UINT64 item = 0;                                                                                                                                 \
     if (STATUS_SUCCESS == singleListGetHeadNode(pdlist, &pCurNode))                                                                                  \
         for (; pCurNode != NULL && STATUS_SUCCEEDED(singleListGetNodeData(pCurNode, &item)); pCurNode = pCurNode->pNext)
 
+#define KBPS(bytes, msec) ((msec) == 0 ? 0 : ((bytes) *8 * 1000 / 1024) / (msec))
+
 VOID onSenderBandwidth(UINT64 ipPeerConnection, UINT32 txBytes, UINT32 rxBytes, UINT32 txPacketsCnt, UINT32 rxPacketsCnt, UINT64 localDuration,
                        UINT64 remoteDuration)
 {
     UINT64 localMsec = KVS_CONVERT_TIMESCALE(localDuration, HUNDREDS_OF_NANOS_IN_A_SECOND, MILLISECONDS_PER_SECOND);
     UINT64 remoteMsec = KVS_CONVERT_TIMESCALE(remoteDuration, HUNDREDS_OF_NANOS_IN_A_SECOND, MILLISECONDS_PER_SECOND);
-    UINT64 txkbps = localMsec == 0 ? 0 : (txBytes * 8 * 1000 / 1024) / localMsec;
-    UINT64 rxkbps = remoteMsec == 0 ? 0 : (rxBytes * 8 * 1000 / 1024) / remoteMsec;
+    UINT64 txkbps = KBPS(txBytes, localMsec);
+    UINT64 rxkbps = KBPS(rxBytes, remoteMsec);
     DLOGD("TX: %lu kbps RX: %lu kbps TX %u b (%u pkts) in %lu msec RX %u b (%u pkts) in %lu msec", txkbps, rxkbps, txBytes, txPacketsCnt, localMsec,
           rxBytes, rxPacketsCnt, remoteMsec);
+    if (session.minBitrateKbps >= session.maxBitrateKbps)
+        return;
     if (session.encoder264 == NULL)
         return;
     stackQueueEnqueue(&session.txKbpsHistory, txkbps);
@@ -293,8 +286,8 @@ VOID onSenderBandwidth(UINT64 ipPeerConnection, UINT32 txBytes, UINT32 rxBytes, 
     }
     INT32 reportedNext = current;
     if (suggested > 0) {
-        INT32 next = MAX(200, (INT32) suggested);
-        next = MIN(1024, next);
+        INT32 next = MAX(session.minBitrateKbps, (INT32) suggested);
+        next = MIN(session.maxBitrateKbps, next);
         reportedNext = next;
 //        DLOGD("next: %d", next);
 
@@ -308,40 +301,6 @@ VOID onSenderBandwidth(UINT64 ipPeerConnection, UINT32 txBytes, UINT32 rxBytes, 
         char kbpsstr[80] = {0};
         snprintf(kbpsstr, 80, "%lu/%lu %u/%d kbps", txkbps, rxkbps, current, reportedNext);
         g_object_set(session.texttopleft, "text", kbpsstr, NULL);
-    }
-}
-void onBandwidth(UINT64 session64, UINT32 txkbps, UINT32 rxkbps)
-{
-    printf("onBandwidth %u/%u kbps\n", txkbps, rxkbps);
-    if (session.encoder264 == NULL)
-        return;
-    UINT32 current = 0;
-    g_object_get(session.encoder264, "bitrate", &current, NULL);
-    DLOGD("current: %u", current);
-
-    DOUBLE suggested = 0;
-    if (rxkbps >= txkbps * 0.98) {
-        suggested = (current * 1.02);
-        DLOGD("increase current to %.0f next", suggested);
-    } else if (rxkbps < txkbps * 0.9) {
-        suggested = (current * 0.9);
-        DLOGD("decrease current to %.0f next", suggested);
-    }
-    if (suggested > 0) {
-        INT32 next = MAX(200, (INT32) suggested);
-        next = MIN(4096, next);
-        DLOGD("next: %d", next);
-
-        INT32 i = current - next;
-        if (ABS(i) > 0) {
-            DLOGD("current - next: %d", ABS(i));
-            g_object_set(session.encoder264, "bitrate", next, NULL);
-            if (session.texttopleft != NULL) {
-                char kbpsstr[80] = {0};
-                snprintf(kbpsstr, 80, "%dkbps", next);
-                g_object_set(session.texttopleft, "text", kbpsstr, NULL);
-            }
-        }
     }
 }
 
@@ -451,6 +410,9 @@ GstFlowReturn on_new_video_sample(GstElement* sink, gpointer data)
     return on_new_sample(sink, data, DEFAULT_VIDEO_TRACK_ID);
 }
 
+#define ENCODER264_LABEL    "encoder264"
+#define APPSINK_VIDEO_LABEL "appsink-video"
+#define TEXT_LABEL          "texttopleft"
 PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration, OnNewVideoSample on_video_sample)
 {
     STATUS retStatus = STATUS_SUCCESS;
@@ -472,9 +434,9 @@ PVOID sendGstreamerVideo(PSampleConfiguration pSampleConfiguration, OnNewVideoSa
         goto CleanUp;
     }
 
-    appsinkVideo = gst_bin_get_by_name(GST_BIN(pipeline), "appsink-video");
-    session.encoder264 = gst_bin_get_by_name(GST_BIN(pipeline), "encoder264");
-    session.texttopleft = gst_bin_get_by_name(GST_BIN(pipeline), "texttopleft");
+    appsinkVideo = gst_bin_get_by_name(GST_BIN(pipeline), APPSINK_VIDEO_LABEL);
+    session.encoder264 = gst_bin_get_by_name(GST_BIN(pipeline), ENCODER264_LABEL);
+    session.texttopleft = gst_bin_get_by_name(GST_BIN(pipeline), TEXT_LABEL);
     gchar* encodertype = GST_OBJECT(gst_element_get_factory(session.encoder264))->name;
     if (!STRCMP("x264enc", encodertype)) {
         session.getBitrateKbps = x264enc_getbitrate;
@@ -540,6 +502,8 @@ BOOL allowInterface(UINT64 customData, PCHAR networkInt)
 #define STUN_HOSTNAME_PARAM          "-s"
 #define VIDEO_DEV_PARAM              "-v"
 #define HARDWARE_ENCODING_PARAM      "--hwenc"
+#define MIN_BITRATE_PARAM            "--min-bitrate-kbps"
+#define MAX_BITRATE_PARAM            "--max-bitrate-kbps"
 //"stun:stun.l.google.com:19302"
 
 GstFlowReturn noop_on_new_video_sample(GstElement* sink, gpointer data)
@@ -567,13 +531,89 @@ INT32 main5(INT32 argc, CHAR* argv[])
              "v4l2src device=/dev/video0 name=camerainput"
              " ! image/jpeg,width=1280,height=720,framerate=30/1"
              " ! v4l2jpegdec "
-             " ! textoverlay halignment=left valignment=top name=texttopleft"
-             " ! v4l2h264enc extra-controls=s,video_bitrate=1000000 name=encoder264"
-             " ! video/x-h264,level=(string)3.2"
-             " ! appsink sync=TRUE emit-signals=TRUE name=appsink-video");
+             " ! textoverlay halignment=left valignment=top name=" TEXT_LABEL
+             " ! v4l2h264enc extra-controls=s,video_bitrate=1000000 name=" ENCODER264_LABEL " ! video/x-h264,level=(string)3.2"
+             " ! appsink sync=TRUE emit-signals=TRUE name=" APPSINK_VIDEO_LABEL);
     printf("%s\n", config.gstreamerInputPipeline);
 
     sendGstreamerVideo(&config, noop_on_new_video_sample);
+}
+
+struct Args {
+    PCHAR interfaceName;
+    PCHAR ourId;
+    PCHAR remoteId;
+    PCHAR stunServer;
+    PCHAR videoDev;
+    UINT32 minBitrateKbps;
+    UINT32 maxBitrateKbps;
+    BOOL hwEnc;
+};
+
+void make_default_args(struct Args* args)
+{
+    args->interfaceName = NULL;
+    args->ourId = NULL;
+    args->remoteId = NULL;
+    args->stunServer = NULL;
+    args->videoDev = "/dev/video0";
+    args->minBitrateKbps = 200;
+    args->maxBitrateKbps = 1024;
+    args->hwEnc = FALSE;
+}
+
+STATUS parse_args(struct Args* args, INT32 argc, CHAR* argv[])
+{
+    for (int i = 1; i < argc; ++i) {
+        CHAR* param = argv[i];
+        if (STRCMP(param, NETWORK_INTERFACE_NAME_PARAM) == 0) {
+            args->interfaceName = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, SIGNALING_LOCAL_ID_PARAM) == 0) {
+            args->ourId = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, SIGNALING_REMOTE_ID_PARAM) == 0) {
+            args->remoteId = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, STUN_HOSTNAME_PARAM) == 0) {
+            args->stunServer = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, VIDEO_DEV_PARAM) == 0) {
+            args->videoDev = argv[i + 1];
+            i++;
+        } else if (STRCMP(param, MAX_BITRATE_PARAM) == 0) {
+            if (!STATUS_SUCCEEDED(strtoui32(argv[i + 1], NULL, 10, &args->maxBitrateKbps))) {
+                printf("Cant set max bitrate to '%s'\n", argv[i + 1]);
+                return 4;
+            }
+            i++;
+        } else if (STRCMP(param, MIN_BITRATE_PARAM) == 0) {
+            if (!STATUS_SUCCEEDED(strtoui32(argv[i + 1], NULL, 10, &args->minBitrateKbps))) {
+                printf("Cant set min bitrate to '%s'\n", argv[i + 1]);
+                return 4;
+            }
+            i++;
+        } else if (STRCMP(param, HARDWARE_ENCODING_PARAM) == 0) {
+            args->hwEnc = TRUE;
+        } else {
+            printf("Unknown param %s\n", param);
+            return 3;
+        }
+    }
+    if (!args->ourId || !args->remoteId || args->maxBitrateKbps < args->minBitrateKbps) {
+        printf("Usage: ./customSignalingGst\n"
+               " --hwenc\n"
+               " -v video_device (default: /dev/video0)\n"
+               " -s stun:server.com:port (default: none)\n"
+               " -i network-interface-name (default: any)\n"
+               " " MIN_BITRATE_PARAM " kbps (default: 200)\n"
+               " " MAX_BITRATE_PARAM " kbps (default: 1024)\n"
+               " --our-id OURID\n"
+               " --remote-id REMOTEID\n"
+               "\n");
+        return (2);
+    }
+    return STATUS_SUCCESS;
 }
 
 INT32 main(INT32 argc, CHAR* argv[])
@@ -582,55 +622,20 @@ INT32 main(INT32 argc, CHAR* argv[])
     //    signal(SIGINT, sigint_handler);
     SET_LOGGER_LOG_LEVEL(LOG_LEVEL_DEBUG);
     gst_init(&argc, &argv);
-    PCHAR interfaceName = NULL;
-    PCHAR ourId = NULL;
-    PCHAR remoteId = NULL;
-    PCHAR stunServer = NULL;
-    PCHAR videoDev = "/dev/video0";
-    BOOL hwEnc = FALSE;
-    for (int i = 1; i < argc; ++i) {
-        CHAR* param = argv[i];
-        if (STRCMP(param, NETWORK_INTERFACE_NAME_PARAM) == 0) {
-            interfaceName = argv[i + 1];
-            i++;
-        } else if (STRCMP(param, SIGNALING_LOCAL_ID_PARAM) == 0) {
-            ourId = argv[i + 1];
-            i++;
-        } else if (STRCMP(param, SIGNALING_REMOTE_ID_PARAM) == 0) {
-            remoteId = argv[i + 1];
-            i++;
-        } else if (STRCMP(param, STUN_HOSTNAME_PARAM) == 0) {
-            stunServer = argv[i + 1];
-            i++;
-        } else if (STRCMP(param, VIDEO_DEV_PARAM) == 0) {
-            videoDev = argv[i + 1];
-            i++;
-        } else if (STRCMP(param, HARDWARE_ENCODING_PARAM) == 0) {
-            hwEnc = TRUE;
-        } else {
-            printf("Unknown param %s\n", param);
-        }
-    }
-    if (!ourId || !remoteId) {
-        printf("Usage: ./customSignalingGst"
-               " --hwenc"
-               " -v /dev/video0"
-               " -s stun:server.com:port"
-               " -i network-interface-name"
-               " --our-id OURID"
-               " --remote-id REMOTEID"
-               "\n");
-        return (2);
+    struct Args args = {0};
+    make_default_args(&args);
+    STATUS retStatus = parse_args(&args, argc, argv);
+    if (retStatus != STATUS_SUCCESS) {
+        return retStatus;
     }
 
-    STATUS retStatus = 0;
     CHK_STATUS(initKvsWebRtc());
     DLOGD("init ok");
     //    struct CopyPasteSignaling copyPasteSignaling = {0};
     //    copyPasteSignalingInit(&copyPasteSignaling);
     struct WebsocketSignaling realSignaling = {0};
-    STRNCPY(realSignaling.ourId, ourId, STRLEN(ourId));
-    STRNCPY(realSignaling.remoteId, remoteId, STRLEN(remoteId));
+    STRNCPY(realSignaling.ourId, args.ourId, STRLEN(args.ourId));
+    STRNCPY(realSignaling.remoteId, args.remoteId, STRLEN(args.remoteId));
     websocketSignalingInit(&realSignaling);
     struct SimpleSignaling* signaling = (struct SimpleSignaling*) &realSignaling;
     session.signaling = signaling;
@@ -643,14 +648,14 @@ INT32 main(INT32 argc, CHAR* argv[])
     session.rtcConfig.kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = (5 * HUNDREDS_OF_NANOS_IN_A_SECOND);
     session.rtcConfig.kvsRtcConfiguration.iceCandidateNominationTimeout = (120 * HUNDREDS_OF_NANOS_IN_A_SECOND);
     session.rtcConfig.kvsRtcConfiguration.iceConnectionCheckTimeout = (60 * HUNDREDS_OF_NANOS_IN_A_SECOND);
-    if (interfaceName) {
+    if (args.interfaceName) {
         session.rtcConfig.kvsRtcConfiguration.iceSetInterfaceFilterFunc = allowInterface;
-        session.rtcConfig.kvsRtcConfiguration.filterCustomData = (UINT64) interfaceName;
+        session.rtcConfig.kvsRtcConfiguration.filterCustomData = (UINT64) args.interfaceName;
     }
     UINT64 session64 = (UINT64) &session;
-    if (stunServer) {
-        DLOGD("using stun %s", stunServer);
-        STRNCPY(session.rtcConfig.iceServers[0].urls, stunServer, MAX_ICE_CONFIG_URI_LEN);
+    if (args.stunServer) {
+        DLOGD("using stun %s", args.stunServer);
+        STRNCPY(session.rtcConfig.iceServers[0].urls, args.stunServer, MAX_ICE_CONFIG_URI_LEN);
     }
 
     CHK_STATUS(createPeerConnection(&session.rtcConfig, &session.pPeerConnection));
@@ -669,7 +674,6 @@ INT32 main(INT32 argc, CHAR* argv[])
     STRNCPY(session.videoTrack.trackId, "trackId", MAX_MEDIA_STREAM_ID_LEN);
 
     CHK_STATUS(addTransceiver(session.pPeerConnection, &session.videoTrack, &trackinit, &session.transceiver));
-    //    CHK_STATUS(transceiverOnBandwidthEstimation(session.transceiver, session64, onBandwidthEstimation));
 
     RtcSessionDescriptionInit emptyAnswer = {0};
 
@@ -700,27 +704,30 @@ INT32 main(INT32 argc, CHAR* argv[])
         sampleStreamingSession.pVideoRtcRtpTransceiver = session.transceiver;
         config.streamingSessionCount = 1;
         config.sampleStreamingSessionList[0] = &sampleStreamingSession;
+        session.minBitrateKbps = args.minBitrateKbps;
+        session.maxBitrateKbps = args.maxBitrateKbps;
         PCHAR swEncFmt = "v4l2src device=%s name=camerainput"
                          " ! image/jpeg,width=1280,height=720,framerate=30/1"
                          " ! jpegdec"
                          " ! videoconvert"
-                         " ! textoverlay halignment=left valignment=top name=texttopleft"
-                         " ! video/x-raw,format=I420"
+                         " ! textoverlay halignment=left valignment=top name=" TEXT_LABEL " ! video/x-raw,format=I420"
                          " ! videoconvert"
-                         " ! x264enc bframes=0 speed-preset=fast bitrate=1024 byte-stream=TRUE tune=zerolatency name=encoder264"
+                         " ! x264enc bframes=0 speed-preset=fast bitrate=%d byte-stream=TRUE tune=zerolatency name=" ENCODER264_LABEL
                          " ! video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline"
-                         " ! appsink sync=TRUE emit-signals=TRUE name=appsink-video";
+                         " ! appsink sync=TRUE emit-signals=TRUE name=" APPSINK_VIDEO_LABEL;
 
         PCHAR hwEncFmt = "v4l2src device=%s name=camerainput"
                          " ! image/jpeg,width=1280,height=720,framerate=30/1"
                          " ! v4l2jpegdec "
-                         " ! textoverlay halignment=left valignment=top name=texttopleft"
-                         " ! v4l2h264enc extra-controls=s,video_bitrate=1000000 name=encoder264"
-                         " ! video/x-h264,level=(string)3.2"
-                         " ! appsink sync=TRUE emit-signals=TRUE name=appsink-video";
+                         " ! textoverlay halignment=left valignment=top name=" TEXT_LABEL
+                         " ! v4l2h264enc extra-controls=s,video_bitrate=%d name=" ENCODER264_LABEL " ! video/x-h264,level=(string)3.2"
+                         " ! appsink sync=TRUE emit-signals=TRUE name=" APPSINK_VIDEO_LABEL;
 
-        PCHAR pipelineFmt = hwEnc ? hwEncFmt : swEncFmt;
-        SNPRINTF(config.gstreamerInputPipeline, SIZEOF(config.gstreamerInputPipeline), pipelineFmt, videoDev);
+        if (args.hwEnc) {
+            SNPRINTF(config.gstreamerInputPipeline, SIZEOF(config.gstreamerInputPipeline), hwEncFmt, args.videoDev, args.maxBitrateKbps * 1024);
+        } else {
+            SNPRINTF(config.gstreamerInputPipeline, SIZEOF(config.gstreamerInputPipeline), swEncFmt, args.videoDev, args.maxBitrateKbps);
+        }
         printf("%s\n", config.gstreamerInputPipeline);
         sendGstreamerVideo(&config, on_new_video_sample);
     }
