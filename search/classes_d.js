@@ -9,5 +9,5 @@ var searchData=
   ['turnpeer_6',['TurnPeer',['../structTurnPeer.html',1,'']]],
   ['turnprofilediagnostics_7',['TurnProfileDiagnostics',['../structTurnProfileDiagnostics.html',1,'']]],
   ['twccmanager_8',['TwccManager',['../structTwccManager.html',1,'']]],
-  ['twccpacket_9',['TwccPacket',['../structTwccPacket.html',1,'']]]
+  ['twccrtppacketinfo_9',['TwccRtpPacketInfo',['../structTwccRtpPacketInfo.html',1,'']]]
 ];

@@ -12,7 +12,7 @@ var searchData=
   ['candidategatheringprocessendtime_9',['candidateGatheringProcessEndTime',['../struct____IceAgent.html#ab5037bdf99f338b91998dff9869e24de',1,'__IceAgent']]],
   ['candidategatheringstarttime_10',['candidategatheringstarttime',['../structKvsIceAgentStats.html#abda033adeb2bb2b0d8672486205b223a',1,'KvsIceAgentStats::candidateGatheringStartTime'],['../struct____IceAgent.html#ad306ab85e8e5c21aa92b6fe2c34ecd7e',1,'__IceAgent::candidateGatheringStartTime']]],
   ['candidategatheringtime_11',['candidategatheringtime',['../structKvsIceAgentStats.html#a1697c6e365f809e524d5fb7814b211ec',1,'KvsIceAgentStats::candidateGatheringTime'],['../structIceAgentProfileDiagnostics.html#ac520f1d381089a84fae32fa4c4f1c1f6',1,'IceAgentProfileDiagnostics::candidateGatheringTime']]],
-  ['candidatetype_12',['candidatetype',['../structRtcIceCandidateDiagnostics.html#ac4283215c5f444b8894c3e144902ef2e',1,'RtcIceCandidateDiagnostics::candidateType'],['../structRtcIceCandidateStats.html#a8b79dc090a0de993fc02dff03b278f86',1,'RtcIceCandidateStats::candidateType']]],
+  ['candidatetype_12',['candidatetype',['../structRtcIceCandidateDiagnostics.html#a426d5aad95f88c05843543afd4658f03',1,'RtcIceCandidateDiagnostics::candidateType'],['../structRtcIceCandidateStats.html#a0442601196bd5723afd3f03b4b6ca3be',1,'RtcIceCandidateStats::candidateType']]],
   ['cantrickleice_13',['canTrickleIce',['../structKvsPeerConnection.html#abf3b18d67924d047a1193facd12c1cfe',1,'KvsPeerConnection']]],
   ['cap_14',['cap',['../struct____IOBuffer.html#a23f8c217eb76c8bac394cff335ebfdbd',1,'__IOBuffer']]],
   ['capacity_15',['capacity',['../structRollingBuffer.html#a60a5feaa9c4562b081f0535d3436f97e',1,'RollingBuffer']]],

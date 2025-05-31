@@ -6,8 +6,8 @@
 <area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="159,825,195,877,217,899,241,918,281,935,337,949,404,959,478,966,628,973,755,974,755,979,628,978,477,971,403,964,336,954,280,940,239,922,213,903,191,880,154,828"/>
 <area shape="rect" id="Node000004" href="$structNullableUint32.html" title="Custom data type to allow setting UINT32 data type to NULL since C does not support setting basic dat..." alt="" coords="49,283,159,369"/>
 <area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="107,369,107,545,101,545,101,369"/>
-<area shape="rect" id="Node000005" href="$structRtcIceCandidateStats.html" title=": RtcIceCandidateStats Stats related to a specific candidate in a pair" alt="" coords="227,591,381,797"/>
-<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="340,796,357,831,380,864,407,894,439,918,463,928,496,937,580,952,755,969,755,974,579,957,495,942,461,933,436,922,403,898,375,868,353,833,335,798"/>
+<area shape="rect" id="Node000005" href="$structRtcIceCandidateStats.html" title=": RtcIceCandidateStats Stats related to a specific candidate in a pair" alt="" coords="227,601,381,787"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="335,786,353,823,376,860,404,892,439,918,463,928,496,937,580,952,755,969,755,974,579,957,495,942,461,933,436,922,401,896,372,863,349,826,331,788"/>
 <area shape="rect" id="Node000006" href="$structRtcIceServerStats.html" title=": RtcIceServerStats Stats related to the ICE Server" alt="" coords="405,601,595,787"/>
 <area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="544,786,565,822,591,857,622,890,656,918,705,942,756,959,754,964,703,947,653,922,618,894,587,861,561,825,539,788"/>
 <area shape="rect" id="Node000007" href="$structRtcTransportStats.html" title="RtcTransportStats Represents the stats corresponding to an RTCDtlsTransport and its underlying RTCIce..." alt="" coords="619,521,848,867"/>
