@@ -5,17 +5,17 @@
 #include "../Include_i.h"
 #include <uv.h>
 
-STATUS uvCreateSocket(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, UINT32 sendBufSize, uv_udp_t* udp_socket)
+STATUS uvCreateSocket(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, UINT32 sendBufSize, uv_udp_t* udp_socket, uv_loop_t *loop)
 {
     STATUS retStatus = STATUS_SUCCESS;
 
     INT32 sockfd, sockType, flags;
     INT32 optionValue;
 
-    CHK(udp_socket != NULL, STATUS_NULL_ARG);
+    CHK(udp_socket != NULL && loop != NULL, STATUS_NULL_ARG);
 
     if (protocol == KVS_SOCKET_PROTOCOL_UDP) {
-        UV_CHK_ERR(uv_udp_init(uv_default_loop(), udp_socket), STATUS_NOT_ENOUGH_MEMORY, "uv_udp_init");
+        UV_CHK_ERR(uv_udp_init(loop, udp_socket), STATUS_NOT_ENOUGH_MEMORY, "uv_udp_init");
     } else {
         DLOGE("tcp not implemented");
         exit(42);
@@ -66,7 +66,7 @@ CleanUp:
 
 STATUS uvCreateSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, PKvsIpAddress pBindAddr, PKvsIpAddress pPeerIpAddr,
                                 UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize,
-                                PSocketConnection* ppSocketConnection)
+                                PSocketConnection* ppSocketConnection, uv_loop_t* loop)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -81,7 +81,7 @@ STATUS uvCreateSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOC
     pSocketConnection->lock = MUTEX_CREATE(FALSE);
     CHK(pSocketConnection->lock != INVALID_MUTEX_VALUE, STATUS_INVALID_OPERATION);
 
-    CHK_STATUS(uvCreateSocket(familyType, protocol, sendBufSize, &pSocketConnection->uvLocalSocket));
+    CHK_STATUS(uvCreateSocket(familyType, protocol, sendBufSize, &pSocketConnection->uvLocalSocket, loop));
     if (pBindAddr) {
         CHK_STATUS(uvSocketBind(pBindAddr, protocol, &pSocketConnection->uvLocalSocket));
         pSocketConnection->hostIpAddr = *pBindAddr;

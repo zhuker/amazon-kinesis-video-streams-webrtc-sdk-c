@@ -522,7 +522,7 @@ STATUS iceAgentInitHostCandidate(PIceAgent pIceAgent)
 
         if (pDuplicatedIceCandidate == NULL &&
             STATUS_SUCCEEDED(uvCreateSocketConnection(pIpAddress->family, KVS_SOCKET_PROTOCOL_UDP, pIpAddress, NULL, (UINT64) pIceAgent,
-                                                    incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pSocketConnection))) {
+                                                    incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pSocketConnection, pIceAgent->kvsRtcConfiguration.loop))) {
             pTmpIceCandidate = MEMCALLOC(1, SIZEOF(IceCandidate));
             generateJSONSafeString(pTmpIceCandidate->id, ARRAY_SIZE(pTmpIceCandidate->id));
             pTmpIceCandidate->isRemote = FALSE;
@@ -1831,7 +1831,7 @@ STATUS iceAgentInitSrflxCandidate(PIceAgent pIceAgent)
         // The new port will be stored in pNewCandidate->ipAddress.port. And the IP address will later be updated
         // with the correct IP address once the STUN response is received.
         CHK_STATUS(uvCreateSocketConnection(pCandidate->ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, &pCandidate->ipAddress, NULL, (UINT64) pIceAgent,
-                                          incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pCandidate->pSocketConnection));
+                                          incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pCandidate->pSocketConnection, pIceAgent->kvsRtcConfiguration.loop));
         ATOMIC_STORE_BOOL(&pCandidate->pSocketConnection->receiveData, TRUE);
         // connectionListener will free the pSocketConnection at the end.
         CHK_STATUS(uvConnectionListenerAddConnection(pIceAgent->pConnectionListener, pCandidate->pSocketConnection));
@@ -1983,7 +1983,7 @@ STATUS iceAgentInitRelayCandidate(PIceAgent pIceAgent, UINT32 iceServerIndex, KV
     // with the correct relay IP address once the Allocation success response is received. Relay candidate's socket is managed
     // by TurnConnection struct.
     CHK_STATUS(uvCreateSocketConnection(turnServerIpFamily, protocol, NULL, pTurnServerAddress, (UINT64) pNewCandidate, incomingRelayedDataHandler,
-                                      pIceAgent->kvsRtcConfiguration.sendBufSize, &pNewCandidate->pSocketConnection));
+                                      pIceAgent->kvsRtcConfiguration.sendBufSize, &pNewCandidate->pSocketConnection, pIceAgent->kvsRtcConfiguration.loop));
     // connectionListener will free the pSocketConnection at the end.
     CHK_STATUS(uvConnectionListenerAddConnection(pIceAgent->pConnectionListener, pNewCandidate->pSocketConnection));
 

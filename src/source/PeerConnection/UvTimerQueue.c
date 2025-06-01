@@ -20,13 +20,15 @@ struct UvTimerQueue {
     volatile SIZE_T index;
 };
 
-STATUS uvTimerQueueCreate(TIMER_QUEUE_HANDLE *pInt) {
+STATUS uvTimerQueueCreate(TIMER_QUEUE_HANDLE *pInt, uv_loop_t *loop) {
+    STATUS retStatus = STATUS_SUCCESS;
+    CHK(pInt != NULL && loop != NULL, STATUS_INVALID_ARG);
     struct UvTimerQueue *tq = MEMCALLOC(1, SIZEOF(struct UvTimerQueue));
-    tq->loop = uv_default_loop();
+    tq->loop = loop;
     tq->maxTimerCount = DEFAULT_TIMER_QUEUE_TIMER_COUNT;
     *pInt = (TIMER_QUEUE_HANDLE) (PVOID) tq;
-    DLOGD("uvTimerQueueCreate %llu", *pInt);
-    return STATUS_SUCCESS;
+CleanUp:
+    return retStatus;
 }
 
 void uvTimerCallback(uv_timer_t *timer) {
