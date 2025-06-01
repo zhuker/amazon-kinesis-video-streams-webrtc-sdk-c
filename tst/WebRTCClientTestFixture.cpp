@@ -45,6 +45,23 @@ WebRtcClientTestBase::WebRtcClientTestBase()
     mStreamingRotationPeriod = TEST_STREAMING_TOKEN_DURATION;
 }
 
+static MUTEX noLocksCreateMutex(BOOL) {
+    return 42;
+}
+
+static VOID noLocksLockMutex(MUTEX) {
+}
+
+static VOID noLocksUnlockMutex(MUTEX) {
+}
+
+static BOOL noLocksTryLockMutex(MUTEX) {
+    return TRUE;
+}
+
+static VOID noLocksFreeMutex(MUTEX) {
+}
+
 void WebRtcClientTestBase::SetUp()
 {
     DLOGI("\nSetting up test: %s\n", GetTestName());
@@ -64,6 +81,11 @@ void WebRtcClientTestBase::SetUp()
     }
 
     SET_LOGGER_LOG_LEVEL(mLogLevel);
+    globalCreateMutex = noLocksCreateMutex;
+    globalLockMutex = noLocksLockMutex;
+    globalUnlockMutex = noLocksUnlockMutex;
+    globalTryLockMutex = noLocksTryLockMutex;
+    globalFreeMutex = noLocksFreeMutex;
 
     if (STATUS_SUCCESS != initKvsWebRtc()) {
         DLOGE("Test initKvsWebRtc FAILED!!!!");
