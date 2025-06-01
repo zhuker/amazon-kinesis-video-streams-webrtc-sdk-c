@@ -264,64 +264,7 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
         EXPECT_NE((PCHAR) NULL, STRSTR(sdp.sdp, pAnswerCertFingerprint));
     }
 
-#ifdef USE_LIBUV0
-    uv_timer_t mTimer{};
-    UV_LOG_ERR(uv_timer_init(uv_default_loop(), &mTimer), "uv_timer_init");
-    auto containers = std::make_pair(&offer, &answer);
-    mTimer.data = &containers;
-    auto cb = [](uv_timer_t *t) {
-        auto containers = (std::pair<PeerContainer *, PeerContainer *> *) t->data;
-        auto offerPeer = containers->first;
-        auto answerPeer = containers->second;
-        auto self = offerPeer->client;
-        auto connected = ATOMIC_LOAD(&self->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]);
-        printf("connected: %llu\n", connected);
-        if (connected == 2) {
-            if (offerPeer->pc != nullptr) {
-                CHK_LOG_ERR(closePeerConnection(offerPeer->pc));
-                CHK_LOG_ERR(freePeerConnection(&offerPeer->pc));
-            }
-            
-            if (answerPeer->pc != nullptr) {
-                CHK_LOG_ERR(closePeerConnection(answerPeer->pc));
-                CHK_LOG_ERR(freePeerConnection(&answerPeer->pc));
-            }
-            printf("active_handles %u %u\n",t->loop->active_handles, t->loop->active_reqs.count);
-            if (t->loop->active_handles == 1 && t->loop->active_reqs.count == 0) {
-                UV_LOG_ERR(uv_timer_stop(t), "uv_timer_stop");
-                if (!uv_is_closing((uv_handle_t*)t)) {
-                    uv_close((uv_handle_t *) t, [](uv_handle_t *handle) {});
-                }
-            }
-            int ret = uv_loop_close(t->loop);
-            UV_LOG_ERR(ret, "uv_loop_close");
-            if (ret == UV_EBUSY) {
-                uv_walk(uv_default_loop(),
-                        [](uv_handle_t *handle, void * /*arg*/) {
-                            DLOGE(
-                                "alive UV handle found (this shouldn't happen) [type:%s, active:%d, closing:%d, has_ref:%d]",
-                                uv_handle_type_name(handle->type),
-                                uv_is_active(handle),
-                                uv_is_closing(handle),
-                                uv_has_ref(handle));
-
-                            // if (!uv_is_closing(handle))
-                            //     uv_close(handle, [](uv_handle_t *handle) {
-                            //         DLOGE(
-                            //             "handle closed [type:%s, active:%d, closing:%d, has_ref:%d]",
-                            //             uv_handle_type_name(handle->type),
-                            //             uv_is_active(handle),
-                            //             uv_is_closing(handle),
-                            //             uv_has_ref(handle));
-                            //     });
-                        }, nullptr);
-            }
-        }
-    };
-    UV_LOG_ERR(uv_timer_start(&mTimer, cb, 0, 1000), "uv_timer_start");
-    UV_LOG_ERR(uv_run(uv_default_loop(), UV_RUN_DEFAULT), "uv_run");
-    this->noNewThreads = TRUE;
-#elif defined(USE_LIBUV)
+#if defined(USE_LIBUV)
     uvlooper = std::thread([]() {
         my_set_threadname("uv");
         UV_LOG_ERR(uv_run(uv_default_loop(), UV_RUN_DEFAULT), "uv_run");
@@ -344,7 +287,6 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     this->noNewThreads = TRUE;
     this->lock.unlock();
 #endif
-    
 
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, onICECandidateHdlrDone));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) 0, onICECandidateHdlrDone));

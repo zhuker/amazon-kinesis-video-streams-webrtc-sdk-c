@@ -6,21 +6,6 @@ namespace amazonaws {
 namespace kinesis {
 namespace video {
 namespace webrtcclient {
-static void* leak = nullptr;
-
-TEST(Bla, ObviousLeak)
-{
-    char *aopts = getenv("ASAN_OPTIONS");
-    if (aopts) {
-        printf("ASAN_OPTIONS: %s\n", aopts);
-    } else {
-        printf("no ASAN_OPTIONS\n");
-    }
-    leak = malloc(42000);
-    printf("leak %p\n", leak);
-    // printf("leak %u\n", ((char*)leak)[42001]);
-    leak = nullptr;
-}
 
 class DataChannelFunctionalityTest : public WebRtcClientTestBase {
 };
@@ -62,10 +47,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_Disconnected)
                 remoteOpen->channels.emplace(name, count + 1);
             }
         }
-        // DLOGD("dataChannelSend '%s' '%s'", pRtcDataChannel->name, TEST_DATA_CHANNEL_MESSAGE);
-        CHK_LOG_ERR(dataChannelSend(pRtcDataChannel, FALSE, (PBYTE) TEST_DATA_CHANNEL_MESSAGE, STRLEN(TEST_DATA_CHANNEL_MESSAGE)));
-        // DLOGD("dataChannelSend '%s' '%s'", pRtcDataChannel->name, TEST_DATA_CHANNEL_MESSAGE2);
-        // CHK_LOG_ERR(dataChannelSend(pRtcDataChannel, FALSE, (PBYTE) TEST_DATA_CHANNEL_MESSAGE2, STRLEN(TEST_DATA_CHANNEL_MESSAGE2)));
+        dataChannelSend(pRtcDataChannel, FALSE, (PBYTE) TEST_DATA_CHANNEL_MESSAGE, STRLEN(TEST_DATA_CHANNEL_MESSAGE));
     };
 
     auto dataChannelOnOpenCallback = [](UINT64 customData, PRtcDataChannel pDataChannel) {
@@ -76,9 +58,6 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_Disconnected)
     auto dataChannelOnMessageCallback = [](UINT64 customData, PRtcDataChannel pDataChannel, BOOL isBinary, PBYTE pMsg, UINT32 pMsgLen) {
         UNUSED_PARAM(pDataChannel);
         UNUSED_PARAM(isBinary);
-        char msg[1024]= {0};
-        MEMCPY(msg, pMsg, pMsgLen);
-        DLOGD("dataChannelOnMessageCallback '%s' '%s'", pDataChannel->name, msg);
         if (STRNCMP((PCHAR) pMsg, TEST_DATA_CHANNEL_MESSAGE, pMsgLen) == 0) {
             ATOMIC_INCREMENT((PSIZE_T) customData);
         }
