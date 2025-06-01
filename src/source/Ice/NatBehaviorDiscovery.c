@@ -303,8 +303,8 @@ STATUS discoverNatBehavior(PCHAR stunServer, NAT_BEHAVIOR* pNatMappingBehavior, 
     ATOMIC_STORE_BOOL(&pSocketConnection->receiveData, TRUE);
 
     CHK_STATUS(createConnectionListener(&pConnectionListener));
-    CHK_STATUS(connectionListenerAddConnection(pConnectionListener, pSocketConnection));
-    CHK_STATUS(connectionListenerStart(pConnectionListener));
+    CHK_STATUS(uvConnectionListenerAddConnection(pConnectionListener, pSocketConnection));
+    CHK_STATUS(uvConnectionListenerStart(pConnectionListener));
 
     MUTEX_LOCK(lock);
     locked = TRUE;
@@ -322,10 +322,10 @@ STATUS discoverNatBehavior(PCHAR stunServer, NAT_BEHAVIOR* pNatMappingBehavior, 
 
     CHK_STATUS(connectionListenerRemoveAllConnection(pConnectionListener));
     freeSocketConnection(&pSocketConnection);
-    CHK_STATUS(createSocketConnection(iceServerStun.ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, pSelectedLocalInterface, NULL, (UINT64) &customData,
+    CHK_STATUS(uvCreateSocketConnection(iceServerStun.ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, pSelectedLocalInterface, NULL, (UINT64) &customData,
                                       natTestIncomingDataHandler, 0, &pSocketConnection));
     ATOMIC_STORE_BOOL(&pSocketConnection->receiveData, TRUE);
-    CHK_STATUS(connectionListenerAddConnection(pConnectionListener, pSocketConnection));
+    CHK_STATUS(uvConnectionListenerAddConnection(pConnectionListener, pSocketConnection));
 
     MUTEX_LOCK(lock);
     locked = TRUE;

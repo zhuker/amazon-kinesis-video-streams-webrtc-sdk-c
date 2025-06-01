@@ -116,6 +116,7 @@ STATUS createSctpSession(PSctpSessionCallbacks pSctpSessionCallbacks, PSctpSessi
         STATUS_SCTP_SESSION_SETUP_FAILED);
 
 CleanUp:
+    CHK_LOG_ERR(retStatus);
     if (STATUS_FAILED(retStatus)) {
         freeSctpSession(&pSctpSession);
     }
@@ -194,6 +195,7 @@ STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL 
         STATUS_INTERNAL_ERROR);
 
 CleanUp:
+    CHK_LOG_ERR(retStatus);
     LEAVES();
     return retStatus;
 }

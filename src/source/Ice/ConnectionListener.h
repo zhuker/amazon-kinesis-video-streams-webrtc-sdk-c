@@ -56,6 +56,7 @@ STATUS freeConnectionListener(PConnectionListener*);
  * @return - STATUS status of execution
  */
 STATUS connectionListenerAddConnection(PConnectionListener, PSocketConnection);
+STATUS uvConnectionListenerAddConnection(PConnectionListener, PSocketConnection);
 
 /**
  * remove PSocketConnection from the list to listen for incoming data
@@ -85,6 +86,7 @@ STATUS connectionListenerRemoveAllConnection(PConnectionListener);
  * @return - STATUS status of execution
  */
 STATUS connectionListenerStart(PConnectionListener);
+STATUS uvConnectionListenerStart(PConnectionListener);
 
 ////////////////////////////////////////////
 // internal functionalities

@@ -3,6 +3,122 @@
  */
 #define LOG_CLASS "SocketConnection"
 #include "../Include_i.h"
+#include <uv.h>
+
+STATUS uvCreateSocket(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, UINT32 sendBufSize, uv_udp_t* udp_socket)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    INT32 sockfd, sockType, flags;
+    INT32 optionValue;
+
+    CHK(udp_socket != NULL, STATUS_NULL_ARG);
+
+    if (protocol == KVS_SOCKET_PROTOCOL_UDP) {
+        UV_CHK_ERR(uv_udp_init(uv_default_loop(), udp_socket), STATUS_NOT_ENOUGH_MEMORY, "uv_udp_init");
+    } else {
+        DLOGE("tcp not implemented");
+        exit(42);
+    }
+CleanUp:
+
+    return retStatus;
+}
+
+STATUS uvSocketBind(PKvsIpAddress pHostIpAddress, KVS_SOCKET_PROTOCOL protocol, uv_udp_t* udp_socket)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    struct sockaddr_in ipv4Addr;
+    struct sockaddr_in6 ipv6Addr;
+    struct sockaddr* sockAddr = NULL;
+    socklen_t addrLen;
+
+    CHK(pHostIpAddress != NULL, STATUS_NULL_ARG);
+
+    if (pHostIpAddress->family == KVS_IP_FAMILY_TYPE_IPV4) {
+        MEMSET(&ipv4Addr, 0x00, SIZEOF(ipv4Addr));
+        ipv4Addr.sin_family = AF_INET;
+        ipv4Addr.sin_port = 0; // use next available port
+        MEMCPY(&ipv4Addr.sin_addr, pHostIpAddress->address, IPV4_ADDRESS_LENGTH);
+        // TODO: Properly handle the non-portable sin_len field if needed per https://issues.amazon.com/KinesisVideo-4952
+        // ipv4Addr.sin_len = SIZEOF(ipv4Addr);
+        sockAddr = (struct sockaddr*) &ipv4Addr;
+        addrLen = SIZEOF(struct sockaddr_in);
+    } else {
+        MEMSET(&ipv6Addr, 0x00, SIZEOF(ipv6Addr));
+        ipv6Addr.sin6_family = AF_INET6;
+        ipv6Addr.sin6_port = 0; // use next available port
+        MEMCPY(&ipv6Addr.sin6_addr, pHostIpAddress->address, IPV6_ADDRESS_LENGTH);
+        // TODO: Properly handle the non-portable sin6_len field if needed per https://issues.amazon.com/KinesisVideo-4952
+        // ipv6Addr.sin6_len = SIZEOF(ipv6Addr);
+        sockAddr = (struct sockaddr*) &ipv6Addr;
+        addrLen = SIZEOF(struct sockaddr_in6);
+    }
+    CHK(protocol == KVS_SOCKET_PROTOCOL_UDP, STATUS_NOT_IMPLEMENTED);
+    UV_CHK_ERR(uv_udp_bind(udp_socket, sockAddr, UV_UDP_REUSEADDR), STATUS_BINDING_SOCKET_FAILED, "uv_udp_bind");
+    socklen_t namelen = addrLen;
+    UV_CHK_ERR(uv_udp_getsockname(udp_socket, (struct sockaddr*) sockAddr, &namelen), STATUS_CREATE_UDP_SOCKET_FAILED, "uv_udp_getsockname");
+    pHostIpAddress->port = (UINT16) pHostIpAddress->family == KVS_IP_FAMILY_TYPE_IPV4 ? ipv4Addr.sin_port : ipv6Addr.sin6_port;
+
+CleanUp:
+    return retStatus;
+}
+
+STATUS uvCreateSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, PKvsIpAddress pBindAddr, PKvsIpAddress pPeerIpAddr,
+                                UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize,
+                                PSocketConnection* ppSocketConnection)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PSocketConnection pSocketConnection = NULL;
+
+    CHK(ppSocketConnection != NULL, STATUS_NULL_ARG);
+    CHK(protocol == KVS_SOCKET_PROTOCOL_UDP || pPeerIpAddr != NULL, STATUS_INVALID_ARG);
+
+    pSocketConnection = (PSocketConnection) MEMCALLOC(1, SIZEOF(SocketConnection));
+    CHK(pSocketConnection != NULL, STATUS_NOT_ENOUGH_MEMORY);
+
+    pSocketConnection->lock = MUTEX_CREATE(FALSE);
+    CHK(pSocketConnection->lock != INVALID_MUTEX_VALUE, STATUS_INVALID_OPERATION);
+
+    CHK_STATUS(uvCreateSocket(familyType, protocol, sendBufSize, &pSocketConnection->uvLocalSocket));
+    if (pBindAddr) {
+        CHK_STATUS(uvSocketBind(pBindAddr, protocol, &pSocketConnection->uvLocalSocket));
+        pSocketConnection->hostIpAddr = *pBindAddr;
+    }
+
+    pSocketConnection->secureConnection = FALSE;
+    pSocketConnection->protocol = protocol;
+    if (protocol == KVS_SOCKET_PROTOCOL_TCP) {
+        DLOGE("uvCreateSocketConnection tcp not implemented");
+        exit(43);
+        //        pSocketConnection->peerIpAddr = *pPeerIpAddr;
+        //        CHK_STATUS(socketConnect(pPeerIpAddr, pSocketConnection->localSocket));
+    }
+    ATOMIC_STORE_BOOL(&pSocketConnection->connectionClosed, FALSE);
+    ATOMIC_STORE_BOOL(&pSocketConnection->receiveData, FALSE);
+    ATOMIC_STORE_BOOL(&pSocketConnection->inUse, FALSE);
+    pSocketConnection->dataAvailableCallbackCustomData = customData;
+    pSocketConnection->dataAvailableCallbackFn = dataAvailableFn;
+
+CleanUp:
+
+    CHK_LOG_ERR(retStatus);
+
+    if (STATUS_FAILED(retStatus) && pSocketConnection != NULL) {
+        freeSocketConnection(&pSocketConnection);
+        pSocketConnection = NULL;
+    }
+
+    if (ppSocketConnection != NULL) {
+        *ppSocketConnection = pSocketConnection;
+    }
+
+    LEAVES();
+    return retStatus;
+}
+
+STATUS uvSocketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf, UINT32 bufLen, PKvsIpAddress pDestIp, PUINT32 pBytesWritten);
 
 STATUS createSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, PKvsIpAddress pBindAddr, PKvsIpAddress pPeerIpAddr,
                               UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize,
@@ -113,7 +229,13 @@ STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
     DLOGD("close socket connected with ip: %s:%u. family:%d", ipAddr, (UINT16) getInt16(pSocketConnection->peerIpAddr.port),
           pSocketConnection->peerIpAddr.family);
 
-    if (STATUS_FAILED(retStatus = closeSocket(pSocketConnection->localSocket))) {
+    uv_udp_t* udp_socket = &pSocketConnection->uvLocalSocket;
+    if (udp_socket != NULL) {
+        UV_CHK_ERR(uv_udp_recv_stop(udp_socket), STATUS_CLOSE_SOCKET_FAILED, "Failed to stop receiving on the socket");
+        if (!uv_is_closing((uv_handle_t*) udp_socket)) {
+            uv_close((uv_handle_t*) udp_socket, NULL);
+        }
+    } else if (STATUS_FAILED(retStatus = closeSocket(pSocketConnection->localSocket))) {
         DLOGW("Failed to close the local socket with 0x%08x", retStatus);
     }
 
@@ -134,7 +256,7 @@ STATUS socketConnectionTlsSessionOutBoundPacket(UINT64 customData, PBYTE pBuffer
     CHK(customData != 0, STATUS_NULL_ARG);
 
     pSocketConnection = (PSocketConnection) customData;
-    CHK_STATUS(socketSendDataWithRetry(pSocketConnection, pBuffer, bufferLen, NULL, NULL));
+    CHK_STATUS(uvSocketSendDataWithRetry(pSocketConnection, pBuffer, bufferLen, NULL, NULL));
 
 CleanUp:
     return retStatus;
@@ -224,9 +346,9 @@ STATUS socketConnectionSendData(PSocketConnection pSocketConnection, PBYTE pBuf,
     if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_TCP && pSocketConnection->secureConnection) {
         CHK_STATUS(tlsSessionPutApplicationData(pSocketConnection->pTlsSession, pBuf, bufLen));
     } else if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_TCP) {
-        CHK_STATUS(retStatus = socketSendDataWithRetry(pSocketConnection, pBuf, bufLen, NULL, NULL));
+        CHK_STATUS(retStatus = uvSocketSendDataWithRetry(pSocketConnection, pBuf, bufLen, NULL, NULL));
     } else if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
-        CHK_STATUS(retStatus = socketSendDataWithRetry(pSocketConnection, pBuf, bufLen, pDestIp, NULL));
+        CHK_STATUS(retStatus = uvSocketSendDataWithRetry(pSocketConnection, pBuf, bufLen, pDestIp, NULL));
     } else {
         CHECK_EXT(FALSE, "socketConnectionSendData should not reach here. Nothing is sent.");
     }
@@ -348,6 +470,95 @@ BOOL socketConnectionIsConnected(PSocketConnection pSocketConnection)
 
     DLOGW("socket connection check failed with errno %s(%d)", getErrorString(getErrorCode()), getErrorCode());
     return FALSE;
+}
+
+static STATUS my_on_send0(UvUdpSendRequest* ctx)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    CHK(ctx->pSocketConnection != NULL, STATUS_NULL_ARG);
+    MUTEX_LOCK(ctx->pSocketConnection->lock);
+    BITCLEAR(ctx->pSocketConnection->uvSendBufAvailableSlots, ctx->slot);
+
+CleanUp:
+    MUTEX_UNLOCK(ctx->pSocketConnection->lock);
+    return retStatus;
+}
+
+static void my_on_send(uv_udp_send_t* req, int status)
+{
+    if (status == 0) {
+        UvUdpSendRequest* ctx = req->data;
+        my_on_send0(ctx);
+    } else {
+        UV_LOG_ERR(status, "my_on_send");
+        exit(48);
+    }
+}
+
+STATUS uvSocketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf, UINT32 bufLen, PKvsIpAddress pDestIp, PUINT32 pBytesWritten)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    struct sockaddr* destAddr = NULL;
+    struct sockaddr_in ipv4Addr;
+    struct sockaddr_in6 ipv6Addr;
+
+    CHK(pSocketConnection != NULL, STATUS_NULL_ARG);
+    CHK(buf != NULL && bufLen > 0, STATUS_INVALID_ARG);
+    if (pSocketConnection->protocol != KVS_SOCKET_PROTOCOL_UDP) {
+        DLOGE("uvSocketSendDataWithRetry tcp not supported");
+        exit(49);
+    }
+    if (bufLen > UV_SEND_MAX_SIZE) {
+        DLOGE("uvSocketSendDataWithRetry cant send more than %d bytes", UV_SEND_MAX_SIZE);
+        exit(47);
+    }
+    int slot = -1;
+    for (int i = 0; i < UV_SEND_MAX_REQUESTS; i++) {
+        if (!BITTEST(pSocketConnection->uvSendBufAvailableSlots, i)) {
+            BITSET(pSocketConnection->uvSendBufAvailableSlots, i);
+            slot = i;
+            break;
+        }
+    }
+    CHK_ERR(slot != -1, STATUS_NOT_ENOUGH_MEMORY, "no slots in uv send buffer");
+
+    if (pDestIp != NULL) {
+        if (IS_IPV4_ADDR(pDestIp)) {
+            MEMSET(&ipv4Addr, 0x00, SIZEOF(ipv4Addr));
+            ipv4Addr.sin_family = AF_INET;
+            ipv4Addr.sin_port = pDestIp->port;
+            MEMCPY(&ipv4Addr.sin_addr, pDestIp->address, IPV4_ADDRESS_LENGTH);
+            destAddr = (struct sockaddr*) &ipv4Addr;
+        } else {
+            MEMSET(&ipv6Addr, 0x00, SIZEOF(ipv6Addr));
+            ipv6Addr.sin6_family = AF_INET6;
+            ipv6Addr.sin6_port = pDestIp->port;
+            MEMCPY(&ipv6Addr.sin6_addr, pDestIp->address, IPV6_ADDRESS_LENGTH);
+            destAddr = (struct sockaddr*) &ipv6Addr;
+        }
+    }
+    if (pSocketConnection->protocol != KVS_SOCKET_PROTOCOL_UDP) {
+        DLOGE("uvSocketSendDataWithRetry tcp not implemented");
+        exit(46);
+    }
+    UvUdpSendRequest* req = &pSocketConnection->uvUdpSendRequests[slot];
+    MEMCPY(req->buf, buf, bufLen);
+    req->send_buf = uv_buf_init(req->buf, bufLen);
+    req->slot = slot;
+    req->pSocketConnection = pSocketConnection;
+    req->send_req.data = req;
+    UV_CHK_ERR(uv_udp_send(&req->send_req, &pSocketConnection->uvLocalSocket, &req->send_buf, 1, destAddr, my_on_send), STATUS_SEND_DATA_FAILED,
+               "uv_udp_send");
+
+CleanUp:
+
+    // CHK_LOG_ERR might be too verbose in this case
+    if (STATUS_FAILED(retStatus)) {
+        DLOGD("Warning: Send data failed with 0x%08x", retStatus);
+    }
+
+    return retStatus;
 }
 
 STATUS socketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf, UINT32 bufLen, PKvsIpAddress pDestIp, PUINT32 pBytesWritten)

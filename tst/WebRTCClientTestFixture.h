@@ -323,6 +323,7 @@ class WebRtcClientTestBase : public ::testing::Test {
     SignalingClientCallbacks mSignalingClientCallbacks;
     SignalingClientInfo mClientInfo;
     Tag mTags[3];
+    std::thread uvlooper;
 };
 
 typedef struct {

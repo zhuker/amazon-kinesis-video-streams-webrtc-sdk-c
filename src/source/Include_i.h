@@ -161,6 +161,7 @@ STATUS generateJSONSafeString(PCHAR, UINT32);
 #include "Rtp/Codecs/RtpOpusPayloader.h"
 #include "Rtp/Codecs/RtpG711Payloader.h"
 #include "Metrics/Metrics.h"
+#include "PeerConnection/UvTimerQueue.h"
 
 ////////////////////////////////////////////////////
 // Project internal defines
@@ -171,6 +172,7 @@ STATUS generateJSONSafeString(PCHAR, UINT32);
 ////////////////////////////////////////////////////
 
 #define KVS_CONVERT_TIMESCALE(pts, from_timescale, to_timescale) (pts * to_timescale / from_timescale)
+#define INVALID_TIMER_ID MAX_UINT32
 
 #ifdef __cplusplus
 }

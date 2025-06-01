@@ -244,7 +244,7 @@ if(BUILD_DEPENDENCIES)
       -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
       -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
 
-  build_dependency(usrsctp ${BUILD_ARGS})
+#  build_dependency(usrsctp ${BUILD_ARGS})
 
   if(BUILD_TEST)
     build_dependency(gtest)
@@ -309,10 +309,11 @@ else()
 endif()
 
 # usrsctp dont support pkgconfig yet
-find_library(
-  Usrsctp
-  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
-  PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
+add_subdirectory(usrsctp)
+#find_library(
+#  Usrsctp
+#  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
+#  PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
 
 set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS}
                           ${CURL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS})
@@ -324,6 +325,7 @@ link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
 if(EXISTS ${OPEN_SRC_INSTALL_PREFIX}/lib64)
   link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib64)
 endif()
+pkg_check_modules(LIBUV REQUIRED IMPORTED_TARGET libuv)
 ############# find dependent libraries end ############
 
 if("${CMAKE_C_COMPILER_ID}" MATCHES "GNU|Clang")
@@ -387,6 +389,7 @@ file(
   "src/source/PeerConnection/Rtcp.c"
   "src/source/PeerConnection/Rtp.c"
   "src/source/PeerConnection/SessionDescription.c"
+  "src/source/PeerConnection/UvTimerQueue.c"
   "src/source/Rtcp/*.c"
   "src/source/Rtp/*.c"
   "src/source/Rtp/Codecs/*.c"
@@ -408,12 +411,15 @@ message(STATUS "OPEN_SRC_INSTALL_PREFIX: ${OPEN_SRC_INSTALL_PREFIX}")
 include_directories(${OPEN_SRC_INCLUDE_DIRS})
 include_directories(${OPEN_SRC_INSTALL_PREFIX}/include)
 include_directories(${KINESIS_VIDEO_WEBRTC_CLIENT_SRC}/src/include)
+include_directories(${LIBUV_INCLUDE_DIRS})
+include_directories(usrsctp/usrsctplib)
 
 add_library(kvsWebrtcClient ${LINKAGE} ${WEBRTC_CLIENT_SOURCE_FILES} ${DATACHANNEL_SRC})
 
 if(USE_MBEDTLS)
   target_compile_definitions(kvsWebrtcClient PRIVATE LWS_WITH_MBEDTLS)
 endif()
+target_compile_definitions(kvsWebrtcClient PUBLIC -DSCTP_DEBUG)
 
 if(ENABLE_KVS_THREADPOOL)
   file(GLOB THREADPOOL_SOURCE_FILES "src/source/Threadpool/*.c")
@@ -426,11 +432,12 @@ target_link_libraries(
   kvsWebrtcClient
   PRIVATE kvspicUtils
           kvspicState
+          PkgConfig::LIBUV
           ${CMAKE_THREAD_LIBS_INIT}
           ${OPENSSL_SSL_LIBRARY}
           ${OPENSSL_CRYPTO_LIBRARY}
           ${SRTP_LIBRARIES}
-          ${Usrsctp}
+          usrsctp
           ${MBEDTLS_LIBRARIES}
           ${GPERFTOOLS_MALLOC_LIBRARIES}
           ${GPERFTOOLS_PROFILER_LIBRARIES}

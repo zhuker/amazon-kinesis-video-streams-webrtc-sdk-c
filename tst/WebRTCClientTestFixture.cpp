@@ -109,6 +109,9 @@ void WebRtcClientTestBase::SetUp()
 void WebRtcClientTestBase::TearDown()
 {
     DLOGI("\nTearing down test: %s\n", GetTestName());
+    if (uvlooper.joinable()) {
+        uvlooper.join();
+    }
 
     deinitKvsWebRtc();
     // Need this sleep for threads in threadpool to close
@@ -153,6 +156,17 @@ VOID WebRtcClientTestBase::setPayloadToFree()
         mPRtpPackets[i]->pRawPacket = mPRtpPackets[i]->payload;
     }
 }
+static void my_set_threadname(const char *name) {
+#if defined(__APPLE__)
+    pthread_setname_np(name);
+#endif
+#if defined(__linux__)
+    prctl(PR_SET_NAME, name);
+#endif
+#if defined(__FreeBSD__)
+    pthread_set_name_np(pthread_self(), name);
+#endif
+}
 
 VOID WebRtcClientTestBase::clearJitterBufferForTest()
 {
@@ -175,7 +189,7 @@ VOID WebRtcClientTestBase::clearJitterBufferForTest()
         MEMFREE(mFrame);
     }
 }
-
+#define USE_LIBUV 1
 // Connect two RtcPeerConnections, and wait for them to be connected
 // in the given amount of time. Return false if they don't go to connected in
 // the expected amounted of time
@@ -192,6 +206,13 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
         if (candidateStr != NULL) {
             container->client->lock.lock();
             if(!container->client->noNewThreads) {
+#ifdef USE_LIBUV
+                auto candidate = std::string(candidateStr);
+                printf("candidate: %s\n", candidate.c_str());
+                RtcIceCandidateInit iceCandidate;
+                EXPECT_EQ(STATUS_SUCCESS, deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
+                EXPECT_EQ(STATUS_SUCCESS, addIceCandidate((PRtcPeerConnection) container->pc, iceCandidate.candidate));
+#else
                 container->client->threads.push_back(std::thread(
                     [container](std::string candidate) {
                         RtcIceCandidateInit iceCandidate;
@@ -199,6 +220,7 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
                         EXPECT_EQ(STATUS_SUCCESS, addIceCandidate((PRtcPeerConnection) container->pc, iceCandidate.candidate));
                     },
                     std::string(candidateStr)));
+#endif
             }
             container->client->lock.unlock();
         }
@@ -242,6 +264,74 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
         EXPECT_NE((PCHAR) NULL, STRSTR(sdp.sdp, pAnswerCertFingerprint));
     }
 
+#ifdef USE_LIBUV0
+    uv_timer_t mTimer{};
+    UV_LOG_ERR(uv_timer_init(uv_default_loop(), &mTimer), "uv_timer_init");
+    auto containers = std::make_pair(&offer, &answer);
+    mTimer.data = &containers;
+    auto cb = [](uv_timer_t *t) {
+        auto containers = (std::pair<PeerContainer *, PeerContainer *> *) t->data;
+        auto offerPeer = containers->first;
+        auto answerPeer = containers->second;
+        auto self = offerPeer->client;
+        auto connected = ATOMIC_LOAD(&self->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]);
+        printf("connected: %llu\n", connected);
+        if (connected == 2) {
+            if (offerPeer->pc != nullptr) {
+                CHK_LOG_ERR(closePeerConnection(offerPeer->pc));
+                CHK_LOG_ERR(freePeerConnection(&offerPeer->pc));
+            }
+            
+            if (answerPeer->pc != nullptr) {
+                CHK_LOG_ERR(closePeerConnection(answerPeer->pc));
+                CHK_LOG_ERR(freePeerConnection(&answerPeer->pc));
+            }
+            printf("active_handles %u %u\n",t->loop->active_handles, t->loop->active_reqs.count);
+            if (t->loop->active_handles == 1 && t->loop->active_reqs.count == 0) {
+                UV_LOG_ERR(uv_timer_stop(t), "uv_timer_stop");
+                if (!uv_is_closing((uv_handle_t*)t)) {
+                    uv_close((uv_handle_t *) t, [](uv_handle_t *handle) {});
+                }
+            }
+            int ret = uv_loop_close(t->loop);
+            UV_LOG_ERR(ret, "uv_loop_close");
+            if (ret == UV_EBUSY) {
+                uv_walk(uv_default_loop(),
+                        [](uv_handle_t *handle, void * /*arg*/) {
+                            DLOGE(
+                                "alive UV handle found (this shouldn't happen) [type:%s, active:%d, closing:%d, has_ref:%d]",
+                                uv_handle_type_name(handle->type),
+                                uv_is_active(handle),
+                                uv_is_closing(handle),
+                                uv_has_ref(handle));
+
+                            // if (!uv_is_closing(handle))
+                            //     uv_close(handle, [](uv_handle_t *handle) {
+                            //         DLOGE(
+                            //             "handle closed [type:%s, active:%d, closing:%d, has_ref:%d]",
+                            //             uv_handle_type_name(handle->type),
+                            //             uv_is_active(handle),
+                            //             uv_is_closing(handle),
+                            //             uv_has_ref(handle));
+                            //     });
+                        }, nullptr);
+            }
+        }
+    };
+    UV_LOG_ERR(uv_timer_start(&mTimer, cb, 0, 1000), "uv_timer_start");
+    UV_LOG_ERR(uv_run(uv_default_loop(), UV_RUN_DEFAULT), "uv_run");
+    this->noNewThreads = TRUE;
+#elif defined(USE_LIBUV)
+    uvlooper = std::thread([]() {
+        my_set_threadname("uv");
+        UV_LOG_ERR(uv_run(uv_default_loop(), UV_RUN_DEFAULT), "uv_run");
+        DLOGD("uv_run done");
+    });
+    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2; i++) {
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+    }
+    this->noNewThreads = TRUE;
+#else
     for (auto i = 0; i <= 100 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
@@ -253,6 +343,8 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     this->threads.clear();
     this->noNewThreads = TRUE;
     this->lock.unlock();
+#endif
+    
 
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, onICECandidateHdlrDone));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) 0, onICECandidateHdlrDone));
