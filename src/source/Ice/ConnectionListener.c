@@ -315,27 +315,13 @@ CleanUp:
 
     return retStatus;
 }
+
 STATUS  uvConnectionListenerStart(PConnectionListener pConnectionListener)
 {
     STATUS retStatus = STATUS_SUCCESS;
-    BOOL locked = FALSE;
-
     CHK(pConnectionListener != NULL, STATUS_NULL_ARG);
     CHK(!ATOMIC_LOAD_BOOL(&pConnectionListener->terminate), retStatus);
-
-//    MUTEX_LOCK(pConnectionListener->lock);
-//    locked = TRUE;
-
-//    CHK(!IS_VALID_TID_VALUE(pConnectionListener->receiveDataRoutine), retStatus);
-//    CHK_STATUS(THREAD_CREATE(&pConnectionListener->receiveDataRoutine, connectionListenerReceiveDataRoutine, (PVOID) pConnectionListener));
-//    CHK_STATUS(THREAD_DETACH(pConnectionListener->receiveDataRoutine));
-
-    CleanUp:
-
-//    if (locked) {
-//        MUTEX_UNLOCK(pConnectionListener->lock);
-//    }
-
+CleanUp:
     return retStatus;
 }
 

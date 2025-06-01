@@ -43,7 +43,6 @@ target_link_libraries(webrtc_client_test
     kvsWebrtcClient
     kvsWebrtcSignalingClient
     PkgConfig::LIBUV
-      usrsctp
     ${EXTRA_DEPS}
     kvsCommonLws
     ${OPENSSL_CRYPTO_LIBRARY}

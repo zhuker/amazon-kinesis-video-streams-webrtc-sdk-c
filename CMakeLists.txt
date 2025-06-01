@@ -419,7 +419,6 @@ add_library(kvsWebrtcClient ${LINKAGE} ${WEBRTC_CLIENT_SOURCE_FILES} ${DATACHANN
 if(USE_MBEDTLS)
   target_compile_definitions(kvsWebrtcClient PRIVATE LWS_WITH_MBEDTLS)
 endif()
-target_compile_definitions(kvsWebrtcClient PUBLIC -DSCTP_DEBUG)
 
 if(ENABLE_KVS_THREADPOOL)
   file(GLOB THREADPOOL_SOURCE_FILES "src/source/Threadpool/*.c")
