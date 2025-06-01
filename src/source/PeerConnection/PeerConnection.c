@@ -674,7 +674,7 @@ VOID onDtlsOutboundPacket(UINT64 customData, PBYTE pBuffer, UINT32 bufferLen)
     }
 
     pKvsPeerConnection = (PKvsPeerConnection) customData;
-    iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pBuffer, bufferLen);
+    CHK_LOG_ERR(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pBuffer, bufferLen));
     LEAVES();
 }
 
@@ -780,7 +780,7 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
     delay = 100 + (RAND() % 200);
     DLOGS("next sender report %u in %" PRIu64 " msec", ssrc, delay);
     // reschedule timer with 200msec +- 100ms
-    CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
+    CHK_STATUS(uvTimerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
                                   TIMER_QUEUE_SINGLE_INVOCATION_PERIOD, rtcpReportsCallback, (UINT64) pKvsRtpTransceiver,
                                   &pKvsRtpTransceiver->rtcpReportsTimerId));
 
@@ -1000,7 +1000,7 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection = (PKvsPeerConnection) MEMCALLOC(1, SIZEOF(KvsPeerConnection));
     CHK(pKvsPeerConnection != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
-    CHK_STATUS(timerQueueCreate(&pKvsPeerConnection->timerQueueHandle));
+    CHK_STATUS(uvTimerQueueCreate(&pKvsPeerConnection->timerQueueHandle));
 
     pKvsPeerConnection->peerConnection.version = PEER_CONNECTION_CURRENT_VERSION;
 
@@ -1106,7 +1106,7 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
 
     // free timer queue first to remove liveness provided by timer
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
-        timerQueueShutdown(pKvsPeerConnection->timerQueueHandle);
+        uvTimerQueueShutdown(pKvsPeerConnection->timerQueueHandle);
     }
 
     /* Free structs that have their own thread. SCTP has threads created by SCTP library. IceAgent has the
@@ -1156,7 +1156,7 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     }
 
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
-        timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
+        uvTimerQueueFree(&pKvsPeerConnection->timerQueueHandle);
     }
 
     if (pKvsPeerConnection->pTwccManager != NULL) {
@@ -1670,7 +1670,7 @@ STATUS addTransceiver(PRtcPeerConnection pPeerConnection, PRtcMediaStreamTrack p
     CHK_STATUS(doubleListInsertItemHead(pKvsPeerConnection->pTransceivers, (UINT64) pKvsRtpTransceiver));
     *ppRtcRtpTransceiver = (PRtcRtpTransceiver) pKvsRtpTransceiver;
 
-    CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, RTCP_FIRST_REPORT_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
+    CHK_STATUS(uvTimerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, RTCP_FIRST_REPORT_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
                                   rtcpReportsCallback, (UINT64) pKvsRtpTransceiver, &pKvsRtpTransceiver->rtcpReportsTimerId));
 
     pKvsRtpTransceiver = NULL;

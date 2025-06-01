@@ -102,6 +102,120 @@ CleanUp:
     return retStatus;
 }
 
+static void my_uv_alloc(uv_handle_t* handle,
+                        size_t suggested_size,
+                        uv_buf_t* buf) {
+    PSocketConnection pSocketConnection = handle->data;
+    buf->base = pSocketConnection->uvBuf;
+    buf->len = UV_BUF_SIZE;
+}
+
+static void my_uv_on_recv(uv_udp_t *handle,
+                          ssize_t nread,
+                          const uv_buf_t *rcvbuf,
+                          const struct sockaddr *addr,
+                          unsigned flags) {
+    // DLOGD("my_uv_on_recv nread %d %p %d", nread, addr, flags);
+    PSocketConnection pSocketConnection = handle->data;
+    UINT32 readLen = nread;
+    PKvsIpAddress pSrcAddr = NULL;
+    struct sockaddr_in *pIpv4Addr;
+    struct sockaddr_in6 *pIpv6Addr;
+    KvsIpAddress srcAddr;
+
+    BOOL receiveData = ATOMIC_LOAD_BOOL(&pSocketConnection->receiveData);
+    if (nread > 0 &&
+            receiveData && pSocketConnection->dataAvailableCallbackFn != NULL &&
+        /* data could be encrypted so they need to be decrypted through socketConnectionReadData
+         * and get the decrypted data length. */
+        STATUS_SUCCEEDED(socketConnectionReadData(pSocketConnection, rcvbuf->base,
+                                                  nread, (PUINT32) &readLen))) {
+        if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
+            if (addr->sa_family == AF_INET) {
+                srcAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
+                pIpv4Addr = (struct sockaddr_in *) addr;
+                MEMCPY(srcAddr.address, (PBYTE) &pIpv4Addr->sin_addr, IPV4_ADDRESS_LENGTH);
+                srcAddr.port = pIpv4Addr->sin_port;
+            } else if (addr->sa_family == AF_INET6) {
+                srcAddr.family = KVS_IP_FAMILY_TYPE_IPV6;
+                pIpv6Addr = (struct sockaddr_in6 *) addr;
+                MEMCPY(srcAddr.address, (PBYTE) &pIpv6Addr->sin6_addr, IPV6_ADDRESS_LENGTH);
+                srcAddr.port = pIpv6Addr->sin6_port;
+            } else {
+                DLOGE("wtf not ipv4 and not ipv6");
+                exit(45);
+            }
+        } else {
+            DLOGE("my_uv_on_recv tcp not implemented");
+        }
+
+        pSrcAddr = &srcAddr;
+    } else {
+        // DLOGW("my_uv_on_recv no receive %d %d", nread, receiveData);
+        // srcAddr is ignored in TCP callback handlers
+        pSrcAddr = NULL;
+    }
+
+    // readLen may be 0 if SSL does not emit any application data.
+    // in that case, no need to call dataAvailable callback
+    if (readLen > 0) {
+        pSocketConnection->dataAvailableCallbackFn(pSocketConnection->dataAvailableCallbackCustomData,
+                                                   pSocketConnection,
+                                                   rcvbuf->base, (UINT32) readLen, pSrcAddr,
+                                                   NULL); // no dest information available right now.
+    } else {
+//        DLOGD("my_uv_on_recv no readLen");
+
+    }
+
+}
+
+STATUS  uvConnectionListenerAddConnection(PConnectionListener pConnectionListener, PSocketConnection pSocketConnection)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    BOOL locked = FALSE, iterate = TRUE;
+    UINT32 i;
+
+    CHK(pConnectionListener != NULL && pSocketConnection != NULL, STATUS_NULL_ARG);
+    CHK(!ATOMIC_LOAD_BOOL(&pConnectionListener->terminate), retStatus);
+
+    MUTEX_LOCK(pConnectionListener->lock);
+    locked = TRUE;
+
+    // Check for space
+    CHK(pConnectionListener->socketCount < CONNECTION_LISTENER_DEFAULT_MAX_LISTENING_CONNECTION, STATUS_NOT_ENOUGH_MEMORY);
+
+    // Find an empty slot by checking whether connected
+    for (i = 0; iterate && i < CONNECTION_LISTENER_DEFAULT_MAX_LISTENING_CONNECTION; i++) {
+        if (pConnectionListener->sockets[i] == NULL) {
+            pConnectionListener->sockets[i] = pSocketConnection;
+            if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
+                uv_udp_t *udp_socket = &pSocketConnection->uvLocalSocket;
+                udp_socket->data = pSocketConnection;
+                UV_CHK_ERR(uv_udp_recv_start(udp_socket, my_uv_alloc, my_uv_on_recv), STATUS_BINDING_SOCKET_FAILED,
+                           "uv_udp_recv_start");
+            } else {
+                DLOGE("uvConnectionListenerAddConnection tcp not implemented");
+                exit(44);
+            }
+
+            pConnectionListener->socketCount++;
+            iterate = FALSE;
+        }
+    }
+
+    MUTEX_UNLOCK(pConnectionListener->lock);
+    locked = FALSE;
+
+    CleanUp:
+
+    if (locked) {
+        MUTEX_UNLOCK(pConnectionListener->lock);
+    }
+
+    return retStatus;
+}
+
 STATUS connectionListenerAddConnection(PConnectionListener pConnectionListener, PSocketConnection pSocketConnection)
 {
     STATUS retStatus = STATUS_SUCCESS;
@@ -198,6 +312,29 @@ CleanUp:
     if (locked) {
         MUTEX_UNLOCK(pConnectionListener->lock);
     }
+
+    return retStatus;
+}
+STATUS  uvConnectionListenerStart(PConnectionListener pConnectionListener)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    BOOL locked = FALSE;
+
+    CHK(pConnectionListener != NULL, STATUS_NULL_ARG);
+    CHK(!ATOMIC_LOAD_BOOL(&pConnectionListener->terminate), retStatus);
+
+//    MUTEX_LOCK(pConnectionListener->lock);
+//    locked = TRUE;
+
+//    CHK(!IS_VALID_TID_VALUE(pConnectionListener->receiveDataRoutine), retStatus);
+//    CHK_STATUS(THREAD_CREATE(&pConnectionListener->receiveDataRoutine, connectionListenerReceiveDataRoutine, (PVOID) pConnectionListener));
+//    CHK_STATUS(THREAD_DETACH(pConnectionListener->receiveDataRoutine));
+
+    CleanUp:
+
+//    if (locked) {
+//        MUTEX_UNLOCK(pConnectionListener->lock);
+//    }
 
     return retStatus;
 }

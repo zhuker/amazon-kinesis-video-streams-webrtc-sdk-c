@@ -429,7 +429,7 @@ STATUS dtlsSessionStart(PDtlsSession pDtlsSession, BOOL isServer)
 
     CHK_STATUS(beginHandshakeProcess(pDtlsSession, isServer, &sslRet));
     pDtlsSession->dtlsSessionStartTime = GETTIME();
-    CHK_STATUS(timerQueueAddTimer(pDtlsSession->timerQueueHandle, DTLS_SESSION_TIMER_START_DELAY, DTLS_TRANSMISSION_INTERVAL,
+    CHK_STATUS(uvTimerQueueAddTimer(pDtlsSession->timerQueueHandle, DTLS_SESSION_TIMER_START_DELAY, DTLS_TRANSMISSION_INTERVAL,
                                   dtlsTransmissionTimerCallback, (UINT64) pDtlsSession, &pDtlsSession->timerId));
 CleanUp:
     CHK_LOG_ERR(retStatus);
@@ -588,7 +588,7 @@ STATUS freeDtlsSession(PDtlsSession* ppDtlsSession)
         THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
     if (pDtlsSession->timerId != MAX_UINT32) {
-        timerQueueCancelTimer(pDtlsSession->timerQueueHandle, pDtlsSession->timerId, (UINT64) pDtlsSession);
+        uvTimerQueueCancelTimer(pDtlsSession->timerQueueHandle, pDtlsSession->timerId, (UINT64) pDtlsSession);
     }
 
     // Lock SSL free as an additional protection to ensure SSL contexts are not being used in the callbacks
@@ -717,6 +717,7 @@ STATUS dtlsSessionPutApplicationData(PDtlsSession pDtlsSession, PBYTE pData, INT
     }
 
 CleanUp:
+    CHK_LOG_ERR(retStatus);
     if (locked) {
         MUTEX_UNLOCK(pDtlsSession->sslLock);
     }
