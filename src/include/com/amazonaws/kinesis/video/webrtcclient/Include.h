@@ -17,6 +17,7 @@ extern "C" {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
 #endif
+#include <uv.h>
 #include <com/amazonaws/kinesis/video/client/Include.h>
 #include <com/amazonaws/kinesis/video/common/Include.h>
 #include <com/amazonaws/kinesis/video/webrtcclient/NullableDefs.h>
@@ -1203,6 +1204,7 @@ typedef struct {
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined
                          //!< to use this member, else stats are enabled by default.
 #endif
+    uv_loop_t *loop;
 } KvsRtcConfiguration, *PKvsRtcConfiguration;
 
 /**

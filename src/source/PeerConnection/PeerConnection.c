@@ -950,6 +950,9 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     UINT64 startTimeInMacro = 0;
 
     CHK(pConfiguration != NULL && ppPeerConnection != NULL, STATUS_NULL_ARG);
+    if (pConfiguration->kvsRtcConfiguration.loop == NULL) {
+        pConfiguration->kvsRtcConfiguration.loop = uv_default_loop();
+    }
 
     startTime = GETTIME();
     MEMSET(&iceAgentCallbacks, 0, SIZEOF(IceAgentCallbacks));
@@ -958,7 +961,7 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection = (PKvsPeerConnection) MEMCALLOC(1, SIZEOF(KvsPeerConnection));
     CHK(pKvsPeerConnection != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
-    CHK_STATUS(uvTimerQueueCreate(&pKvsPeerConnection->timerQueueHandle));
+    CHK_STATUS(uvTimerQueueCreate(&pKvsPeerConnection->timerQueueHandle, pConfiguration->kvsRtcConfiguration.loop));
 
     pKvsPeerConnection->peerConnection.version = PEER_CONNECTION_CURRENT_VERSION;
 

@@ -323,7 +323,7 @@ STATUS discoverNatBehavior(PCHAR stunServer, NAT_BEHAVIOR* pNatMappingBehavior, 
     CHK_STATUS(connectionListenerRemoveAllConnection(pConnectionListener));
     freeSocketConnection(&pSocketConnection);
     CHK_STATUS(uvCreateSocketConnection(iceServerStun.ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, pSelectedLocalInterface, NULL, (UINT64) &customData,
-                                      natTestIncomingDataHandler, 0, &pSocketConnection));
+                                      natTestIncomingDataHandler, 0, &pSocketConnection, uv_default_loop()));
     ATOMIC_STORE_BOOL(&pSocketConnection->receiveData, TRUE);
     CHK_STATUS(uvConnectionListenerAddConnection(pConnectionListener, pSocketConnection));
 

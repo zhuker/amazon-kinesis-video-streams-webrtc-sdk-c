@@ -37,7 +37,7 @@
         }                                                                                           \
     } while (FALSE)
 
-STATUS uvTimerQueueCreate(TIMER_QUEUE_HANDLE *pInt);
+STATUS uvTimerQueueCreate(TIMER_QUEUE_HANDLE *pInt, uv_loop_t *loop);
 
 
 STATUS uvTimerQueueAddTimer(TIMER_QUEUE_HANDLE handle, UINT64 start, UINT64 period, TimerCallbackFunc timerCallbackFn,

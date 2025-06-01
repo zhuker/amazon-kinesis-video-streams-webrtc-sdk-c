@@ -89,7 +89,7 @@ typedef struct __SocketConnection* PSocketConnection;
 STATUS createSocketConnection(KVS_IP_FAMILY_TYPE, KVS_SOCKET_PROTOCOL, PKvsIpAddress, PKvsIpAddress, UINT64, ConnectionDataAvailableFunc, UINT32,
                               PSocketConnection*);
 STATUS uvCreateSocketConnection(KVS_IP_FAMILY_TYPE, KVS_SOCKET_PROTOCOL, PKvsIpAddress, PKvsIpAddress, UINT64, ConnectionDataAvailableFunc, UINT32,
-                              PSocketConnection*);
+                              PSocketConnection*, uv_loop_t*);
 
 /**
  * Free the SocketConnection struct
