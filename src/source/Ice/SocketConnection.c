@@ -185,6 +185,14 @@ CleanUp:
     return retStatus;
 }
 
+static void free_udp_socket_cb(uv_handle_t* handle)
+{
+    DLOGD("free_udp_socket_cb");
+    if (handle->data) {
+        MEMFREE(handle->data);
+    }
+}
+
 STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
 {
     ENTERS();
@@ -233,13 +241,12 @@ STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
     if (udp_socket != NULL) {
         UV_CHK_ERR(uv_udp_recv_stop(udp_socket), STATUS_CLOSE_SOCKET_FAILED, "Failed to stop receiving on the socket");
         if (!uv_is_closing((uv_handle_t*) udp_socket)) {
-            uv_close((uv_handle_t*) udp_socket, NULL);
+            udp_socket->data = pSocketConnection;
+            uv_close((uv_handle_t*) udp_socket, free_udp_socket_cb);
         }
     } else if (STATUS_FAILED(retStatus = closeSocket(pSocketConnection->localSocket))) {
         DLOGW("Failed to close the local socket with 0x%08x", retStatus);
     }
-
-    MEMFREE(pSocketConnection);
 
     *ppSocketConnection = NULL;
 
