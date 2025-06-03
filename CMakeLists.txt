@@ -244,7 +244,7 @@ if(BUILD_DEPENDENCIES)
       -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
       -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
 
-#  build_dependency(usrsctp ${BUILD_ARGS})
+  build_dependency(usrsctp ${BUILD_ARGS})
 
   if(BUILD_TEST)
     build_dependency(gtest)
@@ -309,11 +309,10 @@ else()
 endif()
 
 # usrsctp dont support pkgconfig yet
-add_subdirectory(usrsctp)
-#find_library(
-#  Usrsctp
-#  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
-#  PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
+find_library(
+  Usrsctp
+  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
+  PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
 
 set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS}
                           ${CURL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS})
@@ -436,7 +435,7 @@ target_link_libraries(
           ${OPENSSL_SSL_LIBRARY}
           ${OPENSSL_CRYPTO_LIBRARY}
           ${SRTP_LIBRARIES}
-          usrsctp
+          ${Usrsctp}
           ${MBEDTLS_LIBRARIES}
           ${GPERFTOOLS_MALLOC_LIBRARIES}
           ${GPERFTOOLS_PROFILER_LIBRARIES}
