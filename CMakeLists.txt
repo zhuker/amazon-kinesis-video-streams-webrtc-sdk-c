@@ -324,7 +324,7 @@ link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
 if(EXISTS ${OPEN_SRC_INSTALL_PREFIX}/lib64)
   link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib64)
 endif()
-pkg_check_modules(LIBUV REQUIRED IMPORTED_TARGET libuv)
+#pkg_check_modules(LIBUV REQUIRED IMPORTED_TARGET libuv)
 ############# find dependent libraries end ############
 
 if("${CMAKE_C_COMPILER_ID}" MATCHES "GNU|Clang")
@@ -410,8 +410,7 @@ message(STATUS "OPEN_SRC_INSTALL_PREFIX: ${OPEN_SRC_INSTALL_PREFIX}")
 include_directories(${OPEN_SRC_INCLUDE_DIRS})
 include_directories(${OPEN_SRC_INSTALL_PREFIX}/include)
 include_directories(${KINESIS_VIDEO_WEBRTC_CLIENT_SRC}/src/include)
-include_directories(${LIBUV_INCLUDE_DIRS})
-include_directories(usrsctp/usrsctplib)
+#include_directories(${LIBUV_INCLUDE_DIRS})
 
 add_library(kvsWebrtcClient ${LINKAGE} ${WEBRTC_CLIENT_SOURCE_FILES} ${DATACHANNEL_SRC})
 
@@ -432,11 +431,16 @@ if (BUILD_STATIC_LIBS AND BUILD_DEPENDENCIES)
   set(KVSPICUTILS_LIB ${OPEN_SRC_INSTALL_PREFIX}/lib/libkvspicUtils.a)
   set(KVSPICSTATE_LIB ${OPEN_SRC_INSTALL_PREFIX}/lib/libkvspicState.a)
 endif ()
+set(LIBUV_LIB uv)
+if (BUILD_STATIC_LIBS)
+  set(LIBUV_LIB uv_a)
+endif ()
+
 target_link_libraries(
   kvsWebrtcClient
   PRIVATE ${KVSPICUTILS_LIB}
           ${KVSPICSTATE_LIB}
-          PkgConfig::LIBUV
+          ${LIBUV_LIB}
           ${CMAKE_THREAD_LIBS_INIT}
           ${OPENSSL_SSL_LIBRARY}
           ${OPENSSL_CRYPTO_LIBRARY}

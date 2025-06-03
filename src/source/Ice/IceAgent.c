@@ -1455,7 +1455,7 @@ STATUS iceAgentSendSrflxCandidateRequest(PIceAgent pIceAgent)
         pCandidate = (PIceCandidate) data;
 
         //pCandidate->pSocketConnection is null when we have an ipv6 STUN
-        if (pCandidate->state == ICE_CANDIDATE_STATE_NEW && pCandidate->pSocketConnection != NULL) {
+        if (pCandidate->state == ICE_CANDIDATE_STATE_NEW) {
             switch (pCandidate->iceCandidateType) {
                 case ICE_CANDIDATE_TYPE_SERVER_REFLEXIVE:
                     pIceServer = &(pIceAgent->iceServers[pCandidate->iceServerIndex]);
