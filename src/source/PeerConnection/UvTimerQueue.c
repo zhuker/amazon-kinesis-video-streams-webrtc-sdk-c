@@ -75,6 +75,16 @@ CleanUp:
 
     return retStatus;
 }
+static STATUS stopUvTimer(struct UvTimerQueue *pTimerQueue, UINT32 timerId)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    pTimerQueue->timers[timerId].timerCallbackFn = NULL;
+    if (!uv_is_closing((uv_handle_t *) &pTimerQueue->timers[timerId].timer)) {
+        UV_CHK_ERR(uv_timer_stop(&pTimerQueue->timers[timerId].timer), STATUS_INVALID_OPERATION, "uv_timer_stop");
+    }
+CleanUp:
+    return retStatus;
+}
 
 STATUS uvTimerQueueCancelTimer(TIMER_QUEUE_HANDLE handle, UINT32 timerId, UINT64 customData) {
     DLOGD("uvTimerQueueCancelTimer %llu", handle);
@@ -87,11 +97,7 @@ STATUS uvTimerQueueCancelTimer(TIMER_QUEUE_HANDLE handle, UINT32 timerId, UINT64
     CHK(timerId < pTimerQueue->maxTimerCount, STATUS_INVALID_ARG);
     CHK(pTimerQueue->timers[timerId].timerCallbackFn != NULL && pTimerQueue->timers[timerId].customData == customData,
         retStatus);
-    pTimerQueue->timers[timerId].timerCallbackFn = NULL;
-    UV_CHK_ERR(uv_timer_stop(&pTimerQueue->timers[timerId].timer), STATUS_INVALID_OPERATION, "uv_timer_stop");
-    if (!uv_is_closing((uv_handle_t *) &pTimerQueue->timers[timerId].timer)) {
-        uv_close((uv_handle_t *) &pTimerQueue->timers[timerId].timer, NULL);
-    }
+    CHK_STATUS(stopUvTimer(pTimerQueue, timerId));
 
 CleanUp:
     CHK_LOG_ERR(retStatus);
@@ -146,12 +152,7 @@ STATUS uvTimerQueueShutdown(TIMER_QUEUE_HANDLE handle) {
     CHK(!shutdown, retStatus);
     SIZE_T idx = pTimerQueue->index;
     for (SIZE_T i = 0; i < idx; i++) {
-        pTimerQueue->timers[i].timerCallbackFn = NULL;
-        UV_CHK_ERR(uv_timer_stop(&pTimerQueue->timers[i].timer), STATUS_INVALID_OPERATION, "uv_timer_stop");
-        if (!uv_is_closing((uv_handle_t *) &pTimerQueue->timers[i].timer)) {
-            uv_close((uv_handle_t *) &pTimerQueue->timers[i].timer, NULL);
-        }
-
+        stopUvTimer(pTimerQueue, i);
     }
 CleanUp:
     CHK_LOG_ERR(retStatus);
