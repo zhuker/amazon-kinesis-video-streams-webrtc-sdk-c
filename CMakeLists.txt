@@ -426,10 +426,16 @@ if(ENABLE_KVS_THREADPOOL)
   set(EXTRA_DEPS ${EXTRA_DEPS} kvsWebRtcThreadpool)
 endif()
 
+set(KVSPICUTILS_LIB kvsPicUtils)
+set(KVSPICSTATE_LIB kvspicState)
+if (BUILD_STATIC_LIBS AND BUILD_DEPENDENCIES)
+  set(KVSPICUTILS_LIB ${OPEN_SRC_INSTALL_PREFIX}/lib/libkvspicUtils.a)
+  set(KVSPICSTATE_LIB ${OPEN_SRC_INSTALL_PREFIX}/lib/libkvspicState.a)
+endif ()
 target_link_libraries(
   kvsWebrtcClient
-  PRIVATE kvspicUtils
-          kvspicState
+  PRIVATE ${KVSPICUTILS_LIB}
+          ${KVSPICSTATE_LIB}
           PkgConfig::LIBUV
           ${CMAKE_THREAD_LIBS_INIT}
           ${OPENSSL_SSL_LIBRARY}
