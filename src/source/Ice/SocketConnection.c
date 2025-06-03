@@ -498,7 +498,6 @@ static void my_on_send(uv_udp_send_t* req, int status)
         my_on_send0(ctx);
     } else {
         UV_LOG_ERR(status, "my_on_send");
-        exit(48);
     }
 }
 
