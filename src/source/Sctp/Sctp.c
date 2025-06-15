@@ -49,7 +49,21 @@ STATUS configureSctpSocket(struct socket* socket)
     initmsg.sinit_num_ostreams = 300;
     initmsg.sinit_max_instreams = 300;
     CHK(usrsctp_setsockopt(socket, IPPROTO_SCTP, SCTP_INITMSG, &initmsg, SIZEOF(struct sctp_initmsg)) == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
-
+    int intlen = sizeof(int);
+    int sndbufsize = 0;
+    if (usrsctp_getsockopt(socket, SOL_SOCKET, SO_SNDBUF, &sndbufsize, (socklen_t *)&intlen) < 0) {
+        DLOGE("setsockopt: SO_SNDBUF");
+    } else {
+        DLOGI("before Send buffer size: %d", sndbufsize);
+    }
+    sndbufsize = 4 * 1024 * 1024;
+    int r = usrsctp_setsockopt(socket, SOL_SOCKET, SO_SNDBUF, &sndbufsize, sizeof(int));
+    CHK(r == 0, STATUS_SCTP_SESSION_SETUP_FAILED);
+    if (usrsctp_getsockopt(socket, SOL_SOCKET, SO_SNDBUF, &sndbufsize, (socklen_t *)&intlen) < 0) {
+        DLOGE("setsockopt: SO_SNDBUF");
+    } else {
+        DLOGI("after Send buffer size: %d", sndbufsize);
+    }
 CleanUp:
     LEAVES();
     return retStatus;
@@ -169,6 +183,7 @@ STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL 
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
+    DLOGD("sctpSessionWriteMessage %u %d %u", streamId, isBinary, pMessageLen);
 
     CHK(pSctpSession != NULL && pMessage != NULL, STATUS_NULL_ARG);
 
@@ -190,8 +205,12 @@ STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL 
     }
 
     putInt32((PINT32) &pSctpSession->spa.sendv_sndinfo.snd_ppid, isBinary ? SCTP_PPID_BINARY : SCTP_PPID_STRING);
-    CHK(usrsctp_sendv(pSctpSession->socket, pMessage, pMessageLen, NULL, 0, &pSctpSession->spa, SIZEOF(pSctpSession->spa), SCTP_SENDV_SPA, 0) > 0,
-        STATUS_INTERNAL_ERROR);
+    ssize_t sctp_ret =
+        usrsctp_sendv(pSctpSession->socket, pMessage, pMessageLen, NULL, 0, &pSctpSession->spa, SIZEOF(pSctpSession->spa), SCTP_SENDV_SPA, 0);
+    if (sctp_ret <= 0) {
+        DLOGW("usrsctp_sendv failed %zd %d '%s' sending %u bytes", sctp_ret, errno, strerror(errno), pMessageLen);
+    }
+    CHK(sctp_ret > 0, STATUS_INTERNAL_ERROR);
 
 CleanUp:
     LEAVES();
@@ -269,8 +288,62 @@ CleanUp:
     return retStatus;
 }
 
+static void hexdump_to_buffer(const void *data, size_t size, char *out_buf, size_t out_buf_size) {
+    const uint8_t *ptr = (const uint8_t *)data;
+    size_t offset = 0;
+    size_t out_offset = 0;
+
+    for (size_t i = 0; i < size; i += 16) {
+        // Stop if we're close to overflowing the output buffer
+        if (out_offset + 80 >= out_buf_size) break;
+
+        // Print offset
+        int written = snprintf(out_buf + out_offset, out_buf_size - out_offset, "%08zx  ", i);
+        out_offset += written;
+
+        // Print hex values
+        for (size_t j = 0; j < 16; ++j) {
+            if (i + j < size) {
+                written = snprintf(out_buf + out_offset, out_buf_size - out_offset, "%02x ", ptr[i + j]);
+            } else {
+                written = snprintf(out_buf + out_offset, out_buf_size - out_offset, "   ");
+            }
+            out_offset += written;
+
+            if (j == 7) {
+                written = snprintf(out_buf + out_offset, out_buf_size - out_offset, " ");
+                out_offset += written;
+            }
+        }
+
+        // Print ASCII representation
+        written = snprintf(out_buf + out_offset, out_buf_size - out_offset, " |");
+        out_offset += written;
+
+        for (size_t j = 0; j < 16 && (i + j) < size; ++j) {
+            char c = ptr[i + j];
+            written = snprintf(out_buf + out_offset, out_buf_size - out_offset, "%c", isprint(c) ? c : '.');
+            out_offset += written;
+        }
+
+        written = snprintf(out_buf + out_offset, out_buf_size - out_offset, "|\n");
+        out_offset += written;
+    }
+
+    // Null-terminate the output buffer
+    if (out_offset < out_buf_size)
+        out_buf[out_offset] = '\0';
+    else
+        out_buf[out_buf_size - 1] = '\0';
+}
+
 INT32 onSctpOutboundPacket(PVOID addr, PVOID data, ULONG length, UINT8 tos, UINT8 set_df)
 {
+    // char hexdumpbuffer[SCTP_MTU * 6];
+    // hexdump_to_buffer(data, length, hexdumpbuffer, SCTP_MTU * 6);
+    // DLOGD("onSctpOutboundPacket %lu %s", length, hexdumpbuffer);
+    DLOGD("onSctpOutboundPacket %lu", length);
+
     UNUSED_PARAM(tos);
     UNUSED_PARAM(set_df);
 
@@ -281,6 +354,7 @@ INT32 onSctpOutboundPacket(PVOID addr, PVOID data, ULONG length, UINT8 tos, UINT
         if (pSctpSession != NULL) {
             ATOMIC_STORE(&pSctpSession->shutdownStatus, SCTP_SESSION_SHUTDOWN_COMPLETED);
         }
+        DLOGD("onSctpOutboundPacket %lu return -1", length);
         return -1;
     }
 
@@ -330,6 +404,7 @@ CleanUp:
 INT32 onSctpInboundPacket(struct socket* sock, union sctp_sockstore addr, PVOID data, ULONG length, struct sctp_rcvinfo rcv, INT32 flags,
                           PVOID ulp_info)
 {
+    DLOGD("onSctpInboundPacket %lu", length);
     UNUSED_PARAM(sock);
     UNUSED_PARAM(addr);
     UNUSED_PARAM(flags);
@@ -366,6 +441,7 @@ CleanUp:
         free(data);
     }
     if (STATUS_FAILED(retStatus)) {
+        CHK_LOG_ERR(retStatus);
         return -1;
     }
     return 1;
