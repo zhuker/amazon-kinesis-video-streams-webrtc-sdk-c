@@ -51,7 +51,7 @@ struct __SocketConnection {
     volatile ATOMIC_BOOL inUse;
 
     INT32 localSocket;
-    uv_udp_t uvLocalSocket;
+    uv_udp_t *uvLocalSocket;
     CHAR uvBuf[UV_BUF_SIZE];
     char uvSendBufAvailableSlots[BITNSLOTS(UV_SEND_MAX_REQUESTS)];
     UvUdpSendRequest uvUdpSendRequests[UV_SEND_MAX_REQUESTS];

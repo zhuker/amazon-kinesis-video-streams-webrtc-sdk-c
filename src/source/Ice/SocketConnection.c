@@ -80,10 +80,11 @@ STATUS uvCreateSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOC
 
     pSocketConnection->lock = MUTEX_CREATE(FALSE);
     CHK(pSocketConnection->lock != INVALID_MUTEX_VALUE, STATUS_INVALID_OPERATION);
+    pSocketConnection->uvLocalSocket = MEMALLOC(SIZEOF(uv_udp_t));
 
-    CHK_STATUS(uvCreateSocket(familyType, protocol, sendBufSize, &pSocketConnection->uvLocalSocket, loop));
+    CHK_STATUS(uvCreateSocket(familyType, protocol, sendBufSize, pSocketConnection->uvLocalSocket, loop));
     if (pBindAddr) {
-        CHK_STATUS(uvSocketBind(pBindAddr, protocol, &pSocketConnection->uvLocalSocket));
+        CHK_STATUS(uvSocketBind(pBindAddr, protocol, pSocketConnection->uvLocalSocket));
         pSocketConnection->hostIpAddr = *pBindAddr;
     }
 
@@ -191,6 +192,7 @@ static void free_udp_socket_cb(uv_handle_t* handle)
     if (handle->data) {
         MEMFREE(handle->data);
     }
+    MEMFREE(handle);
 }
 
 STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
@@ -237,12 +239,14 @@ STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
     DLOGD("close socket connected with ip: %s:%u. family:%d", ipAddr, (UINT16) getInt16(pSocketConnection->peerIpAddr.port),
           pSocketConnection->peerIpAddr.family);
 
-    uv_udp_t* udp_socket = &pSocketConnection->uvLocalSocket;
+    uv_udp_t* udp_socket = pSocketConnection->uvLocalSocket;
     if (udp_socket != NULL) {
         UV_CHK_ERR(uv_udp_recv_stop(udp_socket), STATUS_CLOSE_SOCKET_FAILED, "Failed to stop receiving on the socket");
         if (!uv_is_closing((uv_handle_t*) udp_socket)) {
             udp_socket->data = pSocketConnection;
             uv_close((uv_handle_t*) udp_socket, free_udp_socket_cb);
+        } else {
+            DLOGW("socket already closing");
         }
     } else if (STATUS_FAILED(retStatus = closeSocket(pSocketConnection->localSocket))) {
         DLOGW("Failed to close the local socket with 0x%08x", retStatus);
@@ -554,7 +558,7 @@ STATUS uvSocketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf,
     req->slot = slot;
     req->pSocketConnection = pSocketConnection;
     req->send_req.data = req;
-    UV_CHK_ERR(uv_udp_send(&req->send_req, &pSocketConnection->uvLocalSocket, &req->send_buf, 1, destAddr, my_on_send), STATUS_SEND_DATA_FAILED,
+    UV_CHK_ERR(uv_udp_send(&req->send_req, pSocketConnection->uvLocalSocket, &req->send_buf, 1, destAddr, my_on_send), STATUS_SEND_DATA_FAILED,
                "uv_udp_send");
 
 CleanUp:

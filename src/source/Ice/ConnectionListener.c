@@ -190,7 +190,7 @@ STATUS  uvConnectionListenerAddConnection(PConnectionListener pConnectionListene
         if (pConnectionListener->sockets[i] == NULL) {
             pConnectionListener->sockets[i] = pSocketConnection;
             if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
-                uv_udp_t *udp_socket = &pSocketConnection->uvLocalSocket;
+                uv_udp_t *udp_socket = pSocketConnection->uvLocalSocket;
                 udp_socket->data = pSocketConnection;
                 UV_CHK_ERR(uv_udp_recv_start(udp_socket, my_uv_alloc, my_uv_on_recv), STATUS_BINDING_SOCKET_FAILED,
                            "uv_udp_recv_start");

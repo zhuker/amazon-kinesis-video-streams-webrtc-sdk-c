@@ -6,7 +6,7 @@
 #include "UvTimerQueue.h"
 
 struct UvTimerContext {
-    uv_timer_t timer;
+    uv_timer_t *timer;
     TimerCallbackFunc timerCallbackFn;
     UINT64 customData;
     UINT32 timerid;
@@ -65,29 +65,42 @@ STATUS uvTimerQueueAddTimer(TIMER_QUEUE_HANDLE handle, UINT64 start, UINT64 peri
 
     }
     struct UvTimerContext *ctx = &pTimerQueue->timers[idx];
-    ctx->timer.data = ctx;
-    UV_CHK_ERR(uv_timer_init(pTimerQueue->loop, &ctx->timer), STATUS_MAX_TIMER_COUNT_REACHED, "uv_timer_init");
+    ctx->timer = MEMALLOC(sizeof(uv_timer_t));
+    ctx->timer->data = ctx;
+    UV_CHK_ERR(uv_timer_init(pTimerQueue->loop, ctx->timer), STATUS_MAX_TIMER_COUNT_REACHED, "uv_timer_init");
     ctx->timerCallbackFn = timerCallbackFn;
     ctx->customData = customData;
     ctx->timerid = idx;
-    UV_CHK_ERR(uv_timer_start(&ctx->timer, uvTimerCallback, startMsec, periodMsec), STATUS_MAX_TIMER_COUNT_REACHED, "uv_timer_start");
+    UV_CHK_ERR(uv_timer_start(ctx->timer, uvTimerCallback, startMsec, periodMsec), STATUS_MAX_TIMER_COUNT_REACHED, "uv_timer_start");
 CleanUp:
 
     return retStatus;
 }
+static void on_timer_closed(uv_handle_t* handle)
+{
+    DLOGD("timer closed");
+    MEMFREE(handle);
+}
+
 static STATUS stopUvTimer(struct UvTimerQueue *pTimerQueue, UINT32 timerId)
 {
     STATUS retStatus = STATUS_SUCCESS;
-    pTimerQueue->timers[timerId].timerCallbackFn = NULL;
-    if (!uv_is_closing((uv_handle_t *) &pTimerQueue->timers[timerId].timer)) {
-        UV_CHK_ERR(uv_timer_stop(&pTimerQueue->timers[timerId].timer), STATUS_INVALID_OPERATION, "uv_timer_stop");
+    if (pTimerQueue->timers[timerId].timerCallbackFn != NULL) {
+        pTimerQueue->timers[timerId].timerCallbackFn = NULL;
+        if (!uv_is_closing((uv_handle_t *) pTimerQueue->timers[timerId].timer)) {
+            uv_close((uv_handle_t *) pTimerQueue->timers[timerId].timer, on_timer_closed);
+        } else {
+            DLOGD("timer already closing");    
+        }
+    } else {
+        DLOGD("timer already closing 2");
     }
 CleanUp:
     return retStatus;
 }
 
 STATUS uvTimerQueueCancelTimer(TIMER_QUEUE_HANDLE handle, UINT32 timerId, UINT64 customData) {
-    DLOGD("uvTimerQueueCancelTimer %llu", handle);
+    DLOGD("uvTimerQueueCancelTimer %llu %lu", handle, timerId);
 
     STATUS retStatus = STATUS_SUCCESS;
     struct UvTimerQueue *pTimerQueue = (PVOID) handle;
@@ -117,7 +130,7 @@ STATUS uvTimerQueueUpdateTimerPeriod(TIMER_QUEUE_HANDLE handle, UINT64 customDat
         STATUS_INVALID_TIMER_PERIOD_VALUE);
 
     UINT64 periodMsec = KVS_CONVERT_TIMESCALE(period, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
-    uv_timer_t *timer = &pTimerQueue->timers[timerId].timer;
+    uv_timer_t *timer = pTimerQueue->timers[timerId].timer;
     UINT64 due = uv_timer_get_due_in(timer);
     UV_CHK_ERR(uv_timer_stop(timer), STATUS_INVALID_OPERATION, "uv_timer_stop");;
     UV_CHK_ERR(uv_timer_start(timer, uvTimerCallback, due, periodMsec), STATUS_INVALID_OPERATION, "uv_timer_start");;
@@ -126,7 +139,7 @@ CleanUp:
 }
 
 STATUS uvTimerQueueFree(PTIMER_QUEUE_HANDLE pHandle) {
-    DLOGD("uvTimerQueueFree %p", pHandle);
+    DLOGD("uvTimerQueueFree %llu", *pHandle);
     STATUS retStatus = STATUS_SUCCESS;
 
     CHK(pHandle != NULL, STATUS_NULL_ARG);
