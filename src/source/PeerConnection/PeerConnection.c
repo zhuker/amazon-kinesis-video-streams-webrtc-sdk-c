@@ -680,7 +680,7 @@ VOID onDtlsOutboundPacket(UINT64 customData, PBYTE pBuffer, UINT32 bufferLen)
     }
 
     pKvsPeerConnection = (PKvsPeerConnection) customData;
-    iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pBuffer, bufferLen);
+    CHK_LOG_ERR(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pBuffer, bufferLen));
     LEAVES();
 }
 
