@@ -246,11 +246,14 @@ STATUS socketBind(PKvsIpAddress pHostIpAddress, INT32 sockfd)
     CHAR ipAddrStr[KVS_IP_ADDRESS_STRING_BUFFER_LEN];
 
     CHK(pHostIpAddress != NULL, STATUS_NULL_ARG);
+    int min = 49152;
+    int max = 65535;
+    int random_port = RAND() % (max - min + 1) + min;
 
     if (pHostIpAddress->family == KVS_IP_FAMILY_TYPE_IPV4) {
         MEMSET(&ipv4Addr, 0x00, SIZEOF(ipv4Addr));
         ipv4Addr.sin_family = AF_INET;
-        ipv4Addr.sin_port = 0; // use next available port
+        ipv4Addr.sin_port = htons(random_port); // use next available port
         MEMCPY(&ipv4Addr.sin_addr, pHostIpAddress->address, IPV4_ADDRESS_LENGTH);
         // TODO: Properly handle the non-portable sin_len field if needed per https://issues.amazon.com/KinesisVideo-4952
         // ipv4Addr.sin_len = SIZEOF(ipv4Addr);
@@ -260,14 +263,16 @@ STATUS socketBind(PKvsIpAddress pHostIpAddress, INT32 sockfd)
     } else {
         MEMSET(&ipv6Addr, 0x00, SIZEOF(ipv6Addr));
         ipv6Addr.sin6_family = AF_INET6;
-        ipv6Addr.sin6_port = 0; // use next available port
+        ipv6Addr.sin6_port = htons(random_port); // use next available port
         MEMCPY(&ipv6Addr.sin6_addr, pHostIpAddress->address, IPV6_ADDRESS_LENGTH);
         // TODO: Properly handle the non-portable sin6_len field if needed per https://issues.amazon.com/KinesisVideo-4952
         // ipv6Addr.sin6_len = SIZEOF(ipv6Addr);
         sockAddr = (struct sockaddr*) &ipv6Addr;
         addrLen = SIZEOF(struct sockaddr_in6);
     }
-
+    pHostIpAddress->port = (UINT16) pHostIpAddress->family == KVS_IP_FAMILY_TYPE_IPV4 ? ipv4Addr.sin_port : ipv6Addr.sin6_port;
+    CHK_STATUS(getIpAddrStr(pHostIpAddress, ipAddrStr, ARRAY_SIZE(ipAddrStr)));
+    DLOGW("Binding to port %s:%u", ipAddrStr, (UINT16) getInt16(pHostIpAddress->port));
     if (bind(sockfd, sockAddr, addrLen) < 0) {
         CHK_STATUS(getIpAddrStr(pHostIpAddress, ipAddrStr, ARRAY_SIZE(ipAddrStr)));
         DLOGW("bind() failed for ip%s address: %s, port %u with errno %s", IS_IPV4_ADDR(pHostIpAddress) ? EMPTY_STRING : "V6", ipAddrStr,
@@ -280,7 +285,6 @@ STATUS socketBind(PKvsIpAddress pHostIpAddress, INT32 sockfd)
         CHK(FALSE, STATUS_GET_PORT_NUMBER_FAILED);
     }
 
-    pHostIpAddress->port = (UINT16) pHostIpAddress->family == KVS_IP_FAMILY_TYPE_IPV4 ? ipv4Addr.sin_port : ipv6Addr.sin6_port;
 
 CleanUp:
     return retStatus;
