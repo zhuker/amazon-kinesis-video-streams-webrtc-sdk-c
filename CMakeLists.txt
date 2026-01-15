@@ -67,10 +67,12 @@ else()
   endif()
 endif()
 
+if (BUILD_DEPENDENCIES)
 if(NOT OPEN_SRC_INSTALL_PREFIX OR OPEN_SRC_INSTALL_PREFIX STREQUAL "")
   set(OPEN_SRC_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/open-source" CACHE PATH "Libraries will be downloaded and built in this directory.")
 else()
   set(OPEN_SRC_INSTALL_PREFIX ${OPEN_SRC_INSTALL_PREFIX} CACHE PATH "Libraries will be downloaded and built in this directory.")
+endif()
 endif()
 
 if(NOT WIN32)
@@ -278,18 +280,19 @@ if(BUILD_DEPENDENCIES)
   if (LINK_PROFILER)
     build_dependency(gperftools)
   endif()
+
+  # building kvsCommonLws also builds kvspic
+  set(BUILD_ARGS
+          -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+          -DBUILD_STATIC=${BUILD_STATIC_LIBS}
+          -DUSE_OPENSSL=${USE_OPENSSL}
+          -DUSE_MBEDTLS=${USE_MBEDTLS}
+          -DKVS_DEFAULT_STACK_SIZE=${KVS_DEFAULT_STACK_SIZE}
+          -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
+  build_dependency(kvsCommonLws ${BUILD_ARGS})
+
   message(STATUS "Finished building dependencies.")
 endif()
-
-# building kvsCommonLws also builds kvspic
-set(BUILD_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DBUILD_STATIC=${BUILD_STATIC_LIBS}
-        -DUSE_OPENSSL=${USE_OPENSSL}
-        -DUSE_MBEDTLS=${USE_MBEDTLS}
-        -DKVS_DEFAULT_STACK_SIZE=${KVS_DEFAULT_STACK_SIZE}
-        -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
-build_dependency(kvsCommonLws ${BUILD_ARGS})
 
 ############# find dependent libraries ############
 
@@ -318,17 +321,24 @@ else()
   endif()
 endif()
 
-if (WIN32)
-  SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
-else()
-  pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
-endif()
+#if (WIN32)
+#  SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
+#else()
+#  pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
+#endif()
 
 # usrsctp dont support pkgconfig yet
+if (OPEN_SRC_INSTALL_PREFIX)
 find_library(
   Usrsctp
   NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
   PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
+else()
+find_library(
+  Usrsctp
+  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
+  )
+endif()
 
 set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS}
                           ${CURL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS})
