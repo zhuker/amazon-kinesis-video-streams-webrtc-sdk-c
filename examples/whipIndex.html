@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WHIP Client - WebRTC Ingestion</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 0 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 10px 5px 10px 0;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+        }
+        #start {
+            background: #4CAF50;
+            color: white;
+        }
+        #start:hover {
+            background: #45a049;
+        }
+        #stop {
+            background: #f44336;
+            color: white;
+        }
+        #stop:hover {
+            background: #da190b;
+        }
+        video {
+            width: 100%;
+            max-width: 640px;
+            background: #000;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+        .status-row {
+            margin: 8px 0;
+            padding: 10px 12px;
+            background: #fff;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .status-label {
+            font-weight: 600;
+            color: #666;
+            display: inline-block;
+            min-width: 120px;
+        }
+        .status-value {
+            color: #333;
+        }
+        .info-box {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #2196F3;
+        }
+        .info-box p {
+            margin: 5px 0;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WHIP Client - WebRTC Media Ingestion</h1>
+
+    <div class="info-box">
+        <p><strong>WHIP (RFC 9725)</strong> streams your webcam video/audio TO the server.</p>
+        <p>The server will log received frame timestamps to console.</p>
+    </div>
+
+    <div class="status-row">
+        <span class="status-label">Status:</span>
+        <span class="status-value" id="status">Ready</span>
+    </div>
+    <div class="status-row">
+        <span class="status-label">ICE State:</span>
+        <span class="status-value" id="ice-state">-</span>
+    </div>
+    <div class="status-row">
+        <span class="status-label">Connection:</span>
+        <span class="status-value" id="connection-state">-</span>
+    </div>
+    <div class="status-row">
+        <span class="status-label">Session URL:</span>
+        <span class="status-value" id="session-url">-</span>
+    </div>
+
+    <div class="controls">
+        <button id="start" onclick="start()">Start Streaming</button>
+        <button id="stop" style="display: none" onclick="stop()">Stop Streaming</button>
+    </div>
+
+    <h2>Local Preview</h2>
+    <video id="localVideo" autoplay muted playsinline></video>
+
+    <script src="whipClient.js"></script>
+</body>
+</html>
