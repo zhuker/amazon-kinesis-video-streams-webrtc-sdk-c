@@ -85,7 +85,15 @@ add_executable(
 target_link_libraries(whepServer kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
 set_target_properties(whepServer PROPERTIES CXX_STANDARD 17)
 
-# Copy examples directory for WHEP server static files
+# WHIP Server (C++ HTTP-based WebRTC ingestion per RFC 9725)
+add_executable(
+        whipServer
+        Common.c
+        whipServer.cpp)
+target_link_libraries(whipServer kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
+set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
+
+# Copy examples directory for WHEP/WHIP server static files
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/../examples" DESTINATION .)
 
 add_executable(
@@ -125,7 +133,7 @@ if(GST_FOUND)
   )
 endif()
 
-install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior whepServer
+install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior whepServer whipServer
   RUNTIME DESTINATION bin
 )
 
