@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.6.3)
 
-project(KinesisVideoWebRTCClientSamples LANGUAGES C)
+project(KinesisVideoWebRTCClientSamples LANGUAGES C CXX)
 
 #set(OPEN_SRC_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/open-source" CACHE PATH "Libraries will be downloaded and build in this directory.")
 
@@ -54,6 +54,8 @@ else()
   message("gstreamer not found. Will not build gstreamer samples")
 endif()
 
+find_package(Threads REQUIRED)
+
 include_directories(${OPEN_SRC_INSTALL_PREFIX}/include)
 include_directories(${OPEN_SRC_INCLUDE_DIRS})
 link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
@@ -77,6 +79,25 @@ add_executable(
         Common.c
         customSignaling.c)
 target_link_libraries(customSignaling kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
+
+# WHEP Server (C++ HTTP-based WebRTC signaling)
+add_executable(
+        whepServer
+        Common.c
+        whepServer.cpp)
+target_link_libraries(whepServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils Threads::Threads)
+set_target_properties(whepServer PROPERTIES CXX_STANDARD 17)
+
+# WHIP Server (C++ HTTP-based WebRTC ingestion per RFC 9725)
+add_executable(
+        whipServer
+        Common.c
+        whipServer.cpp)
+target_link_libraries(whipServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils Threads::Threads)
+set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
+
+# Copy examples directory for WHEP/WHIP server static files
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/examples" DESTINATION .)
 
 add_executable(
   kvsWebrtcClientViewer
@@ -117,7 +138,7 @@ if(GST_FOUND AND ENABLE_SIGNALING)
 endif()
 
 if (ENABLE_SIGNALING)
-install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior
+install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior whepServer whipServer
   RUNTIME DESTINATION bin
 )
 else ()
