@@ -245,8 +245,45 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
     CHK(pKvsPeerConnection != NULL && pBuffer != NULL, STATUS_NULL_ARG);
     CHK(bufferLen >= MIN_HEADER_LENGTH, STATUS_INVALID_ARG);
 
-    ssrc = getInt32(*(PUINT32) (pBuffer + SSRC_OFFSET));
+    now = GETTIME();
 
+    // IMPORTANT: Track TWCC BEFORE decryption!
+    // RTP header and extensions are NOT encrypted by SRTP (only payload is)
+    // This ensures we track TWCC even for packets that fail SRTP replay check
+    if (pKvsPeerConnection->twccExtId != 0) {
+        // Parse RTP header from raw (still encrypted) packet to get TWCC extension
+        PRtpPacket pTwccPacket = NULL;
+        PBYTE pTwccBuffer = (PBYTE) MEMALLOC(bufferLen);
+        if (pTwccBuffer != NULL) {
+            MEMCPY(pTwccBuffer, pBuffer, bufferLen);
+            if (STATUS_SUCCEEDED(createRtpPacketFromBytes(pTwccBuffer, bufferLen, &pTwccPacket))) {
+                pTwccPacket->receivedTime = now;
+                if (pTwccPacket->header.extension && pTwccPacket->header.extensionProfile == TWCC_EXT_PROFILE) {
+                    twccReceiverOnPacketReceived(pKvsPeerConnection, pTwccPacket);
+                }
+                freeRtpPacket(&pTwccPacket);
+            } else {
+                MEMFREE(pTwccBuffer);
+            }
+        }
+    }
+
+    // Now decrypt
+    if (STATUS_FAILED(retStatus = decryptSrtpPacket(pKvsPeerConnection->pSrtpSession, pBuffer, (PINT32) &bufferLen))) {
+        DLOGW("decryptSrtpPacket failed with 0x%08x", retStatus);
+        packetsFailedDecryption++;
+        CHK(FALSE, STATUS_SUCCESS);
+    }
+
+    CHK(NULL != (pPayload = (PBYTE) MEMALLOC(bufferLen)), STATUS_NOT_ENOUGH_MEMORY);
+    MEMCPY(pPayload, pBuffer, bufferLen);
+    CHK_STATUS(createRtpPacketFromBytes(pPayload, bufferLen, &pRtpPacket));
+    pPayload = NULL;  // pRtpPacket now owns the buffer
+    pRtpPacket->receivedTime = now;
+
+    ssrc = pRtpPacket->header.ssrc;
+
+    // Find matching transceiver for this SSRC
     CHK_STATUS(doubleListGetHeadNode(pKvsPeerConnection->pTransceivers, &pCurNode));
     while (pCurNode != NULL) {
         CHK_STATUS(doubleListGetNodeData(pCurNode, &item));
@@ -254,19 +291,6 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
 
         if (pTransceiver->jitterBufferSsrc == ssrc) {
             packetsReceived++;
-            if (STATUS_FAILED(retStatus = decryptSrtpPacket(pKvsPeerConnection->pSrtpSession, pBuffer, (PINT32) &bufferLen))) {
-                DLOGW("decryptSrtpPacket failed with 0x%08x", retStatus);
-                packetsFailedDecryption++;
-                CHK(FALSE, STATUS_SUCCESS);
-            }
-            now = GETTIME();
-            CHK(NULL != (pPayload = (PBYTE) MEMALLOC(bufferLen)), STATUS_NOT_ENOUGH_MEMORY);
-            MEMCPY(pPayload, pBuffer, bufferLen);
-            CHK_STATUS(createRtpPacketFromBytes(pPayload, bufferLen, &pRtpPacket));
-            // pRtpPacket took ownership of pPayload. Set pPayload to NULL to
-            // avoid possible double-free.
-            pPayload = NULL;
-            pRtpPacket->receivedTime = now;
 
             // https://tools.ietf.org/html/rfc3550#section-6.4.1
             // https://tools.ietf.org/html/rfc3550#appendix-A.8
@@ -1052,6 +1076,11 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
                                              &pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable));
     }
 
+    // TWCC feedback generation (receiver side)
+    pKvsPeerConnection->twccReceiverLock = MUTEX_CREATE(TRUE);
+    CHK_STATUS(createTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
+    pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32; // Invalid timer ID
+
     *ppPeerConnection = (PRtcPeerConnection) pKvsPeerConnection;
 
 CleanUp:
@@ -1090,7 +1119,6 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     PDoubleListNode pCurNode = NULL;
     UINT64 item = 0;
     UINT64 startTime;
-    UINT32 twccHashTableCount = 0;
     BOOL twccLocked = FALSE;
 
     CHK(ppPeerConnection != NULL, STATUS_NULL_ARG);
@@ -1163,10 +1191,6 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
         MUTEX_LOCK(pKvsPeerConnection->twccLock);
         twccLocked = TRUE;
 
-        if (STATUS_SUCCEEDED(hashTableGetCount(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, &twccHashTableCount))) {
-            DLOGI("Number of TWCC info packets in memory: %d", twccHashTableCount);
-        }
-
         CHK_LOG_ERR(hashTableIterateEntries(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, 0, freeHashEntry));
         CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable));
 
@@ -1183,6 +1207,16 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
         }
         MUTEX_FREE(pKvsPeerConnection->twccLock);
         pKvsPeerConnection->twccLock = INVALID_MUTEX_VALUE;
+    }
+
+    // Free TWCC receiver manager
+    if (pKvsPeerConnection->pTwccReceiverManager != NULL) {
+        CHK_LOG_ERR(freeTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
+    }
+
+    if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccReceiverLock)) {
+        MUTEX_FREE(pKvsPeerConnection->twccReceiverLock);
+        pKvsPeerConnection->twccReceiverLock = INVALID_MUTEX_VALUE;
     }
 
     PROFILE_WITH_START_TIME_OBJ(startTime, pKvsPeerConnection->peerConnectionDiagnostics.freePeerConnectionTime, "Free peer connection");
@@ -1482,6 +1516,13 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
 
     if (NULL != GETENV(DEBUG_LOG_SDP)) {
         DLOGD("REMOTE_SDP:%s\n", pSessionDescriptionInit->sdp);
+    }
+
+    // Start TWCC feedback timer when remote offers TWCC
+    if (pKvsPeerConnection->twccExtId != 0 && pKvsPeerConnection->twccFeedbackTimerId == MAX_UINT32) {
+        CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, TWCC_FEEDBACK_INITIAL_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
+                                      twccFeedbackCallback, (UINT64) pKvsPeerConnection, &pKvsPeerConnection->twccFeedbackTimerId));
+        DLOGI("Started TWCC feedback timer with extension ID %u", pKvsPeerConnection->twccExtId);
     }
 
 CleanUp:
