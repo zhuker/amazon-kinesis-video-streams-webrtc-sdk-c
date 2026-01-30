@@ -614,3 +614,122 @@ CleanUp:
     LEAVES();
     return retStatus;
 }
+
+//
+// H264 SPS/PPS Tracker implementation (like libwebrtc H264SpsPpsTracker)
+//
+
+VOID h264SpsPpsTrackerInit(PH264SpsPpsTracker pTracker)
+{
+    if (pTracker != NULL) {
+        MEMSET(pTracker, 0, SIZEOF(H264SpsPpsTracker));
+    }
+}
+
+VOID h264SpsPpsTrackerReset(PH264SpsPpsTracker pTracker)
+{
+    if (pTracker != NULL) {
+        pTracker->hasReceivedSps = FALSE;
+        pTracker->hasReceivedPps = FALSE;
+        pTracker->hasReceivedIdr = FALSE;
+        pTracker->lastSpsTime = 0;
+        pTracker->lastPpsTime = 0;
+        pTracker->lastIdrTime = 0;
+        DLOGD("H264 SPS/PPS tracker reset");
+    }
+}
+
+// Process a NAL unit and update tracker state
+// Returns the SPS/PPS status after processing
+H264SpsPpsStatus h264SpsPpsTrackerProcessNalu(PH264SpsPpsTracker pTracker, PBYTE pNalu, UINT32 naluLength)
+{
+    UINT8 naluType;
+    UINT64 currentTime;
+
+    if (pTracker == NULL || pNalu == NULL || naluLength == 0) {
+        return H264_SPS_PPS_MISSING_BOTH;
+    }
+
+    currentTime = GETTIME();
+    naluType = pNalu[0] & NAL_TYPE_MASK;
+
+    switch (naluType) {
+        case H264_NAL_TYPE_SPS:
+            pTracker->hasReceivedSps = TRUE;
+            pTracker->lastSpsTime = currentTime;
+            DLOGD("H264: Received SPS");
+            break;
+
+        case H264_NAL_TYPE_PPS:
+            pTracker->hasReceivedPps = TRUE;
+            pTracker->lastPpsTime = currentTime;
+            DLOGD("H264: Received PPS");
+            break;
+
+        case H264_NAL_TYPE_IDR_SLICE:
+            pTracker->hasReceivedIdr = TRUE;
+            pTracker->lastIdrTime = currentTime;
+            DLOGD("H264: Received IDR (keyframe)");
+            // Check if we have SPS/PPS for this IDR
+            if (!pTracker->hasReceivedSps && !pTracker->hasReceivedPps) {
+                DLOGW("H264: IDR received without SPS/PPS - need keyframe");
+                return H264_SPS_PPS_MISSING_BOTH;
+            } else if (!pTracker->hasReceivedSps) {
+                DLOGW("H264: IDR received without SPS - need keyframe");
+                return H264_SPS_PPS_MISSING_SPS;
+            } else if (!pTracker->hasReceivedPps) {
+                DLOGW("H264: IDR received without PPS - need keyframe");
+                return H264_SPS_PPS_MISSING_PPS;
+            }
+            break;
+
+        case H264_NAL_TYPE_NON_IDR_SLICE:
+            // Non-IDR slices also need SPS/PPS to be decoded
+            if (!pTracker->hasReceivedSps || !pTracker->hasReceivedPps) {
+                // But don't log every P/B frame, just return status
+                if (!pTracker->hasReceivedSps && !pTracker->hasReceivedPps) {
+                    return H264_SPS_PPS_MISSING_BOTH;
+                } else if (!pTracker->hasReceivedSps) {
+                    return H264_SPS_PPS_MISSING_SPS;
+                } else {
+                    return H264_SPS_PPS_MISSING_PPS;
+                }
+            }
+            break;
+
+        default:
+            // Other NAL types (SEI, etc.) - just pass through
+            break;
+    }
+
+    return H264_SPS_PPS_OK;
+}
+
+// Check current SPS/PPS status without processing a new NAL
+H264SpsPpsStatus h264SpsPpsTrackerCheckStatus(PH264SpsPpsTracker pTracker)
+{
+    if (pTracker == NULL) {
+        return H264_SPS_PPS_MISSING_BOTH;
+    }
+
+    if (!pTracker->hasReceivedSps && !pTracker->hasReceivedPps) {
+        return H264_SPS_PPS_MISSING_BOTH;
+    } else if (!pTracker->hasReceivedSps) {
+        return H264_SPS_PPS_MISSING_SPS;
+    } else if (!pTracker->hasReceivedPps) {
+        return H264_SPS_PPS_MISSING_PPS;
+    }
+
+    return H264_SPS_PPS_OK;
+}
+
+// Check if a keyframe is needed based on SPS/PPS state
+BOOL h264SpsPpsTrackerNeedsKeyframe(PH264SpsPpsTracker pTracker)
+{
+    if (pTracker == NULL) {
+        return TRUE;
+    }
+
+    // Need keyframe if we don't have both SPS and PPS
+    return !pTracker->hasReceivedSps || !pTracker->hasReceivedPps;
+}

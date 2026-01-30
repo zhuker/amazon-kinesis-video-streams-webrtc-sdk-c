@@ -26,6 +26,11 @@ extern "C" {
 // Huge frames, by definition, are frames that have an encoded size at least 2.5 times the average size of the frames.
 #define HUGE_FRAME_MULTIPLIER 2.5
 
+// PLI rate limiting constants (like libwebrtc)
+#define PLI_MIN_INTERVAL_MS           1000   // Minimum 1 second between PLI requests
+#define PLI_KEYFRAME_RECEIVE_TIMEOUT  3000   // Wait up to 3 seconds for keyframe after PLI
+#define DECODABLE_FRAME_TIMEOUT_MS    5000   // Request keyframe if no decodable frame for 5 seconds
+
 typedef struct {
     UINT8 payloadType;
     UINT8 rtxPayloadType;
@@ -72,6 +77,16 @@ typedef struct {
     RtcOnBandwidthEstimation onBandwidthEstimation;
     UINT64 onPictureLossCustomData;
     RtcOnPictureLoss onPictureLoss;
+
+    // PLI rate limiting state (like libwebrtc)
+    UINT64 lastPliRequestTime;        // Time of last PLI sent (100ns units)
+    BOOL keyframeRequestPending;      // TRUE if waiting for keyframe response
+    UINT64 lastDecodableFrameTime;    // Time of last decodable frame received (100ns units)
+    BOOL hasReceivedFirstFrame;       // TRUE after first frame is received
+    BOOL firstFrameWasKeyframe;       // TRUE if first frame was a keyframe
+
+    // H264 SPS/PPS tracker (like libwebrtc H264SpsPpsTracker)
+    H264SpsPpsTracker h264SpsPpsTracker;
 
     PBYTE peerFrameBuffer;
     UINT32 peerFrameBufferSize;
