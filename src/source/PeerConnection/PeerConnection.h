@@ -163,10 +163,8 @@ typedef struct {
     RtcOnTwccPacketReport onTwccPacketReport;
     UINT64 onTwccPacketReportCustomData;
 
-    // TWCC feedback generation (receiver side)
-    MUTEX twccReceiverLock;
-    PTwccReceiverManager pTwccReceiverManager;
-    UINT32 twccFeedbackTimerId;
+    // Pacing for smooth packet transmission
+    PPacer pPacer;
 
     UINT64 iceConnectingStartTime;
     KvsPeerConnectionDiagnostics peerConnectionDiagnostics;
@@ -206,6 +204,7 @@ VOID onSctpSessionDataChannelOpen(UINT64, UINT32, PBYTE, UINT32);
 STATUS sendPacketToRtpReceiver(PKvsPeerConnection, PBYTE, UINT32);
 STATUS changePeerConnectionState(PKvsPeerConnection, RTC_PEER_CONNECTION_STATE);
 STATUS twccManagerOnPacketSent(PKvsPeerConnection, PRtpPacket);
+STATUS twccManagerOnPacedPacketSent(PKvsPeerConnection, UINT16 twccSeqNum, UINT32 packetSize, UINT64 sentTimeKvs);
 UINT32 parseExtId(PCHAR);
 
 // visible for testing only
