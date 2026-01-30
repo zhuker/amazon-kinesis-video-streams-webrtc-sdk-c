@@ -1244,3 +1244,37 @@ CleanUp:
     CHK_LOG_ERR(retStatus);
     return retStatus;
 }
+
+// RFC 4585 Section 6.2.1 - Generic NACK
+// https://tools.ietf.org/html/rfc4585#section-6.2.1
+STATUS sendRtcpNack(PKvsPeerConnection pKvsPeerConnection, UINT32 senderSsrc, UINT32 mediaSsrc, UINT16 pid, UINT16 blp)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    BYTE packet[16];
+    UINT32 packetLen = sizeof(packet);
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+
+    // RTCP Header
+    // V=2, P=0, FMT=1 (Generic NACK)
+    packet[0] = (RTCP_PACKET_VERSION_VAL << 6) | RTCP_FEEDBACK_MESSAGE_TYPE_NACK;
+    packet[1] = RTCP_PACKET_TYPE_GENERIC_RTP_FEEDBACK; // PT=205
+    putUnalignedInt16BigEndian(packet + 2, (packetLen / 4) - 1);
+
+    // SSRC of packet sender
+    putUnalignedInt32BigEndian(packet + 4, senderSsrc);
+
+    // SSRC of media source
+    putUnalignedInt32BigEndian(packet + 8, mediaSsrc);
+
+    // FCI: PID (Packet ID - sequence number of lost packet)
+    putUnalignedInt16BigEndian(packet + 12, pid);
+
+    // FCI: BLP (Bitmask of following Lost Packets)
+    putUnalignedInt16BigEndian(packet + 14, blp);
+
+    CHK_STATUS(writeRtcpPacket(pKvsPeerConnection, packet, packetLen));
+
+CleanUp:
+    return retStatus;
+}

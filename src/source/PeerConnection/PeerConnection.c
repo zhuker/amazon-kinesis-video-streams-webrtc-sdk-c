@@ -489,6 +489,54 @@ CleanUp:
     return retStatus;
 }
 
+// NACK callback - called by jitter buffer when it detects missing packets
+STATUS onPacketMissingFunc(UINT64 customData, UINT16 pid, UINT16 blp)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pTransceiver = (PKvsRtpTransceiver) customData;
+
+    CHK(pTransceiver != NULL, STATUS_NULL_ARG);
+
+    DLOGI("Sending NACK for seqNum=%u blp=0x%04x", pid, blp);
+    CHK_STATUS(transceiverSendNack((PRtcRtpTransceiver) pTransceiver, pid, blp));
+
+    // Update stats
+    MUTEX_LOCK(pTransceiver->statsLock);
+    pTransceiver->inboundStats.nackCount++;
+    MUTEX_UNLOCK(pTransceiver->statsLock);
+
+CleanUp:
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
+// Keyframe request callback - called by jitter buffer when NACK list overflows or too many retries fail
+STATUS onKeyframeRequestFunc(UINT64 customData)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pTransceiver = (PKvsRtpTransceiver) customData;
+
+    CHK(pTransceiver != NULL, STATUS_NULL_ARG);
+
+    DLOGW("Requesting keyframe due to NACK recovery failure");
+    CHK_STATUS(transceiverSendPli((PRtcRtpTransceiver) pTransceiver));
+
+    // Update stats
+    MUTEX_LOCK(pTransceiver->statsLock);
+    pTransceiver->inboundStats.pliCount++;
+    MUTEX_UNLOCK(pTransceiver->statsLock);
+
+CleanUp:
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
 PVOID dtlsSessionStartThread(PVOID args)
 {
     ENTERS();
@@ -1833,6 +1881,11 @@ STATUS addTransceiver(PRtcPeerConnection pPeerConnection, PRtcMediaStreamTrack p
     CHK_STATUS(createJitterBuffer(onFrameReadyFunc, onFrameDroppedFunc, depayFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY, clockRate,
                                   (UINT64) pKvsRtpTransceiver, &pJitterBuffer));
     CHK_STATUS(kvsRtpTransceiverSetJitterBuffer(pKvsRtpTransceiver, pJitterBuffer));
+
+    // Enable NACK support for requesting retransmission of lost packets
+    CHK_STATUS(jitterBufferSetOnPacketMissing(pJitterBuffer, onPacketMissingFunc, (UINT64) pKvsRtpTransceiver));
+    // Enable keyframe request fallback when NACK recovery fails (list overflow or max retries)
+    CHK_STATUS(jitterBufferSetOnKeyframeRequest(pJitterBuffer, onKeyframeRequestFunc, (UINT64) pKvsRtpTransceiver));
 
     // after pKvsRtpTransceiver is successfully created, jitterBuffer will be freed by pKvsRtpTransceiver.
     pJitterBuffer = NULL;

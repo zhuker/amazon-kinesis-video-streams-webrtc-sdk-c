@@ -2407,6 +2407,19 @@ PUBLIC_API STATUS transceiverSendPli(PRtcRtpTransceiver);
  */
 PUBLIC_API STATUS transceiverSendFir(PRtcRtpTransceiver);
 
+/**
+ * @brief Sends a NACK (Negative Acknowledgement) packet to request retransmission of lost packets.
+ *
+ * RFC 4585 Section 6.2.1 - Generic NACK
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ * @param[in] UINT16 pid Packet ID - RTP sequence number of the first lost packet.
+ * @param[in] UINT16 blp Bitmask of Lost Packets - bit i set means packet (pid + i + 1) is also lost.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverSendNack(PRtcRtpTransceiver, UINT16, UINT16);
+
 /*!@} */
 #ifdef __cplusplus
 }

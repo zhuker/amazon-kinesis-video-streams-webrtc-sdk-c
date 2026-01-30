@@ -587,6 +587,19 @@ CleanUp:
     return retStatus;
 }
 
+STATUS transceiverSendNack(PRtcRtpTransceiver pRtcRtpTransceiver, UINT16 pid, UINT16 blp)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+
+    CHK(pKvsRtpTransceiver != NULL && pKvsRtpTransceiver->pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+
+    CHK_STATUS(sendRtcpNack(pKvsRtpTransceiver->pKvsPeerConnection, pKvsRtpTransceiver->sender.ssrc, pKvsRtpTransceiver->jitterBufferSsrc, pid, blp));
+
+CleanUp:
+    return retStatus;
+}
+
 STATUS requestKeyFrame(PRtcRtpTransceiver pRtcRtpTransceiver)
 {
     return transceiverSendPli(pRtcRtpTransceiver);

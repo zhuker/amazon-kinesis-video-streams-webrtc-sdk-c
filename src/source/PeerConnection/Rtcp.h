@@ -15,6 +15,7 @@ STATUS onRtcpTwccPacket(PRtcpPacket, PKvsPeerConnection);
 STATUS updateTwccHashTable(PTwccManager, PINT64, PUINT64, PUINT64, PUINT64, PUINT64);
 STATUS sendRtcpPLI(PKvsPeerConnection pKvsPeerConnection, UINT32 senderSsrc, UINT32 mediaSsrc);
 STATUS sendRtcpFIR(PKvsPeerConnection pKvsPeerConnection, UINT32 senderSsrc, UINT32 mediaSsrc, UINT8* pSeqNum);
+STATUS sendRtcpNack(PKvsPeerConnection pKvsPeerConnection, UINT32 senderSsrc, UINT32 mediaSsrc, UINT16 pid, UINT16 blp);
 
 // TWCC feedback generation (receiver side)
 STATUS createTwccReceiverManager(PTwccReceiverManager* ppManager);
