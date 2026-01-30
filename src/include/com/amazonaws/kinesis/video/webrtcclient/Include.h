@@ -1069,6 +1069,20 @@ typedef struct {
 typedef VOID (*RtcOnTwccPacketReport)(UINT64, PTwccPacketReport, UINT32, UINT64);
 
 /**
+ * @brief Configuration for the packet pacer.
+ *
+ * The pacer smooths packet transmission to avoid bursts that can cause
+ * network congestion. This is recommended when using GCC congestion control.
+ */
+typedef struct {
+    UINT64 initialBitrateBps;  //!< Initial target bitrate (default: 300 kbps)
+    UINT32 maxQueueSize;       //!< Maximum packets in queue (default: 500)
+    UINT32 maxQueueBytes;      //!< Maximum bytes in queue (default: 2MB)
+    DOUBLE pacingFactor;       //!< Pacing factor multiplier (default: 2.5, like libwebrtc)
+    UINT64 maxQueueTimeKvs;    //!< Max time packet can wait in queue in 100ns units (0=disabled)
+} RtcPacerConfig, *PRtcPacerConfig;
+
+/**
  * @brief RtcOnPictureLoss is fired everytime a Picture Loss Indication (PLI)
  * feedback message is received. Receiving such message normally indicates that
  * you sent a video frame which receiver could not decode.
@@ -1744,6 +1758,69 @@ PUBLIC_API STATUS peerConnectionOnSenderBandwidthEstimation(PRtcPeerConnection, 
  * @return STATUS code of the execution. STATUS_SUCCESS on success
  */
 PUBLIC_API STATUS peerConnectionOnTwccPacketReport(PRtcPeerConnection, UINT64, RtcOnTwccPacketReport);
+
+/**
+ * Enable packet pacing for smooth transmission.
+ *
+ * Pacing spreads packet transmission over time to avoid bursts that can cause
+ * network congestion. This is recommended when using GCC congestion control
+ * as it provides accurate delay measurements for the delay-based controller.
+ *
+ * NOTE: Once enabled, pacing remains active until the peer connection is freed.
+ * The pacer automatically starts when the peer connection reaches CONNECTED state.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ * @param[in] PRtcPacerConfig Optional configuration (NULL for defaults)
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS peerConnectionEnablePacing(PRtcPeerConnection, PRtcPacerConfig);
+
+/**
+ * Set the target bitrate for the pacer.
+ *
+ * This should be called when your congestion control algorithm (e.g., GCC)
+ * determines a new target bitrate. The pacer will adjust its send rate accordingly.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ * @param[in] UINT64 Target bitrate in bits per second
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS peerConnectionSetPacerBitrate(PRtcPeerConnection, UINT64);
+
+/**
+ * Get current pacer target bitrate.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ *
+ * @return Current target bitrate in bps, or 0 if pacing is not enabled
+ */
+PUBLIC_API UINT64 peerConnectionGetPacerBitrate(PRtcPeerConnection);
+
+/**
+ * Set the maximum queue time for frame-rate pacing.
+ *
+ * When set to a non-zero value, the pacer will ensure all packets in the queue
+ * are sent within this time limit, even if that requires exceeding the normal
+ * bitrate-based pacing rate. This is useful for real-time video where frames
+ * must be delivered before the next frame arrives.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ * @param[in] UINT64 Maximum queue time in 100ns units (0 to disable)
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS peerConnectionSetPacerMaxQueueTime(PRtcPeerConnection, UINT64);
+
+/**
+ * Get current pacer maximum queue time.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ *
+ * @return Current max queue time in 100ns units, or 0 if disabled or pacing not enabled
+ */
+PUBLIC_API UINT64 peerConnectionGetPacerMaxQueueTime(PRtcPeerConnection);
 
 /**
  * Set a callback for data channel
