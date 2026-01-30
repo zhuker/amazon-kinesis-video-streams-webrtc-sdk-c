@@ -386,34 +386,67 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
         }
 
         CHK_STATUS(encryptRtpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
-        sendStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen);
-        if (sendStatus == STATUS_SEND_DATA_FAILED) {
-            packetsDiscardedOnSend++;
-            bytesDiscardedOnSend += packetLen - headerLen;
-            // TODO is frame considered discarded when at least one of its packets is discarded or all of its packets discarded?
-            framesDiscardedOnSend = 1;
+
+        // Check if pacing is enabled (only for video - audio bypasses pacer to avoid latency)
+        if (pKvsPeerConnection->pPacer != NULL && pacerIsEnabled(pKvsPeerConnection->pPacer) &&
+            pKvsRtpTransceiver->sender.track.kind == MEDIA_STREAM_TRACK_KIND_VIDEO) {
+            // Enqueue packet to pacer - pacer takes ownership of rawPacket
+            sendStatus = pacerEnqueuePacket(pKvsPeerConnection->pPacer, rawPacket, packetLen, twsn);
+            if (STATUS_SUCCEEDED(sendStatus)) {
+                // Pacer owns rawPacket now, don't free it
+                rawPacket = NULL;
+
+                // Update stats (packet is queued, will be sent by pacer)
+                headerLen = RTP_HEADER_LEN(pRtpPacket);
+                bytesSent += packetLen - headerLen;
+                packetsSent++;
+                lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+                headerBytesSent += headerLen;
+            } else {
+                // Pacer queue full
+                packetsDiscardedOnSend++;
+                bytesDiscardedOnSend += packetLen - headerLen;
+                framesDiscardedOnSend = 1;
+                // rawPacket was already freed by pacerEnqueuePacket on failure
+                rawPacket = NULL;
+                continue;
+            }
+        } else {
+            // No pacing - send immediately
+            sendStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen);
+            if (sendStatus == STATUS_SEND_DATA_FAILED) {
+                packetsDiscardedOnSend++;
+                bytesDiscardedOnSend += packetLen - headerLen;
+                // TODO is frame considered discarded when at least one of its packets is discarded or all of its packets discarded?
+                framesDiscardedOnSend = 1;
+                SAFE_MEMFREE(rawPacket);
+                continue;
+            } else if (sendStatus == STATUS_SUCCESS && pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {
+                pRtpPacket->sentTime = GETTIME();
+                twccManagerOnPacketSent(pKvsPeerConnection, pRtpPacket);
+            }
+            CHK_STATUS(sendStatus);
+
+            // https://tools.ietf.org/html/rfc3550#section-6.4.1
+            // The total number of payload octets (i.e., not including header or padding) transmitted in RTP data packets by the sender
+            headerLen = RTP_HEADER_LEN(pRtpPacket);
+            bytesSent += packetLen - headerLen;
+            packetsSent++;
+            lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+            headerBytesSent += headerLen;
+
             SAFE_MEMFREE(rawPacket);
-            continue;
-        } else if (sendStatus == STATUS_SUCCESS && pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {
-            pRtpPacket->sentTime = GETTIME();
-            twccManagerOnPacketSent(pKvsPeerConnection, pRtpPacket);
         }
-        CHK_STATUS(sendStatus);
+
         if (bufferAfterEncrypt) {
-            pRtpPacket->pRawPacket = rawPacket;
-            pRtpPacket->rawPacketLength = packetLen;
-            CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
+            // Note: when pacing, rawPacket is NULL here, but the rolling buffer
+            // was already populated before encryption if !bufferAfterEncrypt
+            if (rawPacket != NULL) {
+                pRtpPacket->pRawPacket = rawPacket;
+                pRtpPacket->rawPacketLength = packetLen;
+                CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
+            }
         }
-
-        // https://tools.ietf.org/html/rfc3550#section-6.4.1
-        // The total number of payload octets (i.e., not including header or padding) transmitted in RTP data packets by the sender
-        headerLen = RTP_HEADER_LEN(pRtpPacket);
-        bytesSent += packetLen - headerLen;
-        packetsSent++;
-        lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
-        headerBytesSent += headerLen;
-
-        SAFE_MEMFREE(rawPacket);
     }
 
     if (MEDIA_STREAM_TRACK_KIND_VIDEO == pKvsRtpTransceiver->sender.track.kind) {

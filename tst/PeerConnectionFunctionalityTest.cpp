@@ -6,7 +6,15 @@ namespace kinesis {
 namespace video {
 namespace webrtcclient {
 
-class PeerConnectionFunctionalityTest : public WebRtcClientTestBase {};
+// Forward declaration for pacing test helper
+struct PacingTestContext;
+
+class PeerConnectionFunctionalityTest : public WebRtcClientTestBase {
+protected:
+    void runPacingTest(const RtcPacerConfig& pacerConfig, PacingTestContext& context);
+    void validatePacingResults(PacingTestContext& context, const std::vector<TwccPacketReport>& validReports,
+                               UINT64 targetBitrateBps, DOUBLE pacingFactor);
+};
 
 // Assert that two PeerConnections can connect to each other and go to connected
 TEST_F(PeerConnectionFunctionalityTest, connectTwoPeers)
@@ -1856,6 +1864,350 @@ TEST_F(PeerConnectionFunctionalityTest, twccReceiverGeneratesFeedback)
           context.feedbackCount, context.totalTxPackets, context.totalRxPackets,
           context.totalTxPackets > 0 ? (context.totalRxPackets * 100) / context.totalTxPackets : 0,
           context.validDurationCount, context.invalidDurationCount);
+}
+
+// Context for collecting TWCC packet reports (no mutex - peer connection closed before analysis)
+struct PacingTestContext {
+    std::vector<TwccPacketReport> allReports;
+    SIZE_T feedbackCount;
+    SIZE_T totalPackets;
+    SIZE_T receivedPackets;
+
+    // Get valid reports sorted by send time for analysis
+    std::vector<TwccPacketReport> getValidSortedReports() const
+    {
+        std::vector<TwccPacketReport> validReports;
+        for (const auto& report : allReports) {
+            if (report.sendTimeKvs > 0 && report.received) {
+                validReports.push_back(report);
+            }
+        }
+        std::sort(validReports.begin(), validReports.end(),
+                  [](const TwccPacketReport& a, const TwccPacketReport& b) { return a.sendTimeKvs < b.sendTimeKvs; });
+        return validReports;
+    }
+
+    // Computed stats after validation
+    DOUBLE totalDurationSec;
+    UINT64 totalBytes;
+    DOUBLE actualBitrateBps;
+    DOUBLE maxWindowBitrateBps;
+    DOUBLE burstRatio;
+    DOUBLE receiveRatio;
+};
+
+// Helper function for pacing tests
+// Sets up peer connections with given pacer config, sends video frames, closes connections,
+// populates context with collected TWCC reports for analysis
+void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerConfig, PacingTestContext& context)
+{
+    const char* FRAME_DIR = "../samples/bbbH264";
+    const UINT32 NUM_FRAMES_TO_SEND = 60;
+    const UINT64 FRAME_DURATION_KVS = HUNDREDS_OF_NANOS_IN_A_SECOND / 60;
+    const SIZE_T MAX_FRAME_SIZE = 256 * 1024;
+    RtcConfiguration configuration;
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+    RtcMediaStreamTrack offerVideoTrack, answerVideoTrack;
+    PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver;
+    Frame videoFrame;
+    PBYTE pFrameBuffer = NULL;
+
+    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
+    context.feedbackCount = 0;
+    context.totalPackets = 0;
+    context.receivedPackets = 0;
+    context.allReports.clear();
+
+    // Allocate frame buffer
+    pFrameBuffer = (PBYTE) MEMALLOC(MAX_FRAME_SIZE);
+    ASSERT_NE(pFrameBuffer, nullptr);
+    videoFrame.frameData = pFrameBuffer;
+
+    // Create peer connections
+    EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
+    EXPECT_EQ(createPeerConnection(&configuration, &answerPc), STATUS_SUCCESS);
+
+    // Enable TWCC on both peers
+    PKvsPeerConnection pOfferKvs = (PKvsPeerConnection) offerPc;
+    PKvsPeerConnection pAnswerKvs = (PKvsPeerConnection) answerPc;
+    pOfferKvs->twccExtId = 1;
+    pAnswerKvs->twccExtId = 1;
+
+    // Add video tracks (H264 codec)
+    addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver,
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+
+    // Enable pacing with the provided config (including maxQueueTimeKvs if set)
+    EXPECT_EQ(peerConnectionEnablePacing(offerPc, const_cast<PRtcPacerConfig>(&pacerConfig)), STATUS_SUCCESS);
+
+    // Callback for TWCC packet reports
+    auto onTwccPacketReportHandler = [](UINT64 customData, PTwccPacketReport pReports, UINT32 reportCount, UINT64 rtt) -> void {
+        UNUSED_PARAM(rtt);
+        PacingTestContext* ctx = (PacingTestContext*) customData;
+
+        for (UINT32 i = 0; i < reportCount; i++) {
+            ctx->allReports.push_back(pReports[i]);
+            ctx->totalPackets++;
+            if (pReports[i].received) {
+                ctx->receivedPackets++;
+            }
+        }
+        ctx->feedbackCount++;
+    };
+
+    PacingTestContext *pContext = &context;
+    EXPECT_EQ(peerConnectionOnTwccPacketReport(offerPc, (UINT64) pContext, onTwccPacketReportHandler), STATUS_SUCCESS);
+
+    // Connect peers
+    EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
+
+    // Set pacer bitrate after connection
+    EXPECT_EQ(peerConnectionSetPacerBitrate(offerPc, pacerConfig.initialBitrateBps), STATUS_SUCCESS);
+
+    // Send video frames
+    CHAR framePath[256];
+    UINT64 presentationTs = 0;
+    SIZE_T totalBytesSent = 0;
+    SIZE_T iFrameCount = 0;
+
+    for (UINT32 frameNum = 1; frameNum <= NUM_FRAMES_TO_SEND; frameNum++) {
+        SNPRINTF(framePath, SIZEOF(framePath), "%s/frame-%04u.h264", FRAME_DIR, frameNum);
+
+        UINT64 fileSize = 0;
+        if (STATUS_FAILED(readFile(framePath, TRUE, NULL, &fileSize))) {
+            continue;
+        }
+        if (fileSize > MAX_FRAME_SIZE) {
+            continue;
+        }
+        if (STATUS_FAILED(readFile(framePath, TRUE, pFrameBuffer, &fileSize))) {
+            continue;
+        }
+
+        videoFrame.size = (UINT32) fileSize;
+        videoFrame.presentationTs = presentationTs;
+        videoFrame.decodingTs = presentationTs;
+
+        BOOL isKeyFrame = (frameNum == 1 || fileSize > 50000);
+        videoFrame.flags = isKeyFrame ? FRAME_FLAG_KEY_FRAME : FRAME_FLAG_NONE;
+        if (isKeyFrame) {
+            iFrameCount++;
+        }
+
+        EXPECT_EQ(writeFrame(offerVideoTransceiver, &videoFrame), STATUS_SUCCESS);
+        totalBytesSent += fileSize;
+        presentationTs += FRAME_DURATION_KVS;
+        THREAD_SLEEP(FRAME_DURATION_KVS);
+    }
+
+    // Wait for remaining TWCC feedback
+    THREAD_SLEEP(500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+
+    DLOGD("Sent %u frames, %zu total bytes, %zu I-frames", NUM_FRAMES_TO_SEND, totalBytesSent, iFrameCount);
+
+    // Close peer connections before analysis - guarantees context is stable
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+
+    MEMFREE(pFrameBuffer);
+
+    // Basic validation
+    EXPECT_GT(pContext->feedbackCount, 0) << "Should have received TWCC feedback";
+    EXPECT_GT(pContext->allReports.size(), 100) << "Should have reports for many packets";
+    EXPECT_GT(iFrameCount, 0) << "Should have sent at least one I-frame";
+}
+
+// Common pacing validation: computes stats and runs shared assertions
+void PeerConnectionFunctionalityTest::validatePacingResults(PacingTestContext& context,
+                                                            const std::vector<TwccPacketReport>& validReports,
+                                                            UINT64 targetBitrateBps, DOUBLE pacingFactor)
+{
+    ASSERT_GT(validReports.size(), 2) << "Need at least 3 valid reports for analysis";
+
+    DLOGD("Received %zu TWCC feedbacks with %zu valid packet reports", context.feedbackCount, validReports.size());
+
+    // Calculate overall transmission stats
+    UINT64 firstSendTime = validReports.front().sendTimeKvs;
+    UINT64 lastSendTime = validReports.back().sendTimeKvs;
+    UINT64 totalDurationKvs = lastSendTime - firstSendTime;
+    context.totalDurationSec = (DOUBLE) totalDurationKvs / HUNDREDS_OF_NANOS_IN_A_SECOND;
+
+    context.totalBytes = 0;
+    for (const auto& report : validReports) {
+        context.totalBytes += report.packetSize;
+    }
+
+    context.actualBitrateBps = (context.totalBytes * 8.0) / context.totalDurationSec;
+
+    DLOGD("Transmission stats: %zu packets, %llu bytes over %.2fs = %.0f bps (target: %llu bps)",
+          validReports.size(), (unsigned long long) context.totalBytes, context.totalDurationSec,
+          context.actualBitrateBps, (unsigned long long) targetBitrateBps);
+
+    // Measure throughput in sliding 50ms windows
+    const UINT64 WINDOW_SIZE_KVS = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    UINT64 maxWindowBytes = 0;
+
+    for (size_t i = 0; i < validReports.size(); i++) {
+        UINT64 windowStart = validReports[i].sendTimeKvs;
+        UINT64 windowEnd = windowStart + WINDOW_SIZE_KVS;
+        UINT64 windowBytes = 0;
+
+        for (size_t j = i; j < validReports.size() && validReports[j].sendTimeKvs < windowEnd; j++) {
+            windowBytes += validReports[j].packetSize;
+        }
+        if (windowBytes > maxWindowBytes) {
+            maxWindowBytes = windowBytes;
+        }
+    }
+
+    context.maxWindowBitrateBps = (maxWindowBytes * 8.0) / 0.050;
+    context.burstRatio = context.maxWindowBitrateBps / targetBitrateBps;
+
+    DLOGD("Window analysis (50ms): maxWindowBytes=%llu maxWindowBitrate=%.0f bps burstRatio=%.2fx",
+          (unsigned long long) maxWindowBytes, context.maxWindowBitrateBps, context.burstRatio);
+
+    // Common assertions
+    EXPECT_LT(context.actualBitrateBps, targetBitrateBps * pacingFactor)
+        << "Overall bitrate should be < " << pacingFactor << "x target with pacing";
+
+    ASSERT_GT(context.totalPackets, 0);
+    context.receiveRatio = (DOUBLE) context.receivedPackets / context.totalPackets;
+    DLOGD("Receive ratio: %.1f%% (%zu/%zu)", context.receiveRatio * 100.0, context.receivedPackets, context.totalPackets);
+    EXPECT_GT(context.receiveRatio, 0.90) << "Receive ratio should be > 90%";
+}
+
+// Test bitrate-based pacing
+// Verifies that packets are spread over time according to target bitrate
+TEST_F(PeerConnectionFunctionalityTest, pacingBitrate)
+{
+    const UINT64 TARGET_BITRATE_BPS = 5000000;  // 5 Mbps
+
+    RtcPacerConfig pacerConfig;
+    pacerConfig.initialBitrateBps = TARGET_BITRATE_BPS;
+    pacerConfig.maxQueueSize = 1000;
+    pacerConfig.maxQueueBytes = 4 * 1024 * 1024;
+    pacerConfig.pacingFactor = 2.5;
+    pacerConfig.maxQueueTimeKvs = 0;  // No frame deadline, use bitrate-based pacing only
+
+    PacingTestContext context;
+    runPacingTest(pacerConfig, context);
+    auto validReports = context.getValidSortedReports();
+
+    // Common validation: transmission stats, receive ratio
+    validatePacingResults(context, validReports, TARGET_BITRATE_BPS, pacerConfig.pacingFactor);
+
+    // Bitrate-only pacing should have bounded burst ratio
+    EXPECT_LT(context.burstRatio, pacerConfig.pacingFactor * 1.5)
+        << "Max burst ratio should be bounded with pacing, got " << context.burstRatio << "x";
+
+    DLOGD("Bitrate pacing test completed successfully");
+}
+
+// Test frame deadline pacing
+// Verifies that large frames are sent within the deadline
+TEST_F(PeerConnectionFunctionalityTest, pacingFrameDeadline)
+{
+    const UINT64 TARGET_BITRATE_BPS = 5000000;  // 5 Mbps
+    const UINT32 FRAME_DEADLINE_MS = 16;  // 16ms for 60fps
+    const UINT64 FRAME_DEADLINE_KVS = FRAME_DEADLINE_MS * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+    RtcPacerConfig pacerConfig;
+    pacerConfig.initialBitrateBps = TARGET_BITRATE_BPS;
+    pacerConfig.maxQueueSize = 1000;
+    pacerConfig.maxQueueBytes = 4 * 1024 * 1024;
+    pacerConfig.pacingFactor = 2.5;
+    pacerConfig.maxQueueTimeKvs = FRAME_DEADLINE_KVS;
+
+    PacingTestContext context;
+    runPacingTest(pacerConfig, context);
+    auto validReports = context.getValidSortedReports();
+
+    // Common validation: transmission stats, receive ratio
+    // Note: burst ratio is NOT checked here since frame deadline pacing intentionally allows bursts
+    validatePacingResults(context, validReports, TARGET_BITRATE_BPS, pacerConfig.pacingFactor);
+
+    // Frame-specific analysis: group packets into frames based on send time gaps
+    const UINT64 FRAME_GAP_THRESHOLD_KVS = 5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    std::vector<std::vector<TwccPacketReport>> frameGroups;
+    std::vector<TwccPacketReport> currentGroup;
+
+    for (size_t i = 0; i < validReports.size(); i++) {
+        if (currentGroup.empty()) {
+            currentGroup.push_back(validReports[i]);
+        } else {
+            UINT64 gap = validReports[i].sendTimeKvs - currentGroup.back().sendTimeKvs;
+            if (gap < FRAME_GAP_THRESHOLD_KVS) {
+                currentGroup.push_back(validReports[i]);
+            } else {
+                frameGroups.push_back(currentGroup);
+                currentGroup.clear();
+                currentGroup.push_back(validReports[i]);
+            }
+        }
+    }
+    if (!currentGroup.empty()) {
+        frameGroups.push_back(currentGroup);
+    }
+
+    DLOGD("Identified %zu frame groups", frameGroups.size());
+
+    // Analyze large frames (> 10KB) for deadline compliance
+    SIZE_T largeFrameCount = 0;
+    SIZE_T deadlineMetCount = 0;
+    DOUBLE maxFrameDurationMs = 0;
+    UINT64 maxFrameBytes = 0;
+
+    for (const auto& group : frameGroups) {
+        UINT64 groupBytes = 0;
+        for (const auto& pkt : group) {
+            groupBytes += pkt.packetSize;
+        }
+
+        if (groupBytes < 10000) {
+            continue;
+        }
+
+        largeFrameCount++;
+
+        UINT64 firstSend = group.front().sendTimeKvs;
+        UINT64 lastSend = group.back().sendTimeKvs;
+        DOUBLE durationMs = (DOUBLE)(lastSend - firstSend) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+        if (durationMs > maxFrameDurationMs) {
+            maxFrameDurationMs = durationMs;
+            maxFrameBytes = groupBytes;
+        }
+
+        // Allow 2x deadline for timing jitter
+        if (durationMs <= FRAME_DEADLINE_MS * 2) {
+            deadlineMetCount++;
+        }
+    }
+
+    DLOGD("Frame deadline analysis: %zu large frames, %zu met deadline (%.1f%%), max=%.1fms for %llu bytes",
+          largeFrameCount, deadlineMetCount,
+          largeFrameCount > 0 ? (100.0 * deadlineMetCount / largeFrameCount) : 0.0,
+          maxFrameDurationMs, (unsigned long long) maxFrameBytes);
+
+    // Frame-specific assertions
+    ASSERT_GT(largeFrameCount, 0) << "Should have at least one large frame";
+
+    DOUBLE deadlineRatio = (DOUBLE) deadlineMetCount / largeFrameCount;
+    EXPECT_GT(deadlineRatio, 0.70)
+        << "At least 70% of large frames should meet deadline, got " << (deadlineRatio * 100.0) << "%";
+
+    EXPECT_LT(maxFrameDurationMs, FRAME_DEADLINE_MS * 3)
+        << "Max frame duration should be < " << (FRAME_DEADLINE_MS * 3) << "ms, got " << maxFrameDurationMs << "ms";
+
+    DLOGD("Frame deadline pacing test completed successfully");
 }
 
 } // namespace webrtcclient

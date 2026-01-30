@@ -1187,6 +1187,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
         timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
     }
 
+    // Free pacer (after timer queue since pacer uses timers)
+    if (pKvsPeerConnection->pPacer != NULL) {
+        CHK_LOG_ERR(freePacer(&pKvsPeerConnection->pPacer));
+    }
+
     if (pKvsPeerConnection->pTwccManager != NULL) {
         MUTEX_LOCK(pKvsPeerConnection->twccLock);
         twccLocked = TRUE;
@@ -1353,6 +1358,105 @@ CleanUp:
 
     LEAVES();
     return retStatus;
+}
+
+STATUS peerConnectionEnablePacing(PRtcPeerConnection pRtcPeerConnection, PRtcPacerConfig pConfig)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+    BOOL locked = FALSE;
+    PacerConfig pacerConfig;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+
+    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = TRUE;
+
+    // Don't create if already exists
+    CHK(pKvsPeerConnection->pPacer == NULL, retStatus);
+
+    // Convert public config to internal config
+    MEMSET(&pacerConfig, 0, SIZEOF(PacerConfig));
+    if (pConfig != NULL) {
+        pacerConfig.initialBitrateBps = pConfig->initialBitrateBps;
+        pacerConfig.maxQueueSize = pConfig->maxQueueSize;
+        pacerConfig.maxQueueBytes = pConfig->maxQueueBytes;
+        pacerConfig.pacingFactor = pConfig->pacingFactor;
+        pacerConfig.maxQueueTimeKvs = pConfig->maxQueueTimeKvs;
+    }
+    pacerConfig.enabled = TRUE;
+
+    // Create the pacer
+    CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &pacerConfig));
+
+    // Start the pacer immediately (it will only send when packets are queued)
+    CHK_STATUS(pacerStart(pKvsPeerConnection->pPacer, pKvsPeerConnection));
+
+    DLOGI("Pacing enabled for peer connection");
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
+STATUS peerConnectionSetPacerBitrate(PRtcPeerConnection pRtcPeerConnection, UINT64 bitrateBps)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection->pPacer != NULL, STATUS_INVALID_OPERATION);
+
+    CHK_STATUS(pacerSetTargetBitrate(pKvsPeerConnection->pPacer, bitrateBps));
+
+CleanUp:
+    LEAVES();
+    return retStatus;
+}
+
+UINT64 peerConnectionGetPacerBitrate(PRtcPeerConnection pRtcPeerConnection)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    if (pKvsPeerConnection == NULL || pKvsPeerConnection->pPacer == NULL) {
+        return 0;
+    }
+
+    return pacerGetTargetBitrate(pKvsPeerConnection->pPacer);
+}
+
+STATUS peerConnectionSetPacerMaxQueueTime(PRtcPeerConnection pRtcPeerConnection, UINT64 maxQueueTimeKvs)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection->pPacer != NULL, STATUS_INVALID_OPERATION);
+
+    CHK_STATUS(pacerSetMaxQueueTime(pKvsPeerConnection->pPacer, maxQueueTimeKvs));
+
+CleanUp:
+    LEAVES();
+    return retStatus;
+}
+
+UINT64 peerConnectionGetPacerMaxQueueTime(PRtcPeerConnection pRtcPeerConnection)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    if (pKvsPeerConnection == NULL || pKvsPeerConnection->pPacer == NULL) {
+        return 0;
+    }
+
+    return pacerGetMaxQueueTime(pKvsPeerConnection->pPacer);
 }
 
 STATUS peerConnectionGetLocalDescription(PRtcPeerConnection pRtcPeerConnection, PRtcSessionDescriptionInit pRtcSessionDescriptionInit)
@@ -2053,6 +2157,41 @@ STATUS twccManagerOnPacketSent(PKvsPeerConnection pKvsPeerConnection, PRtpPacket
 
     // Ensure twccRollingWindowDeletion is run in a guarded section
     CHK_STATUS(twccRollingWindowDeletion(pKvsPeerConnection, pRtpPacket, seqNum));
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+    }
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
+STATUS twccManagerOnPacedPacketSent(PKvsPeerConnection pKvsPeerConnection, UINT16 twccSeqNum, UINT32 packetSize, UINT64 sentTimeKvs)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    BOOL locked = FALSE;
+    PTwccRtpPacketInfo pTwccRtpPktInfo = NULL;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK((pKvsPeerConnection->onSenderBandwidthEstimation != NULL || pKvsPeerConnection->onTwccPacketReport != NULL) &&
+            pKvsPeerConnection->pTwccManager != NULL,
+        STATUS_SUCCESS);
+
+    MUTEX_LOCK(pKvsPeerConnection->twccLock);
+    locked = TRUE;
+
+    CHK((pTwccRtpPktInfo = MEMCALLOC(1, SIZEOF(TwccRtpPacketInfo))) != NULL, STATUS_NOT_ENOUGH_MEMORY);
+
+    pTwccRtpPktInfo->packetSize = packetSize;
+    pTwccRtpPktInfo->localTimeKvs = sentTimeKvs;
+    pTwccRtpPktInfo->remoteTimeKvs = TWCC_PACKET_LOST_TIME;
+    CHK_STATUS(hashTableUpsert(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, twccSeqNum, (UINT64) pTwccRtpPktInfo));
+
+    // Note: We skip twccRollingWindowDeletion here since we don't have the full RtpPacket
+    // The rolling window will be cleaned up during normal TWCC feedback processing
+
 CleanUp:
     if (locked) {
         MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
