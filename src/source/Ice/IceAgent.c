@@ -521,8 +521,13 @@ STATUS iceAgentInitHostCandidate(PIceAgent pIceAgent)
         locked = FALSE;
 
         if (pDuplicatedIceCandidate == NULL &&
+#ifdef USE_LIBUV
             STATUS_SUCCEEDED(uvCreateSocketConnection(pIpAddress->family, KVS_SOCKET_PROTOCOL_UDP, pIpAddress, NULL, (UINT64) pIceAgent,
                                                     incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pSocketConnection, pIceAgent->kvsRtcConfiguration.loop))) {
+#else
+            STATUS_SUCCEEDED(createSocketConnection(pIpAddress->family, KVS_SOCKET_PROTOCOL_UDP, pIpAddress, NULL, (UINT64) pIceAgent,
+                                                    incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pSocketConnection))) {
+#endif
             pTmpIceCandidate = MEMCALLOC(1, SIZEOF(IceCandidate));
             generateJSONSafeString(pTmpIceCandidate->id, ARRAY_SIZE(pTmpIceCandidate->id));
             pTmpIceCandidate->isRemote = FALSE;
@@ -553,7 +558,11 @@ STATUS iceAgentInitHostCandidate(PIceAgent pIceAgent)
 
             ATOMIC_STORE_BOOL(&pSocketConnection->receiveData, TRUE);
             // connectionListener will free the pSocketConnection at the end.
+#ifdef USE_LIBUV
             CHK_STATUS(uvConnectionListenerAddConnection(pIceAgent->pConnectionListener, pNewIceCandidate->pSocketConnection));
+#else
+            CHK_STATUS(connectionListenerAddConnection(pIceAgent->pConnectionListener, pNewIceCandidate->pSocketConnection));
+#endif
         }
     }
     CHK(localCandidateCount != 0, STATUS_ICE_NO_LOCAL_HOST_CANDIDATE_AVAILABLE);
@@ -608,9 +617,15 @@ STATUS iceAgentStartAgent(PIceAgent pIceAgent, PCHAR remoteUsername, PCHAR remot
     MUTEX_UNLOCK(pIceAgent->lock);
     locked = FALSE;
 
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueAddTimer(pIceAgent->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY,
                                   pIceAgent->kvsRtcConfiguration.iceConnectionCheckPollingInterval, iceAgentStateTransitionTimerCallback,
                                   (UINT64) pIceAgent, &pIceAgent->iceAgentStateTimerTask));
+#else
+    CHK_STATUS(timerQueueAddTimer(pIceAgent->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY,
+                                  pIceAgent->kvsRtcConfiguration.iceConnectionCheckPollingInterval, iceAgentStateTransitionTimerCallback,
+                                  (UINT64) pIceAgent, &pIceAgent->iceAgentStateTimerTask));
+#endif
 
 CleanUp:
 
@@ -651,12 +666,21 @@ STATUS iceAgentStartGathering(PIceAgent pIceAgent)
                             "Relay candidates setup time");
 
     // start listening for incoming data
+#ifdef USE_LIBUV
     CHK_STATUS(uvConnectionListenerStart(pIceAgent->pConnectionListener));
+#else
+    CHK_STATUS(connectionListenerStart(pIceAgent->pConnectionListener));
+#endif
 
     pIceAgent->candidateGatheringEndTime = GETTIME() + pIceAgent->kvsRtcConfiguration.iceLocalCandidateGatheringTimeout;
 
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueAddTimer(pIceAgent->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY, KVS_ICE_GATHER_CANDIDATE_TIMER_POLLING_INTERVAL,
                                   iceAgentGatherCandidateTimerCallback, (UINT64) pIceAgent, &pIceAgent->iceCandidateGatheringTimerTask));
+#else
+    CHK_STATUS(timerQueueAddTimer(pIceAgent->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY, KVS_ICE_GATHER_CANDIDATE_TIMER_POLLING_INTERVAL,
+                                  iceAgentGatherCandidateTimerCallback, (UINT64) pIceAgent, &pIceAgent->iceCandidateGatheringTimerTask));
+#endif
 
 CleanUp:
 
@@ -802,17 +826,29 @@ STATUS iceAgentShutdown(PIceAgent pIceAgent)
     CHK(!ATOMIC_EXCHANGE_BOOL(&pIceAgent->shutdown, TRUE), retStatus);
 
     if (pIceAgent->iceAgentStateTimerTask != MAX_UINT32) {
+#ifdef USE_LIBUV
         CHK_STATUS(uvTimerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceAgentStateTimerTask, (UINT64) pIceAgent));
+#else
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceAgentStateTimerTask, (UINT64) pIceAgent));
+#endif
         pIceAgent->iceAgentStateTimerTask = MAX_UINT32;
     }
 
     if (pIceAgent->keepAliveTimerTask != MAX_UINT32) {
+#ifdef USE_LIBUV
         CHK_STATUS(uvTimerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->keepAliveTimerTask, (UINT64) pIceAgent));
+#else
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->keepAliveTimerTask, (UINT64) pIceAgent));
+#endif
         pIceAgent->keepAliveTimerTask = MAX_UINT32;
     }
 
     if (pIceAgent->iceCandidateGatheringTimerTask != MAX_UINT32) {
+#ifdef USE_LIBUV
         CHK_STATUS(uvTimerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceCandidateGatheringTimerTask, (UINT64) pIceAgent));
+#else
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceCandidateGatheringTimerTask, (UINT64) pIceAgent));
+#endif
         pIceAgent->iceCandidateGatheringTimerTask = MAX_UINT32;
     }
 
@@ -890,17 +926,29 @@ STATUS iceAgentRestart(PIceAgent pIceAgent, PCHAR localIceUfrag, PCHAR localIceP
     CHK(!alreadyRestarting, retStatus);
 
     if (pIceAgent->iceAgentStateTimerTask != MAX_UINT32) {
+#ifdef USE_LIBUV
         CHK_STATUS(uvTimerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceAgentStateTimerTask, (UINT64) pIceAgent));
+#else
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceAgentStateTimerTask, (UINT64) pIceAgent));
+#endif
         pIceAgent->iceAgentStateTimerTask = MAX_UINT32;
     }
 
     if (pIceAgent->keepAliveTimerTask != MAX_UINT32) {
+#ifdef USE_LIBUV
         CHK_STATUS(uvTimerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->keepAliveTimerTask, (UINT64) pIceAgent));
+#else
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->keepAliveTimerTask, (UINT64) pIceAgent));
+#endif
         pIceAgent->keepAliveTimerTask = MAX_UINT32;
     }
 
     if (pIceAgent->iceCandidateGatheringTimerTask != MAX_UINT32) {
+#ifdef USE_LIBUV
         CHK_STATUS(uvTimerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceCandidateGatheringTimerTask, (UINT64) pIceAgent));
+#else
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceCandidateGatheringTimerTask, (UINT64) pIceAgent));
+#endif
         pIceAgent->iceCandidateGatheringTimerTask = MAX_UINT32;
     }
 
@@ -1830,11 +1878,20 @@ STATUS iceAgentInitSrflxCandidate(PIceAgent pIceAgent)
         // Open up a new socket at host candidate's IP address for server reflex candidate.
         // The new port will be stored in pNewCandidate->ipAddress.port. And the IP address will later be updated
         // with the correct IP address once the STUN response is received.
+#ifdef USE_LIBUV
         CHK_STATUS(uvCreateSocketConnection(pCandidate->ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, &pCandidate->ipAddress, NULL, (UINT64) pIceAgent,
                                           incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pCandidate->pSocketConnection, pIceAgent->kvsRtcConfiguration.loop));
+#else
+        CHK_STATUS(createSocketConnection(pCandidate->ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, &pCandidate->ipAddress, NULL, (UINT64) pIceAgent,
+                                          incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pCandidate->pSocketConnection));
+#endif
         ATOMIC_STORE_BOOL(&pCandidate->pSocketConnection->receiveData, TRUE);
         // connectionListener will free the pSocketConnection at the end.
+#ifdef USE_LIBUV
         CHK_STATUS(uvConnectionListenerAddConnection(pIceAgent->pConnectionListener, pCandidate->pSocketConnection));
+#else
+        CHK_STATUS(connectionListenerAddConnection(pIceAgent->pConnectionListener, pCandidate->pSocketConnection));
+#endif
     }
 
 CleanUp:
@@ -1982,10 +2039,19 @@ STATUS iceAgentInitRelayCandidate(PIceAgent pIceAgent, UINT32 iceServerIndex, KV
     // Open up a new socket without binding to any host address. The candidate IP address will later be updated
     // with the correct relay IP address once the Allocation success response is received. Relay candidate's socket is managed
     // by TurnConnection struct.
+#ifdef USE_LIBUV
     CHK_STATUS(uvCreateSocketConnection(turnServerIpFamily, protocol, NULL, pTurnServerAddress, (UINT64) pNewCandidate, incomingRelayedDataHandler,
                                       pIceAgent->kvsRtcConfiguration.sendBufSize, &pNewCandidate->pSocketConnection, pIceAgent->kvsRtcConfiguration.loop));
+#else
+    CHK_STATUS(createSocketConnection(turnServerIpFamily, protocol, NULL, pTurnServerAddress, (UINT64) pNewCandidate, incomingRelayedDataHandler,
+                                      pIceAgent->kvsRtcConfiguration.sendBufSize, &pNewCandidate->pSocketConnection));
+#endif
     // connectionListener will free the pSocketConnection at the end.
+#ifdef USE_LIBUV
     CHK_STATUS(uvConnectionListenerAddConnection(pIceAgent->pConnectionListener, pNewCandidate->pSocketConnection));
+#else
+    CHK_STATUS(connectionListenerAddConnection(pIceAgent->pConnectionListener, pNewCandidate->pSocketConnection));
+#endif
 
     pNewCandidate->iceCandidateType = ICE_CANDIDATE_TYPE_RELAYED;
     pNewCandidate->state = ICE_CANDIDATE_STATE_NEW;
@@ -2216,8 +2282,13 @@ STATUS iceAgentConnectedStateSetup(PIceAgent pIceAgent)
     }
 
     // schedule sending keep alive
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueAddTimer(pIceAgent->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY, KVS_ICE_SEND_KEEP_ALIVE_INTERVAL,
                                   iceAgentSendKeepAliveTimerCallback, (UINT64) pIceAgent, &pIceAgent->keepAliveTimerTask));
+#else
+    CHK_STATUS(timerQueueAddTimer(pIceAgent->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY, KVS_ICE_SEND_KEEP_ALIVE_INTERVAL,
+                                  iceAgentSendKeepAliveTimerCallback, (UINT64) pIceAgent, &pIceAgent->keepAliveTimerTask));
+#endif
 
 CleanUp:
 
@@ -2289,8 +2360,13 @@ STATUS iceAgentReadyStateSetup(PIceAgent pIceAgent)
 
     CHK(pIceAgent != NULL, STATUS_NULL_ARG);
 
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueUpdateTimerPeriod(pIceAgent->timerQueueHandle, (UINT64) pIceAgent, pIceAgent->iceAgentStateTimerTask,
                                            KVS_ICE_STATE_READY_TIMER_POLLING_INTERVAL));
+#else
+    CHK_STATUS(timerQueueUpdateTimerPeriod(pIceAgent->timerQueueHandle, (UINT64) pIceAgent, pIceAgent->iceAgentStateTimerTask,
+                                           KVS_ICE_STATE_READY_TIMER_POLLING_INTERVAL));
+#endif
 
     MUTEX_LOCK(pIceAgent->lock);
     locked = TRUE;

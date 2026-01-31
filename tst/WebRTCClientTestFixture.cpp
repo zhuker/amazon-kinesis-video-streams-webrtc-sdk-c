@@ -16,6 +16,9 @@ UINT64 gTotalWebRtcClientMemoryUsage = 0;
 //
 MUTEX gTotalWebRtcClientMemoryMutex;
 
+// Forward declaration
+static void my_set_threadname(const char *name);
+
 STATUS createRtpPacketWithSeqNum(UINT16 seqNum, PRtpPacket* ppRtpPacket)
 {
     STATUS retStatus = STATUS_SUCCESS;
@@ -62,8 +65,60 @@ static BOOL noLocksTryLockMutex(MUTEX) {
 static VOID noLocksFreeMutex(MUTEX) {
 }
 
+// Thread-aware logging for debugging threading issues
+static UINT64 getThreadId() {
+    return (UINT64)GETTID();
+}
+
+static const char* getThreadName() {
+    static thread_local char threadName[32] = {0};
+    if (threadName[0] == '\0') {
+        pthread_getname_np(pthread_self(), threadName, sizeof(threadName));
+        if (threadName[0] == '\0') {
+            snprintf(threadName, sizeof(threadName), "tid-%lu", getThreadId());
+        }
+    }
+    return threadName;
+}
+
+static VOID myLogPrint(UINT32 level, PCHAR tag, PCHAR fmt, ...)
+{
+    CHAR logFmtString[MAX_LOG_FORMAT_LENGTH + 1];
+    CHAR finalLogStrBuffer[4096];
+    UINT32 logLevel = GET_LOGGER_LOG_LEVEL();
+
+    if (level >= logLevel) {
+        // Add timestamp, thread info, level, and tag
+        SNPRINTF(logFmtString, ARRAY_SIZE(logFmtString), "[%s] %s %-5s %s%s\n",
+                 getThreadName(),
+                 tag,
+                 level == LOG_LEVEL_VERBOSE ? "VERB" :
+                 level == LOG_LEVEL_DEBUG ? "DEBUG" :
+                 level == LOG_LEVEL_INFO ? "INFO" :
+                 level == LOG_LEVEL_WARN ? "WARN" :
+                 level == LOG_LEVEL_ERROR ? "ERROR" :
+                 level == LOG_LEVEL_FATAL ? "FATAL" :
+                 level == LOG_LEVEL_SILENT ? "SILENT" :
+                 level == LOG_LEVEL_PROFILE ? "PROFILE" : "?????",
+                 fmt,
+                 EMPTY_STRING);
+
+        va_list valist;
+        va_start(valist, fmt);
+        vsnprintf(finalLogStrBuffer, ARRAY_SIZE(finalLogStrBuffer), logFmtString, valist);
+        va_end(valist);
+
+        fputs(finalLogStrBuffer, stdout);
+        fflush(stdout);
+    }
+}
+
 void WebRtcClientTestBase::SetUp()
 {
+    globalCustomLogPrintFn = myLogPrint;
+    mLogLevel = LOG_LEVEL_DEBUG;  // Initialize log level first
+    SET_LOGGER_LOG_LEVEL(mLogLevel);
+    DLOGI("Custom thread-aware log function installed");
     DLOGI("\nSetting up test: %s\n", GetTestName());
     mReadyFrameIndex = 0;
     mDroppedFrameIndex = 0;
@@ -73,14 +128,11 @@ void WebRtcClientTestBase::SetUp()
 
     SET_INSTRUMENTED_ALLOCATORS();
 
-    mLogLevel = LOG_LEVEL_DEBUG;
-
     PCHAR logLevelStr = GETENV(DEBUG_LOG_LEVEL_ENV_VAR);
     if (logLevelStr != NULL) {
         ASSERT_EQ(STATUS_SUCCESS, STRTOUI32(logLevelStr, NULL, 10, &mLogLevel));
     }
 
-    SET_LOGGER_LOG_LEVEL(mLogLevel);
     globalCreateMutex = noLocksCreateMutex;
     globalLockMutex = noLocksLockMutex;
     globalUnlockMutex = noLocksUnlockMutex;
@@ -126,14 +178,67 @@ void WebRtcClientTestBase::SetUp()
     }
 
     *pCur = '\0';
+
+#ifdef USE_LIBUV
+    // Start UV loop for all tests
+    uvAsyncJobReady.data = this;
+    uv_async_init(uv_default_loop(), &uvAsyncJobReady, uvAsyncJobReadyCb);
+    uvLoopRunning.store(true);
+    uvlooper = std::thread([this]() {
+        my_set_threadname("uv");
+        uvLoopThreadId.store((uint64_t)GETTID());
+        DLOGI("Starting uv_run on loop %p, alive=%d, tid=%lu", uv_default_loop(), uv_loop_alive(uv_default_loop()), uvLoopThreadId.load());
+        int ret = uv_run(uv_default_loop(), UV_RUN_DEFAULT);
+        DLOGI("uv_run returned %d", ret);
+        uvLoopRunning.store(false);
+    });
+#endif
 }
 
 void WebRtcClientTestBase::TearDown()
 {
     DLOGI("\nTearing down test: %s\n", GetTestName());
+#ifdef USE_LIBUV
+    // Close the async handle to allow the UV loop to exit
+    DLOGI("TearDown: uvlooper.joinable() = %d, uvLoopRunning = %d", uvlooper.joinable(), uvLoopRunning.load());
+    if (uvlooper.joinable() && uvLoopRunning.load()) {
+        // Schedule closing of the async handle from the UV loop thread
+        // Don't use uv_stop() as it sets a flag that persists and affects next test
+        DLOGI("TearDown: scheduling async handle close");
+        runOnLoop([this]() {
+            DLOGI("TearDown: closing async handle from UV thread");
+            uv_close((uv_handle_t*)&uvAsyncJobReady, nullptr);
+        });
+        DLOGI("TearDown: joining UV thread");
+        uvlooper.join();
+        DLOGI("TearDown: UV thread joined");
+    } else if (uvlooper.joinable()) {
+        uvlooper.join();
+    }
+    uvLoopRunning.store(false);
+
+    // Reset the default loop for the next test
+    // Close the loop (releases resources) and reinitialize it
+    uv_loop_t* loop = uv_default_loop();
+    DLOGI("TearDown: closing loop, alive=%d", uv_loop_alive(loop));
+    int closeResult = uv_loop_close(loop);
+    if (closeResult != 0) {
+        DLOGW("uv_loop_close returned %d - there may be remaining handles", closeResult);
+        // Run the loop once more to let pending close callbacks complete
+        uv_run(loop, UV_RUN_NOWAIT);
+        closeResult = uv_loop_close(loop);
+        if (closeResult != 0) {
+            DLOGE("Failed to close loop after retry: %d", closeResult);
+        }
+    }
+    // Reinitialize the default loop for the next test
+    DLOGI("TearDown: reinitializing loop");
+    uv_loop_init(loop);
+#else
     if (uvlooper.joinable()) {
         uvlooper.join();
     }
+#endif
 
     deinitKvsWebRtc();
     // Need this sleep for threads in threadpool to close
@@ -143,6 +248,34 @@ void WebRtcClientTestBase::TearDown()
 
     EXPECT_EQ(STATUS_SUCCESS, RESET_INSTRUMENTED_ALLOCATORS());
 }
+
+#ifdef USE_LIBUV
+void WebRtcClientTestBase::uvAsyncJobReadyCb(uv_async_t* handle)
+{
+    auto* self = static_cast<WebRtcClientTestBase*>(handle->data);
+    std::function<void()> job;
+    while (true) {
+        {
+            std::lock_guard<std::mutex> guard(self->uvJobQueueMutex);
+            if (self->uvJobQueue.empty()) {
+                break;
+            }
+            job = std::move(self->uvJobQueue.front());
+            self->uvJobQueue.pop();
+        }
+        job();
+    }
+}
+
+void WebRtcClientTestBase::runOnLoop(std::function<void()> job)
+{
+    {
+        std::lock_guard<std::mutex> guard(uvJobQueueMutex);
+        uvJobQueue.push(std::move(job));
+    }
+    uv_async_send(&uvAsyncJobReady);
+}
+#endif
 
 VOID WebRtcClientTestBase::initializeJitterBuffer(UINT32 expectedFrameCount, UINT32 expectedDroppedFrameCount, UINT32 rtpPacketCount)
 {
@@ -211,7 +344,7 @@ VOID WebRtcClientTestBase::clearJitterBufferForTest()
         MEMFREE(mFrame);
     }
 }
-#define USE_LIBUV 1
+
 // Connect two RtcPeerConnections, and wait for them to be connected
 // in the given amount of time. Return false if they don't go to connected in
 // the expected amounted of time
@@ -223,33 +356,25 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     PeerContainer answer;
     this->noNewThreads = FALSE;
 
-    auto onICECandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
+    auto onICECandidateHdlr = [this](UINT64 customData, PCHAR candidateStr) -> void {
         PPeerContainer container = (PPeerContainer)customData;
         if (candidateStr != NULL) {
             container->client->lock.lock();
             if(!container->client->noNewThreads) {
-#ifdef USE_LIBUV
-                auto candidate = std::string(candidateStr);
-                printf("candidate: %s\n", candidate.c_str());
-                RtcIceCandidateInit iceCandidate;
-                EXPECT_EQ(STATUS_SUCCESS, deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
-                EXPECT_EQ(STATUS_SUCCESS, addIceCandidate((PRtcPeerConnection) container->pc, iceCandidate.candidate));
-#else
                 container->client->threads.push_back(std::thread(
-                    [container](std::string candidate) {
+                    [container, this](std::string candidate) {
                         RtcIceCandidateInit iceCandidate;
                         EXPECT_EQ(STATUS_SUCCESS, deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
                         EXPECT_EQ(STATUS_SUCCESS, addIceCandidate((PRtcPeerConnection) container->pc, iceCandidate.candidate));
                     },
                     std::string(candidateStr)));
-#endif
             }
             container->client->lock.unlock();
         }
 
     };
 
-    auto onICECandidateHdlrDone = [](UINT64 customData, PCHAR candidateStr) -> void {
+    RtcOnIceCandidate onICECandidateHdlrDone = [](UINT64 customData, PCHAR candidateStr) -> void {
         UNUSED_PARAM(customData);
         UNUSED_PARAM(candidateStr);
     };
@@ -286,29 +411,18 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
         EXPECT_NE((PCHAR) NULL, STRSTR(sdp.sdp, pAnswerCertFingerprint));
     }
 
-#if defined(USE_LIBUV)
-    uvlooper = std::thread([]() {
-        my_set_threadname("uv");
-        UV_LOG_ERR(uv_run(uv_default_loop(), UV_RUN_DEFAULT), "uv_run");
-        DLOGD("uv_run done");
-    });
+    // Wait for both peers to reach CONNECTED state
     for (auto i = 0; i <= 100 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
     this->noNewThreads = TRUE;
-#else
-    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2; i++) {
-        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
-    }
 
     this->lock.lock();
     //join all threads before leaving
     for (auto& th : this->threads) th.join();
 
     this->threads.clear();
-    this->noNewThreads = TRUE;
     this->lock.unlock();
-#endif
 
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, onICECandidateHdlrDone));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) 0, onICECandidateHdlrDone));

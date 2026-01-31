@@ -401,11 +401,12 @@ STATUS jitterBufferPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOO
     CHK(pJitterBuffer != NULL && pRtpPacket != NULL, STATUS_NULL_ARG);
 
     if (!pJitterBuffer->started) {
-        // Set to started and initialize the sequence number
+        // Set to started and initialize the sequence number and timestamps
         pJitterBuffer->started = TRUE;
         pJitterBuffer->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         pJitterBuffer->tailSequenceNumber = pRtpPacket->header.sequenceNumber;
         pJitterBuffer->headTimestamp = pRtpPacket->header.timestamp;
+        pJitterBuffer->tailTimestamp = pRtpPacket->header.timestamp;
     }
 
     // We'll check sequence numbers first, with our MAX Out of Order packet count to avoid
@@ -448,6 +449,9 @@ STATUS jitterBufferPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOO
         DLOGS("jitterBufferPush get packet timestamp %lu seqNum %lu", pRtpPacket->header.timestamp, pRtpPacket->header.sequenceNumber);
     } else {
         // Free the packet if it is out of range, jitter buffer need to own the packet and do free
+        DLOGW("jitterBufferPush: DISCARDING packet seqNum=%u, ts=%u (tailTs=%u, maxLat=%u)",
+              pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp,
+              pJitterBuffer->tailTimestamp, pJitterBuffer->maxLatency);
         freeRtpPacket(&pRtpPacket);
         if (pPacketDiscarded != NULL) {
             *pPacketDiscarded = TRUE;
@@ -486,6 +490,8 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
 
     if (pJitterBuffer->tailTimestamp > pJitterBuffer->maxLatency) {
         earliestAllowedTimestamp = pJitterBuffer->tailTimestamp - pJitterBuffer->maxLatency;
+        DLOGI("jitterBufferFillFrameData: tailTs=%u, maxLat=%u, earliestAllowed=%u, headTs=%u",
+              pJitterBuffer->tailTimestamp, pJitterBuffer->maxLatency, earliestAllowedTimestamp, pJitterBuffer->headTimestamp);
     }
 
     lastIndex = pJitterBuffer->tailSequenceNumber + 1;

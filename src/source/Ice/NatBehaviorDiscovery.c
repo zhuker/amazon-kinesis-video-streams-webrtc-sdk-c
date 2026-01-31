@@ -299,13 +299,23 @@ STATUS discoverNatBehavior(PCHAR stunServer, NAT_BEHAVIOR* pNatMappingBehavior, 
     }
     CHK_WARN(pSelectedLocalInterface != NULL, retStatus, "No usable local interface");
 
+#ifdef USE_LIBUV
+    CHK_STATUS(uvCreateSocketConnection(iceServerStun.ipAddresses.ipv4Address.family, KVS_SOCKET_PROTOCOL_UDP, pSelectedLocalInterface, NULL,
+                                      (UINT64) &customData, natTestIncomingDataHandler, 0, &pSocketConnection, uv_default_loop()));
+#else
     CHK_STATUS(createSocketConnection(iceServerStun.ipAddresses.ipv4Address.family, KVS_SOCKET_PROTOCOL_UDP, pSelectedLocalInterface, NULL,
                                       (UINT64) &customData, natTestIncomingDataHandler, 0, &pSocketConnection));
+#endif
     ATOMIC_STORE_BOOL(&pSocketConnection->receiveData, TRUE);
 
     CHK_STATUS(createConnectionListener(&pConnectionListener));
+#ifdef USE_LIBUV
     CHK_STATUS(uvConnectionListenerAddConnection(pConnectionListener, pSocketConnection));
     CHK_STATUS(uvConnectionListenerStart(pConnectionListener));
+#else
+    CHK_STATUS(connectionListenerAddConnection(pConnectionListener, pSocketConnection));
+    CHK_STATUS(connectionListenerStart(pConnectionListener));
+#endif
 
     MUTEX_LOCK(lock);
     locked = TRUE;
@@ -323,10 +333,19 @@ STATUS discoverNatBehavior(PCHAR stunServer, NAT_BEHAVIOR* pNatMappingBehavior, 
 
     CHK_STATUS(connectionListenerRemoveAllConnection(pConnectionListener));
     freeSocketConnection(&pSocketConnection);
+#ifdef USE_LIBUV
     CHK_STATUS(uvCreateSocketConnection(iceServerStun.ipAddresses.ipv4Address.family, KVS_SOCKET_PROTOCOL_UDP, pSelectedLocalInterface, NULL,
                                       (UINT64) &customData, natTestIncomingDataHandler, 0, &pSocketConnection, uv_default_loop()));
+#else
+    CHK_STATUS(createSocketConnection(iceServerStun.ipAddresses.ipv4Address.family, KVS_SOCKET_PROTOCOL_UDP, pSelectedLocalInterface, NULL,
+                                      (UINT64) &customData, natTestIncomingDataHandler, 0, &pSocketConnection));
+#endif
     ATOMIC_STORE_BOOL(&pSocketConnection->receiveData, TRUE);
+#ifdef USE_LIBUV
     CHK_STATUS(uvConnectionListenerAddConnection(pConnectionListener, pSocketConnection));
+#else
+    CHK_STATUS(connectionListenerAddConnection(pConnectionListener, pSocketConnection));
+#endif
 
     MUTEX_LOCK(lock);
     locked = TRUE;

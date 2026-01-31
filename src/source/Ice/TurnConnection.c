@@ -165,11 +165,19 @@ STATUS freeTurnConnection(PTurnConnection* ppTurnConnection)
     // Ensure we are not freeing everything without cancelling the timer
     timerCallbackId = ATOMIC_EXCHANGE(&pTurnConnection->timerCallbackId, MAX_UINT32);
     if (timerCallbackId != MAX_UINT32) {
+#ifdef USE_LIBUV
+        CHK_LOG_ERR(uvTimerQueueCancelTimer(pTurnConnection->timerQueueHandle, (UINT32) timerCallbackId, (UINT64) pTurnConnection));
+#else
         CHK_LOG_ERR(timerQueueCancelTimer(pTurnConnection->timerQueueHandle, (UINT32) timerCallbackId, (UINT64) pTurnConnection));
+#endif
     }
     // shutdown control channel
     if (pTurnConnection->pControlChannel) {
+#ifdef USE_LIBUV
+        CHK_LOG_ERR(uvConnectionListenerRemoveConnection(pTurnConnection->pConnectionListener, pTurnConnection->pControlChannel));
+#else
         CHK_LOG_ERR(connectionListenerRemoveConnection(pTurnConnection->pConnectionListener, pTurnConnection->pControlChannel));
+#endif
         CHK_LOG_ERR(freeSocketConnection(&pTurnConnection->pControlChannel));
     }
 
@@ -881,12 +889,21 @@ STATUS turnConnectionStart(PTurnConnection pTurnConnection)
 
     timerCallbackId = ATOMIC_EXCHANGE(&pTurnConnection->timerCallbackId, MAX_UINT32);
     if (timerCallbackId != MAX_UINT32) {
+#ifdef USE_LIBUV
+        CHK_STATUS(uvTimerQueueCancelTimer(pTurnConnection->timerQueueHandle, (UINT32) timerCallbackId, (UINT64) pTurnConnection));
+#else
         CHK_STATUS(timerQueueCancelTimer(pTurnConnection->timerQueueHandle, (UINT32) timerCallbackId, (UINT64) pTurnConnection));
+#endif
     }
 
     /* schedule the timer, which will drive the state machine. */
+#ifdef USE_LIBUV
+    CHK_STATUS(uvTimerQueueAddTimer(pTurnConnection->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY, pTurnConnection->currentTimerCallingPeriod,
+                                  turnConnectionTimerCallback, (UINT64) pTurnConnection, (PUINT32) &timerCallbackId));
+#else
     CHK_STATUS(timerQueueAddTimer(pTurnConnection->timerQueueHandle, KVS_ICE_DEFAULT_TIMER_START_DELAY, pTurnConnection->currentTimerCallingPeriod,
                                   turnConnectionTimerCallback, (UINT64) pTurnConnection, (PUINT32) &timerCallbackId));
+#endif
 
     ATOMIC_STORE(&pTurnConnection->timerCallbackId, timerCallbackId);
 

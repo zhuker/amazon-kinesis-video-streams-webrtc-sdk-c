@@ -575,7 +575,7 @@ a=rtpmap:96 VP8/90000
 a=rtpmap:102 H264/90000
 )";
 
-    assertLFAndCRLF(remoteSessionDescription, ARRAY_SIZE(remoteSessionDescription) - 1, [](PCHAR sdp) {
+    assertLFAndCRLF(remoteSessionDescription, ARRAY_SIZE(remoteSessionDescription) - 1, [this](PCHAR sdp) {
         PRtcPeerConnection pRtcPeerConnection = NULL;
         PRtcRtpTransceiver pRtcRtpTransceiver = NULL;
         RtcConfiguration rtcConfiguration;
@@ -707,7 +707,7 @@ a=group:BUNDLE 0
     offer += sdpvideo;
     offer += "\n";
 
-    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};
@@ -758,7 +758,7 @@ a=group:BUNDLE audio video data
     offer += sdpvideo;
     offer += "\n";
 
-    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};
@@ -922,7 +922,7 @@ a=ssrc:331864867 msid:2e3ca9ff-0c7e-4b9d-9471-2ce80de74b84 757d07a0-892a-46e7-a1
     offerBase += unsupportedAudioSdp;
     offerBase += "\n";
 
-    assertLFAndCRLF((PCHAR) offerBase.c_str(), offerBase.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offerBase.c_str(), offerBase.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};
@@ -973,7 +973,7 @@ a=ssrc:331864867 msid:2e3ca9ff-0c7e-4b9d-9471-2ce80de74b84 757d07a0-892a-46e7-a1
     offerBase += unsupportedAudioSdp;
     offerBase += "\n";
 
-    assertLFAndCRLF((PCHAR) offerBase.c_str(), offerBase.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offerBase.c_str(), offerBase.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcSessionDescriptionInit offerSdp{};
@@ -1009,7 +1009,7 @@ a=group:BUNDLE 0
     offer += sdpvideo;
     offer += "\n";
 
-    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};
@@ -1067,7 +1067,7 @@ a=group:BUNDLE 0
     offer += sdpvideo;
     offer += "\n";
 
-    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};
@@ -1130,7 +1130,7 @@ a=ice-options:trickle
     offer += sdpvideo;
     offer += "\n";
 
-    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};
@@ -1257,7 +1257,7 @@ a=rtpmap:125 H264/90000
 a=fmtp:125 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f
 )";
 
-    assertLFAndCRLF(remoteSessionDescription, ARRAY_SIZE(remoteSessionDescription) - 1, [](PCHAR sdp) {
+    assertLFAndCRLF(remoteSessionDescription, ARRAY_SIZE(remoteSessionDescription) - 1, [this](PCHAR sdp) {
         PRtcPeerConnection pRtcPeerConnection = NULL;
         PRtcRtpTransceiver pRtcRtpTransceiver = NULL;
         RtcConfiguration rtcConfiguration;
@@ -1345,7 +1345,7 @@ a=rtpmap:96 VP8/90000
 a=rtpmap:102 H264/90000
 )";
 
-    assertLFAndCRLF(remoteSessionDescription, ARRAY_SIZE(remoteSessionDescription) - 1, [](PCHAR sdp) {
+    assertLFAndCRLF(remoteSessionDescription, ARRAY_SIZE(remoteSessionDescription) - 1, [this](PCHAR sdp) {
         PRtcPeerConnection pRtcPeerConnection = NULL;
         RtcConfiguration rtcConfiguration;
         RtcMediaStreamTrack rtcMediaStreamTrack;
@@ -1386,7 +1386,7 @@ a=ice-options:trickle
     offer += sdpdata;
     offer += "\n";
 
-    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};
@@ -1664,7 +1664,7 @@ a=ssrc:1644235696 cname:{36a6a74c-73a4-594b-9bb0-023b4d357280})";
     offer += sdpOfferVideo2;
     offer += "\n";
 
-    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [this](PCHAR sdp) {
         RtcConfiguration configuration{};
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcMediaStreamTrack track1{};

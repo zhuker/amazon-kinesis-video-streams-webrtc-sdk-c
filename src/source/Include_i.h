@@ -71,12 +71,8 @@ extern "C" {
 #include <poll.h>
 #endif
 #endif
-#define MUTEX_CREATE(x) 42
-#define MUTEX_LOCK(x)
-#define MUTEX_UNLOCK(x)
-#define MUTEX_TRYLOCK(x) TRUE
-#define MUTEX_FREE(x)
-
+#include "UvPlatform.h"
+    
 // Max uFrag and uPwd length as documented in https://tools.ietf.org/html/rfc5245#section-15.4
 #define ICE_MAX_UFRAG_LEN 256
 #define ICE_MAX_UPWD_LEN  256

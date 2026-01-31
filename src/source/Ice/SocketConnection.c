@@ -5,17 +5,26 @@
 #include "../Include_i.h"
 #include <uv.h>
 
+#ifdef USE_LIBUV
+// Callback for uv_close() - frees the socket connection memory
+static void uvSocketCloseCallback(uv_handle_t* handle) {
+    PSocketConnection pSocketConnection = (PSocketConnection) handle->data;
+    if (pSocketConnection != NULL) {
+        DLOGD("UV close callback - freeing socket connection");
+        MEMFREE(pSocketConnection);
+    }
+}
+#endif
+
 STATUS uvCreateSocket(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, UINT32 sendBufSize, uv_udp_t* udp_socket, uv_loop_t *loop)
 {
     STATUS retStatus = STATUS_SUCCESS;
-
-    INT32 sockfd, sockType, flags;
-    INT32 optionValue;
 
     CHK(udp_socket != NULL && loop != NULL, STATUS_NULL_ARG);
 
     if (protocol == KVS_SOCKET_PROTOCOL_UDP) {
         UV_CHK_ERR(uv_udp_init(loop, udp_socket), STATUS_NOT_ENOUGH_MEMORY, "uv_udp_init");
+        // Note: Buffer sizes are set after binding in uvCreateSocketConnection
     } else {
         DLOGE("tcp not implemented");
         exit(42);
@@ -85,6 +94,20 @@ STATUS uvCreateSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOC
     if (pBindAddr) {
         CHK_STATUS(uvSocketBind(pBindAddr, protocol, &pSocketConnection->uvLocalSocket));
         pSocketConnection->hostIpAddr = *pBindAddr;
+
+        // Set buffer sizes after binding (FD is now available)
+        // Default OS buffers (~212KB on Linux) can be too small for burst traffic.
+        // With libuv, all sends in a writeFrame complete before receives are processed,
+        // so we need enough buffer to hold a full video frame (~103 packets * 1200 bytes = ~124KB).
+        // 256KB provides headroom for bursts.
+        int bufSize = (sendBufSize > 0) ? (int) sendBufSize : 262144;  // 256KB default
+        if (uv_send_buffer_size((uv_handle_t*) &pSocketConnection->uvLocalSocket, &bufSize) != 0) {
+            DLOGW("Failed to set send buffer size to %d", bufSize);
+        }
+        bufSize = (sendBufSize > 0) ? (int) sendBufSize : 262144;
+        if (uv_recv_buffer_size((uv_handle_t*) &pSocketConnection->uvLocalSocket, &bufSize) != 0) {
+            DLOGW("Failed to set recv buffer size to %d", bufSize);
+        }
     }
 
     pSocketConnection->secureConnection = FALSE;
@@ -233,17 +256,25 @@ STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
     DLOGD("close socket connected with ip: %s:%u. family:%d", ipAddr, (UINT16) getInt16(pSocketConnection->peerIpAddr.port),
           pSocketConnection->peerIpAddr.family);
 
-    uv_udp_t* udp_socket = &pSocketConnection->uvLocalSocket;
-    if (udp_socket != NULL) {
-        UV_CHK_ERR(uv_udp_recv_stop(udp_socket), STATUS_CLOSE_SOCKET_FAILED, "Failed to stop receiving on the socket");
+#ifdef USE_LIBUV
+    {
+        uv_udp_t* udp_socket = &pSocketConnection->uvLocalSocket;
+        uv_udp_recv_stop(udp_socket);
         if (!uv_is_closing((uv_handle_t*) udp_socket)) {
-            uv_close((uv_handle_t*) udp_socket, NULL);
+            // Store pointer for callback to free, then close asynchronously
+            udp_socket->data = pSocketConnection;
+            uv_close((uv_handle_t*) udp_socket, uvSocketCloseCallback);
+        } else {
+            // Already closing, free immediately
+            MEMFREE(pSocketConnection);
         }
-    } else if (STATUS_FAILED(retStatus = closeSocket(pSocketConnection->localSocket))) {
+    }
+#else
+    if (STATUS_FAILED(retStatus = closeSocket(pSocketConnection->localSocket))) {
         DLOGW("Failed to close the local socket with 0x%08x", retStatus);
     }
-
     MEMFREE(pSocketConnection);
+#endif
 
     *ppSocketConnection = NULL;
 
@@ -483,26 +514,15 @@ BOOL socketConnectionIsConnected(PSocketConnection pSocketConnection)
     return FALSE;
 }
 
-static STATUS my_on_send0(UvUdpSendRequest* ctx)
-{
-    STATUS retStatus = STATUS_SUCCESS;
-    CHK(ctx->pSocketConnection != NULL, STATUS_NULL_ARG);
-    MUTEX_LOCK(ctx->pSocketConnection->lock);
-    BITCLEAR(ctx->pSocketConnection->uvSendBufAvailableSlots, ctx->slot);
-
-CleanUp:
-    MUTEX_UNLOCK(ctx->pSocketConnection->lock);
-    return retStatus;
-}
-
 static void my_on_send(uv_udp_send_t* req, int status)
 {
-    if (status == 0) {
-        UvUdpSendRequest* ctx = req->data;
-        my_on_send0(ctx);
-    } else {
+    UvUdpSendRequest* ctx = req->data;
+    if (ctx != NULL && ctx->pSocketConnection != NULL && ctx->slot >= 0) {
+        // All code runs on UV loop thread - no synchronization needed
+        ctx->pSocketConnection->uvSendSlotInUse[ctx->slot] = FALSE;
+    }
+    if (status != 0 && status != UV_ECANCELED) {
         UV_LOG_ERR(status, "my_on_send");
-        exit(48);
     }
 }
 
@@ -526,11 +546,15 @@ STATUS uvSocketSendDataWithRetry(PSocketConnection pSocketConnection, PBYTE buf,
     }
     int slot = -1;
     for (int i = 0; i < UV_SEND_MAX_REQUESTS; i++) {
-        if (!BITTEST(pSocketConnection->uvSendBufAvailableSlots, i)) {
-            BITSET(pSocketConnection->uvSendBufAvailableSlots, i);
+        // All code runs on UV loop thread - no synchronization needed
+        if (!pSocketConnection->uvSendSlotInUse[i]) {
+            pSocketConnection->uvSendSlotInUse[i] = TRUE;
             slot = i;
             break;
         }
+    }
+    if (slot == -1) {
+        DLOGW("uvSocketSendDataWithRetry: NO SLOTS AVAILABLE, dropping packet");
     }
     CHK_ERR(slot != -1, STATUS_NOT_ENOUGH_MEMORY, "no slots in uv send buffer");
 

@@ -67,6 +67,9 @@ STATUS uvConnectionListenerAddConnection(PConnectionListener, PSocketConnection)
  * @return - STATUS status of execution
  */
 STATUS connectionListenerRemoveConnection(PConnectionListener, PSocketConnection);
+#ifdef USE_LIBUV
+STATUS uvConnectionListenerRemoveConnection(PConnectionListener, PSocketConnection);
+#endif
 
 /**
  * remove all listening PSocketConnection

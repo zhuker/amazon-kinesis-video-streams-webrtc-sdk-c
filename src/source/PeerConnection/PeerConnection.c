@@ -328,6 +328,8 @@ STATUS changePeerConnectionState(PKvsPeerConnection pKvsPeerConnection, RTC_PEER
     UINT64 customData = 0;
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
 
+    DLOGI("changePeerConnectionState: %d -> %d", pKvsPeerConnection->connectionState, newState);
+
     MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
     locked = TRUE;
     switch (newState) {
@@ -359,6 +361,7 @@ STATUS changePeerConnectionState(PKvsPeerConnection pKvsPeerConnection, RTC_PEER
     locked = FALSE;
 
     if (onConnectionStateChange != NULL) {
+        DLOGI("changePeerConnectionState: calling callback for state %d", newState);
         onConnectionStateChange(customData, newState);
     }
 
@@ -524,16 +527,19 @@ VOID onIceConnectionStateChange(UINT64 customData, UINT64 connectionState)
     }
 
     if (startDtlsSession) {
+        DLOGI("onIceConnectionStateChange: startDtlsSession=TRUE, checking DTLS state");
         CHK_STATUS(dtlsSessionIsInitFinished(pKvsPeerConnection->pDtlsSession, &dtlsConnected));
         if (dtlsConnected) {
             // In ICE restart scenario, DTLS handshake is not going to be reset. Therefore, we need to check
             // if the DTLS state has been connected.
+            DLOGI("onIceConnectionStateChange: DTLS already connected");
             newConnectionState = RTC_PEER_CONNECTION_STATE_CONNECTED;
         } else {
             // PeerConnection's state changes to CONNECTED only when DTLS state is also connected. So, we need
             // wait until DTLS state changes to CONNECTED.
             //
             // Reference: https://w3c.github.io/webrtc-pc/#rtcpeerconnectionstate-enum
+            DLOGI("onIceConnectionStateChange: Starting DTLS session, dtlsIsServer=%d", pKvsPeerConnection->dtlsIsServer);
 #if defined(ENABLE_KVS_THREADPOOL) && defined(KVS_USE_OPENSSL)
             CHK_STATUS(threadpoolContextPush(dtlsSessionStartThread, (PVOID) pKvsPeerConnection));
 #else
@@ -780,9 +786,15 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
     delay = 100 + (RAND() % 200);
     DLOGS("next sender report %u in %" PRIu64 " msec", ssrc, delay);
     // reschedule timer with 200msec +- 100ms
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
                                   TIMER_QUEUE_SINGLE_INVOCATION_PERIOD, rtcpReportsCallback, (UINT64) pKvsRtpTransceiver,
                                   &pKvsRtpTransceiver->rtcpReportsTimerId));
+#else
+    CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
+                                  TIMER_QUEUE_SINGLE_INVOCATION_PERIOD, rtcpReportsCallback, (UINT64) pKvsRtpTransceiver,
+                                  &pKvsRtpTransceiver->rtcpReportsTimerId));
+#endif
 
 CleanUp:
     CHK_LOG_ERR(retStatus);
@@ -1003,7 +1015,11 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection = (PKvsPeerConnection) MEMCALLOC(1, SIZEOF(KvsPeerConnection));
     CHK(pKvsPeerConnection != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueCreate(&pKvsPeerConnection->timerQueueHandle, pConfiguration->kvsRtcConfiguration.loop));
+#else
+    CHK_STATUS(timerQueueCreate(&pKvsPeerConnection->timerQueueHandle));
+#endif
 
     pKvsPeerConnection->peerConnection.version = PEER_CONNECTION_CURRENT_VERSION;
 
@@ -1109,7 +1125,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
 
     // free timer queue first to remove liveness provided by timer
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
+#ifdef USE_LIBUV
         uvTimerQueueShutdown(pKvsPeerConnection->timerQueueHandle);
+#else
+        timerQueueShutdown(pKvsPeerConnection->timerQueueHandle);
+#endif
     }
 
     /* Free structs that have their own thread. SCTP has threads created by SCTP library. IceAgent has the
@@ -1159,7 +1179,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     }
 
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
+#ifdef USE_LIBUV
         uvTimerQueueFree(&pKvsPeerConnection->timerQueueHandle);
+#else
+        timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
+#endif
     }
 
     if (pKvsPeerConnection->pTwccManager != NULL) {
@@ -1673,8 +1697,13 @@ STATUS addTransceiver(PRtcPeerConnection pPeerConnection, PRtcMediaStreamTrack p
     CHK_STATUS(doubleListInsertItemHead(pKvsPeerConnection->pTransceivers, (UINT64) pKvsRtpTransceiver));
     *ppRtcRtpTransceiver = (PRtcRtpTransceiver) pKvsRtpTransceiver;
 
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, RTCP_FIRST_REPORT_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
                                   rtcpReportsCallback, (UINT64) pKvsRtpTransceiver, &pKvsRtpTransceiver->rtcpReportsTimerId));
+#else
+    CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, RTCP_FIRST_REPORT_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
+                                  rtcpReportsCallback, (UINT64) pKvsRtpTransceiver, &pKvsRtpTransceiver->rtcpReportsTimerId));
+#endif
 
     pKvsRtpTransceiver = NULL;
 

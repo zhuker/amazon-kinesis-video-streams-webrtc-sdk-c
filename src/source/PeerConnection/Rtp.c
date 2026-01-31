@@ -393,6 +393,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             bytesDiscardedOnSend += packetLen - headerLen;
             // TODO is frame considered discarded when at least one of its packets is discarded or all of its packets discarded?
             framesDiscardedOnSend = 1;
+            DLOGW("writeFrame: packet %u discarded due to send failure", i);
             SAFE_MEMFREE(rawPacket);
             continue;
         } else if (sendStatus == STATUS_SUCCESS && pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {

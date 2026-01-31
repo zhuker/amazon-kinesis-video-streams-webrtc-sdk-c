@@ -25,14 +25,7 @@ typedef STATUS (*ConnectionDataAvailableFunc)(UINT64, struct __SocketConnection*
 
 #define UV_BUF_SIZE 65536
 #define UV_SEND_MAX_SIZE 2048
-#define UV_SEND_MAX_REQUESTS (UV_BUF_SIZE / UV_SEND_MAX_SIZE)
-//https://c-faq.com/misc/bitsets.html
-#define BITMASK(b) (1 << ((b) % CHAR_BIT))
-#define BITSLOT(b) ((b) / CHAR_BIT)
-#define BITSET(a, b) ((a)[BITSLOT(b)] |= BITMASK(b))
-#define BITCLEAR(a, b) ((a)[BITSLOT(b)] &= ~BITMASK(b))
-#define BITTEST(a, b) ((a)[BITSLOT(b)] & BITMASK(b))
-#define BITNSLOTS(nb) ((nb + CHAR_BIT - 1) / CHAR_BIT)
+#define UV_SEND_MAX_REQUESTS 256  // More slots to handle bursty sends from other threads
 typedef struct __SocketConnection SocketConnection;
 typedef struct {
     INT32 slot;
@@ -53,7 +46,7 @@ struct __SocketConnection {
     INT32 localSocket;
     uv_udp_t uvLocalSocket;
     CHAR uvBuf[UV_BUF_SIZE];
-    char uvSendBufAvailableSlots[BITNSLOTS(UV_SEND_MAX_REQUESTS)];
+    BOOL uvSendSlotInUse[UV_SEND_MAX_REQUESTS];  // All code runs on UV loop thread
     UvUdpSendRequest uvUdpSendRequests[UV_SEND_MAX_REQUESTS];
     KVS_SOCKET_PROTOCOL protocol;
     KvsIpAddress peerIpAddr;

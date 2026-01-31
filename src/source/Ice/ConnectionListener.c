@@ -115,7 +115,6 @@ static void my_uv_on_recv(uv_udp_t *handle,
                           const uv_buf_t *rcvbuf,
                           const struct sockaddr *addr,
                           unsigned flags) {
-    // DLOGD("my_uv_on_recv nread %d %p %d", nread, addr, flags);
     PSocketConnection pSocketConnection = handle->data;
     UINT32 readLen = nread;
     PKvsIpAddress pSrcAddr = NULL;
@@ -286,6 +285,26 @@ CleanUp:
 
     return retStatus;
 }
+
+#ifdef USE_LIBUV
+STATUS uvConnectionListenerRemoveConnection(PConnectionListener pConnectionListener, PSocketConnection pSocketConnection)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    CHK(pConnectionListener != NULL && pSocketConnection != NULL, STATUS_NULL_ARG);
+
+    // Stop UV receiving before removal
+    if (pSocketConnection->protocol == KVS_SOCKET_PROTOCOL_UDP) {
+        uv_udp_recv_stop(&pSocketConnection->uvLocalSocket);
+    }
+
+    // Then call existing removal logic
+    CHK_STATUS(connectionListenerRemoveConnection(pConnectionListener, pSocketConnection));
+
+CleanUp:
+    return retStatus;
+}
+#endif
 
 STATUS connectionListenerRemoveAllConnection(PConnectionListener pConnectionListener)
 {

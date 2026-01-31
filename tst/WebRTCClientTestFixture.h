@@ -6,6 +6,12 @@
 #include <mutex>
 #include <queue>
 #include <atomic>
+#include <functional>
+#include <future>
+#include <unordered_map>
+#ifdef USE_LIBUV
+#include <uv.h>
+#endif
 
 #define TEST_DEFAULT_REGION             ((PCHAR) "us-west-2")
 #define TEST_DEFAULT_STUN_URL_POSTFIX   (KINESIS_VIDEO_STUN_URL_POSTFIX)
@@ -287,6 +293,231 @@ class WebRtcClientTestBase : public ::testing::Test {
                                   MEDIA_STREAM_TRACK_KIND kind);
     void getIceServers(PRtcConfiguration pRtcConfiguration);
 
+    // UV loop management - public for access from test lambdas
+    std::thread uvlooper;
+
+#ifdef USE_LIBUV
+    // Job queue for running tasks on the UV loop thread
+    uv_async_t uvAsyncJobReady{};
+    std::mutex uvJobQueueMutex;
+    std::queue<std::function<void()>> uvJobQueue;
+    std::atomic<bool> uvLoopRunning{false};
+    std::atomic<uint64_t> uvLoopThreadId{0};  // Thread ID of UV loop thread
+    using RtcOnIceCandidateFn = std::function<void(UINT64, PCHAR)>;
+    struct RtcOnIceCandidateContext {
+        WebRtcClientTestBase *self;
+        PRtcPeerConnection pc;
+        UINT64 customData;
+        RtcOnIceCandidateFn rtcOnIceCandidate;
+    };
+    std::unordered_map<PRtcPeerConnection, RtcOnIceCandidateContext> onIceCandidateCallbackMap; 
+
+    void runOnLoop(std::function<void()> job);
+    static void uvAsyncJobReadyCb(uv_async_t* handle);
+
+    // Check if current thread is the UV loop thread
+    bool isOnUvThread() const {
+        return uvLoopRunning.load() && (uint64_t)GETTID() == uvLoopThreadId.load();
+    }
+
+    // Run a function on UV loop and wait for result synchronously
+    // If already on UV thread, executes directly without async dispatch
+    template<typename F>
+    auto runOnLoopSync(F&& func) -> decltype(func()) {
+        using ReturnType = decltype(func());
+
+        // If already on UV thread, execute directly
+        if (isOnUvThread()) {
+            return func();
+        }
+
+        std::promise<ReturnType> promise;
+        auto future = promise.get_future();
+
+        runOnLoop([&func, &promise]() {
+            promise.set_value(func());
+        });
+
+        return future.get();
+    }
+
+    // Specialization for void return type
+    template<typename F>
+    auto runOnLoopSyncVoid(F&& func) -> void {
+        // If already on UV thread, execute directly
+        if (isOnUvThread()) {
+            func();
+            return;
+        }
+
+        std::promise<void> promise;
+        auto future = promise.get_future();
+
+        runOnLoop([&func, &promise]() {
+            func();
+            promise.set_value();
+        });
+
+        future.get();
+    }
+
+    // Shadow wrapper methods - these shadow global functions to execute on UV loop thread.
+    // If already on UV thread, execute directly.
+    STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection* ppPeerConnection) {
+        return runOnLoopSync([=]() { return ::createPeerConnection(pConfiguration, ppPeerConnection); });
+    }
+
+    STATUS createOffer(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return runOnLoopSync([=]() { return ::createOffer(pPeerConnection, pSessionDescriptionInit); });
+    }
+
+    STATUS createAnswer(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return runOnLoopSync([=]() { return ::createAnswer(pPeerConnection, pSessionDescriptionInit); });
+    }
+
+    STATUS setLocalDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return runOnLoopSync([=]() { return ::setLocalDescription(pPeerConnection, pSessionDescriptionInit); });
+    }
+
+    STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return runOnLoopSync([=]() { return ::setRemoteDescription(pPeerConnection, pSessionDescriptionInit); });
+    }
+
+    STATUS closePeerConnection(PRtcPeerConnection pPeerConnection) {
+        return runOnLoopSync([=]() { return ::closePeerConnection(pPeerConnection); });
+    }
+
+    STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection) {
+        return runOnLoopSync([=]() { return ::freePeerConnection(ppPeerConnection); });
+    }
+    
+    static void dispatchRtcOnIceCandidate(UINT64 self_, PCHAR candidate) {
+        RtcOnIceCandidateContext *ctx = (RtcOnIceCandidateContext *) (void *) self_;
+        if (ctx->self->onIceCandidateCallbackMap.find(ctx->pc) != ctx->self->onIceCandidateCallbackMap.end()) {
+            ctx->self->onIceCandidateCallbackMap[ctx->pc].rtcOnIceCandidate(ctx->customData, candidate);
+        } else {
+            DLOGE("ice callback not found for pc %p", ctx->pc);
+        }
+    }
+
+    STATUS peerConnectionOnIceCandidate(PRtcPeerConnection pPeerConnection, UINT64 customData, std::function<void(UINT64, PCHAR)> rtcOnIceCandidate) {
+        onIceCandidateCallbackMap[pPeerConnection] = {this, pPeerConnection, customData, rtcOnIceCandidate};
+        auto *context = &onIceCandidateCallbackMap[pPeerConnection];
+        return runOnLoopSync([=]() {
+            return ::peerConnectionOnIceCandidate(pPeerConnection, (UINT64)(void*)context, dispatchRtcOnIceCandidate);
+        });
+    }
+    STATUS peerConnectionOnIceCandidate(PRtcPeerConnection pPeerConnection, UINT64 customData, RtcOnIceCandidate rtcOnIceCandidate) {
+        onIceCandidateCallbackMap.erase(pPeerConnection);
+        return runOnLoopSync([=]() { return ::peerConnectionOnIceCandidate(pPeerConnection, customData, rtcOnIceCandidate); });
+    }
+
+    STATUS peerConnectionOnConnectionStateChange(PRtcPeerConnection pPeerConnection, UINT64 customData, RtcOnConnectionStateChange rtcOnConnectionStateChange) {
+        return runOnLoopSync([=]() { return ::peerConnectionOnConnectionStateChange(pPeerConnection, customData, rtcOnConnectionStateChange); });
+    }
+
+    STATUS addSupportedCodec(PRtcPeerConnection pPeerConnection, RTC_CODEC codec) {
+        return runOnLoopSync([=]() { return ::addSupportedCodec(pPeerConnection, codec); });
+    }
+
+    STATUS addTransceiver(PRtcPeerConnection pPeerConnection, PRtcMediaStreamTrack pTrack, PRtcRtpTransceiverInit pRtcRtpTransceiverInit, PRtcRtpTransceiver* ppTransceiver) {
+        return runOnLoopSync([=]() { return ::addTransceiver(pPeerConnection, pTrack, pRtcRtpTransceiverInit, ppTransceiver); });
+    }
+
+    STATUS transceiverOnFrame(PRtcRtpTransceiver pTransceiver, UINT64 customData, RtcOnFrame rtcOnFrame) {
+        return runOnLoopSync([=]() { return ::transceiverOnFrame(pTransceiver, customData, rtcOnFrame); });
+    }
+
+    STATUS writeFrame(PRtcRtpTransceiver transceiver, PFrame frame) {
+        return runOnLoopSync([=]() { return ::writeFrame(transceiver, frame); });
+    }
+
+    STATUS addIceCandidate(PRtcPeerConnection pPeerConnection, PCHAR pIceCandidate) {
+        return runOnLoopSync([=]() { return ::addIceCandidate(pPeerConnection, pIceCandidate); });
+    }
+
+    STATUS deserializeRtcIceCandidateInit(PCHAR pJson, UINT32 jsonLen, PRtcIceCandidateInit pRtcIceCandidateInit) {
+        return runOnLoopSync([=]() { return ::deserializeRtcIceCandidateInit(pJson, jsonLen, pRtcIceCandidateInit); });
+    }
+
+    STATUS getRtpOutboundStats(PRtcPeerConnection pPeerConnection, PRtcRtpTransceiver pTransceiver, PRtcOutboundRtpStreamStats pStats) {
+        return runOnLoopSync([=]() { return ::getRtpOutboundStats(pPeerConnection, pTransceiver, pStats); });
+    }
+
+    STATUS getRtpInboundStats(PRtcPeerConnection pPeerConnection, PRtcRtpTransceiver pTransceiver, PRtcInboundRtpStreamStats pStats) {
+        return runOnLoopSync([=]() { return ::getRtpInboundStats(pPeerConnection, pTransceiver, pStats); });
+    }
+#else
+    // Non-UV versions - shadow global functions
+    STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection* ppPeerConnection) {
+        return ::createPeerConnection(pConfiguration, ppPeerConnection);
+    }
+
+    STATUS createOffer(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return ::createOffer(pPeerConnection, pSessionDescriptionInit);
+    }
+
+    STATUS createAnswer(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return ::createAnswer(pPeerConnection, pSessionDescriptionInit);
+    }
+
+    STATUS setLocalDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return ::setLocalDescription(pPeerConnection, pSessionDescriptionInit);
+    }
+
+    STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionInit pSessionDescriptionInit) {
+        return ::setRemoteDescription(pPeerConnection, pSessionDescriptionInit);
+    }
+
+    STATUS closePeerConnection(PRtcPeerConnection pPeerConnection) {
+        return ::closePeerConnection(pPeerConnection);
+    }
+
+    STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection) {
+        return ::freePeerConnection(ppPeerConnection);
+    }
+
+    STATUS peerConnectionOnIceCandidate(PRtcPeerConnection pPeerConnection, UINT64 customData, RtcOnIceCandidate rtcOnIceCandidate) {
+        return ::peerConnectionOnIceCandidate(pPeerConnection, customData, rtcOnIceCandidate);
+    }
+
+    STATUS peerConnectionOnConnectionStateChange(PRtcPeerConnection pPeerConnection, UINT64 customData, RtcOnConnectionStateChange rtcOnConnectionStateChange) {
+        return ::peerConnectionOnConnectionStateChange(pPeerConnection, customData, rtcOnConnectionStateChange);
+    }
+
+    STATUS addSupportedCodec(PRtcPeerConnection pPeerConnection, RTC_CODEC codec) {
+        return ::addSupportedCodec(pPeerConnection, codec);
+    }
+
+    STATUS addTransceiver(PRtcPeerConnection pPeerConnection, PRtcMediaStreamTrack pTrack, PRtcRtpTransceiverInit pRtcRtpTransceiverInit, PRtcRtpTransceiver* ppTransceiver) {
+        return ::addTransceiver(pPeerConnection, pTrack, pRtcRtpTransceiverInit, ppTransceiver);
+    }
+
+    STATUS transceiverOnFrame(PRtcRtpTransceiver pTransceiver, UINT64 customData, RtcOnFrame rtcOnFrame) {
+        return ::transceiverOnFrame(pTransceiver, customData, rtcOnFrame);
+    }
+
+    STATUS writeFrame(PRtcRtpTransceiver transceiver, PFrame frame) {
+        return ::writeFrame(transceiver, frame);
+    }
+
+    STATUS addIceCandidate(PRtcPeerConnection pPeerConnection, PCHAR pIceCandidate) {
+        return ::addIceCandidate(pPeerConnection, pIceCandidate);
+    }
+
+    STATUS deserializeRtcIceCandidateInit(PCHAR pJson, UINT32 jsonLen, PRtcIceCandidateInit pRtcIceCandidateInit) {
+        return ::deserializeRtcIceCandidateInit(pJson, jsonLen, pRtcIceCandidateInit);
+    }
+
+    STATUS getRtpOutboundStats(PRtcPeerConnection pPeerConnection, PRtcRtpTransceiver pTransceiver, PRtcOutboundRtpStreamStats pStats) {
+        return ::getRtpOutboundStats(pPeerConnection, pTransceiver, pStats);
+    }
+
+    STATUS getRtpInboundStats(PRtcPeerConnection pPeerConnection, PRtcRtpTransceiver pTransceiver, PRtcInboundRtpStreamStats pStats) {
+        return ::getRtpInboundStats(pPeerConnection, pTransceiver, pStats);
+    }
+#endif
+
   protected:
     virtual void SetUp();
     virtual void TearDown();
@@ -323,7 +554,6 @@ class WebRtcClientTestBase : public ::testing::Test {
     SignalingClientCallbacks mSignalingClientCallbacks;
     SignalingClientInfo mClientInfo;
     Tag mTags[3];
-    std::thread uvlooper;
 };
 
 typedef struct {

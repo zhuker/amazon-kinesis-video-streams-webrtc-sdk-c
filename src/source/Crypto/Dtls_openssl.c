@@ -429,8 +429,13 @@ STATUS dtlsSessionStart(PDtlsSession pDtlsSession, BOOL isServer)
 
     CHK_STATUS(beginHandshakeProcess(pDtlsSession, isServer, &sslRet));
     pDtlsSession->dtlsSessionStartTime = GETTIME();
+#ifdef USE_LIBUV
     CHK_STATUS(uvTimerQueueAddTimer(pDtlsSession->timerQueueHandle, DTLS_SESSION_TIMER_START_DELAY, DTLS_TRANSMISSION_INTERVAL,
                                   dtlsTransmissionTimerCallback, (UINT64) pDtlsSession, &pDtlsSession->timerId));
+#else
+    CHK_STATUS(timerQueueAddTimer(pDtlsSession->timerQueueHandle, DTLS_SESSION_TIMER_START_DELAY, DTLS_TRANSMISSION_INTERVAL,
+                                  dtlsTransmissionTimerCallback, (UINT64) pDtlsSession, &pDtlsSession->timerId));
+#endif
 CleanUp:
     CHK_LOG_ERR(retStatus);
     if (locked) {
@@ -588,7 +593,11 @@ STATUS freeDtlsSession(PDtlsSession* ppDtlsSession)
         THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
     if (pDtlsSession->timerId != MAX_UINT32) {
+#ifdef USE_LIBUV
         uvTimerQueueCancelTimer(pDtlsSession->timerQueueHandle, pDtlsSession->timerId, (UINT64) pDtlsSession);
+#else
+        timerQueueCancelTimer(pDtlsSession->timerQueueHandle, pDtlsSession->timerId, (UINT64) pDtlsSession);
+#endif
     }
 
     // Lock SSL free as an additional protection to ensure SSL contexts are not being used in the callbacks
