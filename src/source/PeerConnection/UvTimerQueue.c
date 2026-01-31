@@ -5,11 +5,14 @@
 #include "../Include_i.h"
 #include "UvTimerQueue.h"
 
+struct UvTimerQueue;  // Forward declaration
+
 struct UvTimerContext {
     uv_timer_t timer;
     TimerCallbackFunc timerCallbackFn;
     UINT64 customData;
     UINT32 timerid;
+    struct UvTimerQueue* pTimerQueue;  // Back-pointer for close callback
 };
 
 struct UvTimerQueue {
@@ -18,6 +21,7 @@ struct UvTimerQueue {
     volatile ATOMIC_BOOL shutdown;
     UINT32 maxTimerCount;
     volatile SIZE_T index;
+    volatile SIZE_T pendingCloses;  // Track timers waiting for close callback
 };
 
 STATUS uvTimerQueueCreate(TIMER_QUEUE_HANDLE *pInt, uv_loop_t *loop) {
@@ -29,6 +33,21 @@ STATUS uvTimerQueueCreate(TIMER_QUEUE_HANDLE *pInt, uv_loop_t *loop) {
     *pInt = (TIMER_QUEUE_HANDLE) (PVOID) tq;
 CleanUp:
     return retStatus;
+}
+
+// Close callback to decrement pending close counter and free queue when all done
+static void uvTimerCloseCallback(uv_handle_t* handle) {
+    struct UvTimerContext *ctx = (struct UvTimerContext *) handle->data;
+    if (ctx != NULL && ctx->pTimerQueue != NULL) {
+        struct UvTimerQueue *pTimerQueue = ctx->pTimerQueue;
+        SIZE_T remaining = ATOMIC_DECREMENT(&pTimerQueue->pendingCloses);
+        DLOGD("uvTimerCloseCallback: remaining=%zu", remaining);
+        // When all timers are closed, free the queue memory
+        if (remaining == 0) {
+            DLOGD("uvTimerCloseCallback: all timers closed, freeing queue");
+            MEMFREE(pTimerQueue);
+        }
+    }
 }
 
 void uvTimerCallback(uv_timer_t *timer) {
@@ -66,6 +85,7 @@ STATUS uvTimerQueueAddTimer(TIMER_QUEUE_HANDLE handle, UINT64 start, UINT64 peri
     }
     struct UvTimerContext *ctx = &pTimerQueue->timers[idx];
     ctx->timer.data = ctx;
+    ctx->pTimerQueue = pTimerQueue;  // Set back-pointer for close callback
     UV_CHK_ERR(uv_timer_init(pTimerQueue->loop, &ctx->timer), STATUS_MAX_TIMER_COUNT_REACHED, "uv_timer_init");
     ctx->timerCallbackFn = timerCallbackFn;
     ctx->customData = customData;
@@ -90,7 +110,9 @@ STATUS uvTimerQueueCancelTimer(TIMER_QUEUE_HANDLE handle, UINT32 timerId, UINT64
     pTimerQueue->timers[timerId].timerCallbackFn = NULL;
     UV_CHK_ERR(uv_timer_stop(&pTimerQueue->timers[timerId].timer), STATUS_INVALID_OPERATION, "uv_timer_stop");
     if (!uv_is_closing((uv_handle_t *) &pTimerQueue->timers[timerId].timer)) {
-        uv_close((uv_handle_t *) &pTimerQueue->timers[timerId].timer, NULL);
+        // Increment pending closes BEFORE calling uv_close
+        ATOMIC_INCREMENT(&pTimerQueue->pendingCloses);
+        uv_close((uv_handle_t *) &pTimerQueue->timers[timerId].timer, uvTimerCloseCallback);
     }
 
 CleanUp:
@@ -125,15 +147,24 @@ STATUS uvTimerQueueFree(PTIMER_QUEUE_HANDLE pHandle) {
 
     CHK(pHandle != NULL, STATUS_NULL_ARG);
 
+    struct UvTimerQueue *pTimerQueue = (PVOID) *pHandle;
+    CHK(pTimerQueue != NULL, retStatus);
+
     CHK_STATUS(uvTimerQueueShutdown(*pHandle));
 
-    struct UvTimerQueue *pTimerQueue = (PVOID) *pHandle;
-    SAFE_MEMFREE(pTimerQueue);
+    // If no timers were created (or all already closed), free immediately
+    // Otherwise, the last close callback will free the memory
+    if (ATOMIC_LOAD(&pTimerQueue->pendingCloses) == 0) {
+        DLOGD("uvTimerQueueFree: no pending closes, freeing immediately");
+        MEMFREE(pTimerQueue);
+    } else {
+        DLOGD("uvTimerQueueFree: %zu pending closes, deferred free", ATOMIC_LOAD(&pTimerQueue->pendingCloses));
+    }
 
     // Set the handle pointer to invalid
     *pHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
 
-    CleanUp:
+CleanUp:
     return retStatus;
 }
 
@@ -149,9 +180,10 @@ STATUS uvTimerQueueShutdown(TIMER_QUEUE_HANDLE handle) {
         pTimerQueue->timers[i].timerCallbackFn = NULL;
         UV_CHK_ERR(uv_timer_stop(&pTimerQueue->timers[i].timer), STATUS_INVALID_OPERATION, "uv_timer_stop");
         if (!uv_is_closing((uv_handle_t *) &pTimerQueue->timers[i].timer)) {
-            uv_close((uv_handle_t *) &pTimerQueue->timers[i].timer, NULL);
+            // Increment pending closes BEFORE calling uv_close
+            ATOMIC_INCREMENT(&pTimerQueue->pendingCloses);
+            uv_close((uv_handle_t *) &pTimerQueue->timers[i].timer, uvTimerCloseCallback);
         }
-
     }
 CleanUp:
     CHK_LOG_ERR(retStatus);

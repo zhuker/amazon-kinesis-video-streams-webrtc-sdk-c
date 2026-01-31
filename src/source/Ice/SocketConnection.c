@@ -265,8 +265,9 @@ STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
             udp_socket->data = pSocketConnection;
             uv_close((uv_handle_t*) udp_socket, uvSocketCloseCallback);
         } else {
-            // Already closing, free immediately
-            MEMFREE(pSocketConnection);
+            // Already closing - the pending close callback will free the memory
+            // Do NOT free here as the handle is still in use by libuv
+            DLOGD("Socket already closing, close callback will free memory");
         }
     }
 #else
