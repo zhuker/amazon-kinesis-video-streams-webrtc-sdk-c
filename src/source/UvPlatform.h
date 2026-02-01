@@ -29,9 +29,6 @@ static inline STATUS crashingThreadJoin(TID tid, PVOID* retval) {
     return STATUS_SUCCESS;
 }
 
-#define globalCreateThread crashingThreadCreate
-#define globalJoinThread crashingThreadJoin
-
 #endif // USE_LIBUV
 
 #endif //KINESISVIDEOWEBRTCCLIENT_UVPLATFORM_H

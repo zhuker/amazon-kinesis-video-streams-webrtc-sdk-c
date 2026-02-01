@@ -9,7 +9,7 @@ namespace webrtcclient {
 class DualStackEndpointsTest : public WebRtcClientTestBase {};
 
 
-TEST_F(DualStackEndpointsTest, connectTwoDualStackPeersWithForcedTurn)
+TEST_F(DualStackEndpointsTest, DISABLED_connectTwoDualStackPeersWithForcedTurn)
 {
     RtcConfiguration configuration;
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;

@@ -48,21 +48,21 @@ WebRtcClientTestBase::WebRtcClientTestBase()
     mStreamingRotationPeriod = TEST_STREAMING_TOKEN_DURATION;
 }
 
-static MUTEX noLocksCreateMutex(BOOL) {
+static MUTEX noopCreateMutex(BOOL) {
     return 42;
 }
 
-static VOID noLocksLockMutex(MUTEX) {
+static VOID noopLockMutex(MUTEX) {
 }
 
-static VOID noLocksUnlockMutex(MUTEX) {
+static VOID noopUnlockMutex(MUTEX) {
 }
 
-static BOOL noLocksTryLockMutex(MUTEX) {
+static BOOL noopTryLockMutex(MUTEX) {
     return TRUE;
 }
 
-static VOID noLocksFreeMutex(MUTEX) {
+static VOID noopFreeMutex(MUTEX) {
 }
 
 // Thread-aware logging for debugging threading issues
@@ -80,7 +80,7 @@ static const char* getThreadName() {
     }
     return threadName;
 }
-
+static uint32_t startTimeForLogging = 0;
 static VOID myLogPrint(UINT32 level, PCHAR tag, PCHAR fmt, ...)
 {
     CHAR logFmtString[MAX_LOG_FORMAT_LENGTH + 1];
@@ -88,8 +88,11 @@ static VOID myLogPrint(UINT32 level, PCHAR tag, PCHAR fmt, ...)
     UINT32 logLevel = GET_LOGGER_LOG_LEVEL();
 
     if (level >= logLevel) {
+        uint32_t elapsedMsec = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - startTimeForLogging;
+
         // Add timestamp, thread info, level, and tag
-        SNPRINTF(logFmtString, ARRAY_SIZE(logFmtString), "[%s] %s %-5s %s%s\n",
+        SNPRINTF(logFmtString, ARRAY_SIZE(logFmtString), "%u [%s] %s %-5s %s%s\n",
+                    elapsedMsec,
                  getThreadName(),
                  tag,
                  level == LOG_LEVEL_VERBOSE ? "VERB" :
@@ -115,6 +118,15 @@ static VOID myLogPrint(UINT32 level, PCHAR tag, PCHAR fmt, ...)
 
 void WebRtcClientTestBase::SetUp()
 {
+    globalCreateThread = crashingThreadCreate;
+    globalJoinThread = crashingThreadJoin;
+    globalCreateMutex = noopCreateMutex;
+    globalLockMutex = noopLockMutex;
+    globalUnlockMutex = noopUnlockMutex;
+    globalTryLockMutex = noopTryLockMutex;
+    globalFreeMutex = noopFreeMutex;
+
+    startTimeForLogging = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     globalCustomLogPrintFn = myLogPrint;
     mLogLevel = LOG_LEVEL_DEBUG;  // Initialize log level first
     SET_LOGGER_LOG_LEVEL(mLogLevel);
@@ -132,12 +144,6 @@ void WebRtcClientTestBase::SetUp()
     if (logLevelStr != NULL) {
         ASSERT_EQ(STATUS_SUCCESS, STRTOUI32(logLevelStr, NULL, 10, &mLogLevel));
     }
-
-    globalCreateMutex = noLocksCreateMutex;
-    globalLockMutex = noLocksLockMutex;
-    globalUnlockMutex = noLocksUnlockMutex;
-    globalTryLockMutex = noLocksTryLockMutex;
-    globalFreeMutex = noLocksFreeMutex;
 
     if (STATUS_SUCCESS != initKvsWebRtc()) {
         DLOGE("Test initKvsWebRtc FAILED!!!!");
@@ -200,18 +206,13 @@ void WebRtcClientTestBase::TearDown()
     DLOGI("\nTearing down test: %s\n", GetTestName());
 #ifdef USE_LIBUV
     // Close the async handle to allow the UV loop to exit
-    DLOGI("TearDown: uvlooper.joinable() = %d, uvLoopRunning = %d", uvlooper.joinable(), uvLoopRunning.load());
     if (uvlooper.joinable() && uvLoopRunning.load()) {
         // Schedule closing of the async handle from the UV loop thread
         // Don't use uv_stop() as it sets a flag that persists and affects next test
-        DLOGI("TearDown: scheduling async handle close");
         runOnLoop([this]() {
-            DLOGI("TearDown: closing async handle from UV thread");
             uv_close((uv_handle_t*)&uvAsyncJobReady, nullptr);
         });
-        DLOGI("TearDown: joining UV thread");
         uvlooper.join();
-        DLOGI("TearDown: UV thread joined");
     } else if (uvlooper.joinable()) {
         uvlooper.join();
     }
@@ -220,19 +221,17 @@ void WebRtcClientTestBase::TearDown()
     // Reset the default loop for the next test
     // Close the loop (releases resources) and reinitialize it
     uv_loop_t* loop = uv_default_loop();
-    DLOGI("TearDown: closing loop, alive=%d", uv_loop_alive(loop));
     int closeResult = uv_loop_close(loop);
     if (closeResult != 0) {
-        DLOGW("uv_loop_close returned %d - there may be remaining handles", closeResult);
-        // Run the loop once more to let pending close callbacks complete
-        uv_run(loop, UV_RUN_NOWAIT);
+        DLOGW("uv_loop_close returned %d - draining remaining handles", closeResult);
+        // Run the loop until all handles are closed (close callbacks need to fire)
+        uv_run(loop, UV_RUN_DEFAULT);
         closeResult = uv_loop_close(loop);
         if (closeResult != 0) {
-            DLOGE("Failed to close loop after retry: %d", closeResult);
+            DLOGE("Failed to close loop after draining: %d", closeResult);
         }
     }
     // Reinitialize the default loop for the next test
-    DLOGI("TearDown: reinitializing loop");
     uv_loop_init(loop);
 #else
     if (uvlooper.joinable()) {
@@ -414,6 +413,9 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     // Wait for both peers to reach CONNECTED state
     for (auto i = 0; i <= 100 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+        if (ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]) == 2) {
+            break;
+        }
     }
     this->noNewThreads = TRUE;
 

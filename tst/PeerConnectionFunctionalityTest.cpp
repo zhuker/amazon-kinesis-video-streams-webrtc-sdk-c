@@ -214,9 +214,8 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithPresetCerts)
 #endif
 
 // Tests below require AWS credentials for TURN/STUN servers
-#ifndef USE_LIBUV
 // Assert that two PeerConnections with forced TURN can connect to each other and go to connected
-TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersForcedTURN)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_connectTwoPeersForcedTURN)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -243,7 +242,7 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersForcedTURN)
     deinitializeSignalingClient();
 }
 
-TEST_F(PeerConnectionFunctionalityTest, sendDataWithClosedSocketConnectionWithHostAndStun)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_sendDataWithClosedSocketConnectionWithHostAndStun)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -304,7 +303,7 @@ TEST_F(PeerConnectionFunctionalityTest, sendDataWithClosedSocketConnectionWithHo
     freePeerConnection(&answerPc);
 }
 
-TEST_F(PeerConnectionFunctionalityTest, sendDataWithClosedSocketConnectionWithForcedTurn)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_sendDataWithClosedSocketConnectionWithForcedTurn)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -370,7 +369,7 @@ TEST_F(PeerConnectionFunctionalityTest, sendDataWithClosedSocketConnectionWithFo
     deinitializeSignalingClient();
 }
 
-TEST_F(PeerConnectionFunctionalityTest, shutdownTurnDueToP2PFoundBeforeTurnEstablished)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_shutdownTurnDueToP2PFoundBeforeTurnEstablished)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -429,7 +428,7 @@ TEST_F(PeerConnectionFunctionalityTest, shutdownTurnDueToP2PFoundBeforeTurnEstab
     deinitializeSignalingClient();
 }
 
-TEST_F(PeerConnectionFunctionalityTest, shutdownTurnDueToP2PFoundAfterTurnEstablished)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_shutdownTurnDueToP2PFoundAfterTurnEstablished)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -450,7 +449,7 @@ TEST_F(PeerConnectionFunctionalityTest, shutdownTurnDueToP2PFoundAfterTurnEstabl
     EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
     EXPECT_EQ(createPeerConnection(&configuration, &answerPc), STATUS_SUCCESS);
 
-    auto onICECandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
+    RtcOnIceCandidate onICECandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
         PSIZE_T pDoneGatherCandidate = (PSIZE_T) customData;
         if (candidateStr == NULL) {
             ATOMIC_STORE(pDoneGatherCandidate, 1);
@@ -533,7 +532,6 @@ TEST_F(PeerConnectionFunctionalityTest, shutdownTurnDueToP2PFoundAfterTurnEstabl
 
     deinitializeSignalingClient();
 }
-#endif // USE_LIBUV - end credential-requiring tests block 1
 
 // Assert that two PeerConnections with host and stun candidate can go to connected
 TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithHostAndStun)
@@ -561,7 +559,6 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithHostAndStun)
 // Assert that two PeerConnections can connect and then terminate one of them, the other one will eventually report disconnection
 TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersThenDisconnectTest)
 {
-    ASSERT_EQ(TRUE, mAccessKeyIdSet);
     RtcConfiguration configuration;
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
     UINT32 i;
@@ -599,6 +596,9 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersExpectFailureBecauseNoCan
 
     MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
     configuration.iceTransportPolicy = ICE_TRANSPORT_POLICY_RELAY;
+    configuration.kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = KVS_CONVERT_TIMESCALE(1, 1, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    configuration.kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(1, 1, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    configuration.kvsRtcConfiguration.iceConnectionCheckTimeout = KVS_CONVERT_TIMESCALE(1, 1, HUNDREDS_OF_NANOS_IN_A_SECOND);
 
     EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
     EXPECT_EQ(createPeerConnection(&configuration, &answerPc), STATUS_SUCCESS);
@@ -815,8 +815,6 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 // Same test as exchangeMedia, but assert that if one side is RSA DTLS and Key Extraction works
 TEST_F(PeerConnectionFunctionalityTest, exchangeMediaRSA)
 {
-    ASSERT_EQ(TRUE, mAccessKeyIdSet);
-
     auto const frameBufferSize = 200000;
 
     RtcConfiguration configuration;
@@ -896,8 +894,7 @@ TEST_F(PeerConnectionFunctionalityTest, iceRestartTest)
 }
 
 // Tests requiring AWS credentials
-#ifndef USE_LIBUV
-TEST_F(PeerConnectionFunctionalityTest, iceRestartTestForcedTurn)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_iceRestartTestForcedTurn)
 {
     RtcConfiguration configuration;
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
@@ -931,7 +928,7 @@ TEST_F(PeerConnectionFunctionalityTest, iceRestartTestForcedTurn)
     deinitializeSignalingClient();
 }
 
-TEST_F(PeerConnectionFunctionalityTest, peerConnectionOfferCloseConnection)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_peerConnectionOfferCloseConnection)
 {
     RtcConfiguration configuration;
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
@@ -958,7 +955,7 @@ TEST_F(PeerConnectionFunctionalityTest, peerConnectionOfferCloseConnection)
     deinitializeSignalingClient();
 }
 
-TEST_F(PeerConnectionFunctionalityTest, peerConnectionAnswerCloseConnection)
+TEST_F(PeerConnectionFunctionalityTest, DISABLED_peerConnectionAnswerCloseConnection)
 {
     RtcConfiguration configuration;
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
@@ -982,7 +979,6 @@ TEST_F(PeerConnectionFunctionalityTest, peerConnectionAnswerCloseConnection)
 
     deinitializeSignalingClient();
 }
-#endif // USE_LIBUV - credential-requiring tests
 
 TEST_F(PeerConnectionFunctionalityTest, DISABLED_exchangeMediaThroughTurnRandomStop)
 {

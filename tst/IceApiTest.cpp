@@ -70,9 +70,12 @@ TEST_F(IceApiTest, IceUtilApiTest)
     EXPECT_NE(STATUS_SUCCESS, createTransactionIdStore(0, &pTransactionIdStore));
     EXPECT_NE(STATUS_SUCCESS, createTransactionIdStore(MAX_STORED_TRANSACTION_ID_COUNT, &pTransactionIdStore));
     EXPECT_NE(STATUS_SUCCESS, freeTransactionIdStore(NULL));
+    // Death tests use fork() which is unsafe with libuv's threading model
+#ifndef USE_LIBUV
     EXPECT_DEATH(transactionIdStoreInsert(NULL, testTransactionId), "");
     EXPECT_DEATH(transactionIdStoreHasId(NULL, testTransactionId), "");
     EXPECT_DEATH(transactionIdStoreClear(NULL), "");
+#endif
     EXPECT_NE(STATUS_SUCCESS, iceUtilsGenerateTransactionId(NULL, STUN_TRANSACTION_ID_LEN));
     EXPECT_NE(STATUS_SUCCESS, iceUtilsGenerateTransactionId(testTransactionId, 0));
 

@@ -19,6 +19,7 @@ struct UvTimerQueue {
     uv_loop_t* loop;
     struct UvTimerContext timers[DEFAULT_TIMER_QUEUE_TIMER_COUNT];
     volatile ATOMIC_BOOL shutdown;
+    volatile ATOMIC_BOOL freeRequested;  // Set when uvTimerQueueFree is called
     UINT32 maxTimerCount;
     volatile SIZE_T index;
     volatile SIZE_T pendingCloses;  // Track timers waiting for close callback
@@ -36,15 +37,16 @@ CleanUp:
 }
 
 // Close callback to decrement pending close counter and free queue when all done
+// NOTE: ATOMIC_DECREMENT returns the OLD value (before decrement), so remaining==1 means "was 1, now 0"
 static void uvTimerCloseCallback(uv_handle_t* handle) {
     struct UvTimerContext *ctx = (struct UvTimerContext *) handle->data;
     if (ctx != NULL && ctx->pTimerQueue != NULL) {
         struct UvTimerQueue *pTimerQueue = ctx->pTimerQueue;
         SIZE_T remaining = ATOMIC_DECREMENT(&pTimerQueue->pendingCloses);
-        DLOGD("uvTimerCloseCallback: remaining=%zu", remaining);
-        // When all timers are closed, free the queue memory
-        if (remaining == 0) {
-            DLOGD("uvTimerCloseCallback: all timers closed, freeing queue");
+        BOOL freeRequested = ATOMIC_LOAD_BOOL(&pTimerQueue->freeRequested);
+        // When all timers are closed (oldValue was 1, now 0) AND free was requested, free the queue memory
+        if (remaining == 1 && freeRequested) {
+            DLOGD("uvTimerCloseCallback: queue=%p all timers closed, freeing queue", pTimerQueue);
             MEMFREE(pTimerQueue);
         }
     }
@@ -65,7 +67,6 @@ void uvTimerCallback(uv_timer_t *timer) {
 
 STATUS uvTimerQueueAddTimer(TIMER_QUEUE_HANDLE handle, UINT64 start, UINT64 period, TimerCallbackFunc timerCallbackFn,
                             UINT64 customData, PUINT32 pIndex) {
-    DLOGD("uvTimerQueueAddTimer %llu", handle);
     STATUS retStatus = STATUS_SUCCESS;
     struct UvTimerQueue *pTimerQueue = (PVOID) handle;
     CHK(pTimerQueue != NULL, STATUS_NULL_ARG);
@@ -97,8 +98,6 @@ CleanUp:
 }
 
 STATUS uvTimerQueueCancelTimer(TIMER_QUEUE_HANDLE handle, UINT32 timerId, UINT64 customData) {
-    DLOGD("uvTimerQueueCancelTimer %llu", handle);
-
     STATUS retStatus = STATUS_SUCCESS;
     struct UvTimerQueue *pTimerQueue = (PVOID) handle;
     CHK(pTimerQueue != NULL, STATUS_NULL_ARG);
@@ -142,7 +141,6 @@ CleanUp:
 }
 
 STATUS uvTimerQueueFree(PTIMER_QUEUE_HANDLE pHandle) {
-    DLOGD("uvTimerQueueFree %p", pHandle);
     STATUS retStatus = STATUS_SUCCESS;
 
     CHK(pHandle != NULL, STATUS_NULL_ARG);
@@ -150,15 +148,15 @@ STATUS uvTimerQueueFree(PTIMER_QUEUE_HANDLE pHandle) {
     struct UvTimerQueue *pTimerQueue = (PVOID) *pHandle;
     CHK(pTimerQueue != NULL, retStatus);
 
+    // Mark that free has been requested - close callbacks can now free the memory
+    ATOMIC_STORE_BOOL(&pTimerQueue->freeRequested, TRUE);
+
     CHK_STATUS(uvTimerQueueShutdown(*pHandle));
 
     // If no timers were created (or all already closed), free immediately
     // Otherwise, the last close callback will free the memory
     if (ATOMIC_LOAD(&pTimerQueue->pendingCloses) == 0) {
-        DLOGD("uvTimerQueueFree: no pending closes, freeing immediately");
         MEMFREE(pTimerQueue);
-    } else {
-        DLOGD("uvTimerQueueFree: %zu pending closes, deferred free", ATOMIC_LOAD(&pTimerQueue->pendingCloses));
     }
 
     // Set the handle pointer to invalid
@@ -169,7 +167,6 @@ CleanUp:
 }
 
 STATUS uvTimerQueueShutdown(TIMER_QUEUE_HANDLE handle) {
-    DLOGD("uvTimerQueueShutdown %llu", handle);
     STATUS retStatus = STATUS_SUCCESS;
     struct UvTimerQueue *pTimerQueue = (PVOID) handle;
     CHK(pTimerQueue != NULL, STATUS_NULL_ARG);

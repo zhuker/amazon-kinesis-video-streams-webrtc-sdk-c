@@ -447,6 +447,67 @@ class WebRtcClientTestBase : public ::testing::Test {
     STATUS getRtpInboundStats(PRtcPeerConnection pPeerConnection, PRtcRtpTransceiver pTransceiver, PRtcInboundRtpStreamStats pStats) {
         return runOnLoopSync([=]() { return ::getRtpInboundStats(pPeerConnection, pTransceiver, pStats); });
     }
+
+    STATUS timerQueueCreate(PTIMER_QUEUE_HANDLE pTimerQueueHandle) {
+        return runOnLoopSync([=]() { return uvTimerQueueCreate(pTimerQueueHandle, uv_default_loop()); });
+    }
+
+    STATUS timerQueueFree(PTIMER_QUEUE_HANDLE pTimerQueueHandle) {
+        return runOnLoopSync([=]() { return uvTimerQueueFree(pTimerQueueHandle); });
+    }
+
+    STATUS createDtlsSession(PDtlsSessionCallbacks pCallbacks, TIMER_QUEUE_HANDLE timerQueueHandle, INT32 mtu, BOOL isServer, PRtcCertificate pCertificate, PDtlsSession* ppDtlsSession) {
+        return runOnLoopSync([=]() { return ::createDtlsSession(pCallbacks, timerQueueHandle, mtu, isServer, pCertificate, ppDtlsSession); });
+    }
+
+    STATUS freeDtlsSession(PDtlsSession* ppDtlsSession) {
+        return runOnLoopSync([=]() { return ::freeDtlsSession(ppDtlsSession); });
+    }
+
+    STATUS dtlsSessionOnOutBoundData(PDtlsSession pDtlsSession, UINT64 customData, DtlsSessionOutboundPacketFunc outboundPacketFn) {
+        return runOnLoopSync([=]() { return ::dtlsSessionOnOutBoundData(pDtlsSession, customData, outboundPacketFn); });
+    }
+
+    STATUS dtlsSessionStart(PDtlsSession pDtlsSession, BOOL isServer) {
+        return runOnLoopSync([=]() { return ::dtlsSessionStart(pDtlsSession, isServer); });
+    }
+
+    STATUS dtlsSessionProcessPacket(PDtlsSession pDtlsSession, PBYTE pData, PINT32 pDataLen) {
+        return runOnLoopSync([=]() { return ::dtlsSessionProcessPacket(pDtlsSession, pData, pDataLen); });
+    }
+
+    STATUS dtlsSessionPutApplicationData(PDtlsSession pDtlsSession, PBYTE pData, INT32 dataLen) {
+        return runOnLoopSync([=]() { return ::dtlsSessionPutApplicationData(pDtlsSession, pData, dataLen); });
+    }
+
+    STATUS createSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, PKvsIpAddress pBindAddr, PKvsIpAddress pPeerAddr,
+                                  UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize, PSocketConnection* ppSocketConnection) {
+        return runOnLoopSync([=]() { return uvCreateSocketConnection(familyType, protocol, pBindAddr, pPeerAddr, customData, dataAvailableFn, sendBufSize, ppSocketConnection, uv_default_loop()); });
+    }
+
+    STATUS freeSocketConnection(PSocketConnection* ppSocketConnection) {
+        return runOnLoopSync([=]() { return ::freeSocketConnection(ppSocketConnection); });
+    }
+
+    STATUS createConnectionListener(PConnectionListener* ppConnectionListener) {
+        return runOnLoopSync([=]() { return ::createConnectionListener(ppConnectionListener); });
+    }
+
+    STATUS freeConnectionListener(PConnectionListener* ppConnectionListener) {
+        return runOnLoopSync([=]() { return ::freeConnectionListener(ppConnectionListener); });
+    }
+
+    STATUS connectionListenerAddConnection(PConnectionListener pConnectionListener, PSocketConnection pSocketConnection) {
+        return runOnLoopSync([=]() { return ::uvConnectionListenerAddConnection(pConnectionListener, pSocketConnection); });
+    }
+
+    STATUS connectionListenerRemoveConnection(PConnectionListener pConnectionListener, PSocketConnection pSocketConnection) {
+        return runOnLoopSync([=]() { return ::uvConnectionListenerRemoveConnection(pConnectionListener, pSocketConnection); });
+    }
+
+    STATUS connectionListenerStart(PConnectionListener pConnectionListener) {
+        return runOnLoopSync([=]() { return ::uvConnectionListenerStart(pConnectionListener); });
+    }
 #else
     // Non-UV versions - shadow global functions
     STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection* ppPeerConnection) {
@@ -515,6 +576,67 @@ class WebRtcClientTestBase : public ::testing::Test {
 
     STATUS getRtpInboundStats(PRtcPeerConnection pPeerConnection, PRtcRtpTransceiver pTransceiver, PRtcInboundRtpStreamStats pStats) {
         return ::getRtpInboundStats(pPeerConnection, pTransceiver, pStats);
+    }
+
+    STATUS timerQueueCreate(PTIMER_QUEUE_HANDLE pTimerQueueHandle) {
+        return ::timerQueueCreate(pTimerQueueHandle);
+    }
+
+    STATUS timerQueueFree(PTIMER_QUEUE_HANDLE pTimerQueueHandle) {
+        return ::timerQueueFree(pTimerQueueHandle);
+    }
+
+    STATUS createDtlsSession(PDtlsSessionCallbacks pCallbacks, TIMER_QUEUE_HANDLE timerQueueHandle, INT32 mtu, BOOL isServer, PRtcCertificate pCertificate, PDtlsSession* ppDtlsSession) {
+        return ::createDtlsSession(pCallbacks, timerQueueHandle, mtu, isServer, pCertificate, ppDtlsSession);
+    }
+
+    STATUS freeDtlsSession(PDtlsSession* ppDtlsSession) {
+        return ::freeDtlsSession(ppDtlsSession);
+    }
+
+    STATUS dtlsSessionOnOutBoundData(PDtlsSession pDtlsSession, UINT64 customData, DtlsSessionOutboundPacketFunc outboundPacketFn) {
+        return ::dtlsSessionOnOutBoundData(pDtlsSession, customData, outboundPacketFn);
+    }
+
+    STATUS dtlsSessionStart(PDtlsSession pDtlsSession, BOOL isServer) {
+        return ::dtlsSessionStart(pDtlsSession, isServer);
+    }
+
+    STATUS dtlsSessionProcessPacket(PDtlsSession pDtlsSession, PBYTE pData, PINT32 pDataLen) {
+        return ::dtlsSessionProcessPacket(pDtlsSession, pData, pDataLen);
+    }
+
+    STATUS dtlsSessionPutApplicationData(PDtlsSession pDtlsSession, PBYTE pData, INT32 dataLen) {
+        return ::dtlsSessionPutApplicationData(pDtlsSession, pData, dataLen);
+    }
+
+    STATUS createSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, PKvsIpAddress pBindAddr, PKvsIpAddress pPeerAddr,
+                                  UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize, PSocketConnection* ppSocketConnection) {
+        return ::createSocketConnection(familyType, protocol, pBindAddr, pPeerAddr, customData, dataAvailableFn, sendBufSize, ppSocketConnection);
+    }
+
+    STATUS freeSocketConnection(PSocketConnection* ppSocketConnection) {
+        return ::freeSocketConnection(ppSocketConnection);
+    }
+
+    STATUS createConnectionListener(PConnectionListener* ppConnectionListener) {
+        return ::createConnectionListener(ppConnectionListener);
+    }
+
+    STATUS freeConnectionListener(PConnectionListener* ppConnectionListener) {
+        return ::freeConnectionListener(ppConnectionListener);
+    }
+
+    STATUS connectionListenerAddConnection(PConnectionListener pConnectionListener, PSocketConnection pSocketConnection) {
+        return ::connectionListenerAddConnection(pConnectionListener, pSocketConnection);
+    }
+
+    STATUS connectionListenerRemoveConnection(PConnectionListener pConnectionListener, PSocketConnection pSocketConnection) {
+        return ::connectionListenerRemoveConnection(pConnectionListener, pSocketConnection);
+    }
+
+    STATUS connectionListenerStart(PConnectionListener pConnectionListener) {
+        return ::connectionListenerStart(pConnectionListener);
     }
 #endif
 
