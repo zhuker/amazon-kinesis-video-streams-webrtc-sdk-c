@@ -2,6 +2,71 @@
 
 #include "../../Include_i.h"
 
+// Maximum number of NAL units we can track for STAP-A aggregation per frame
+#define MAX_NALUS_PER_FRAME 64
+
+// Structure to track NAL unit info for aggregation decisions
+typedef struct {
+    PBYTE pNalu;
+    UINT32 length;
+} NaluInfo;
+
+// Helper function to calculate STAP-A size overhead
+// STAP-A format: 1 byte header + (2 bytes size + nalu data) for each NAL
+#define STAP_A_NALU_OVERHEAD 2 // 2 bytes for size field per NAL
+
+// Helper function to create a STAP-A packet from multiple NAL units
+static STATUS createStapAPayload(NaluInfo* pNaluInfos, UINT32 naluCount, PPayloadArray pPayloadArray, PUINT32 pFilledLength, PUINT32 pFilledSubLenSize)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT32 i;
+    UINT32 totalSize = STAP_A_HEADER_SIZE;
+    UINT8 maxNri = 0;
+    UINT8 stapHeader;
+    PBYTE pPayload = NULL;
+    BOOL sizeCalculationOnly = (pPayloadArray == NULL);
+
+    CHK(pNaluInfos != NULL && naluCount > 0 && pFilledLength != NULL && pFilledSubLenSize != NULL, STATUS_NULL_ARG);
+
+    // Calculate total size and max NRI
+    for (i = 0; i < naluCount; i++) {
+        totalSize += STAP_A_NALU_OVERHEAD + pNaluInfos[i].length;
+        UINT8 nri = pNaluInfos[i].pNalu[0] & 0x60;
+        if (nri > maxNri) {
+            maxNri = nri;
+        }
+    }
+
+    *pFilledLength = totalSize;
+    *pFilledSubLenSize = 1; // STAP-A is always one RTP packet
+
+    CHK(!sizeCalculationOnly, retStatus);
+    CHK(pPayloadArray->payloadSubLength != NULL && pPayloadArray->payloadBuffer != NULL, STATUS_NULL_ARG);
+    CHK(1 <= pPayloadArray->maxPayloadSubLenSize && totalSize <= pPayloadArray->maxPayloadLength, STATUS_BUFFER_TOO_SMALL);
+
+    pPayload = pPayloadArray->payloadBuffer;
+
+    // Write STAP-A header: type (24) | NRI
+    stapHeader = STAP_A_INDICATOR | maxNri;
+    *pPayload++ = stapHeader;
+
+    // Write each NAL unit with its 2-byte size prefix
+    for (i = 0; i < naluCount; i++) {
+        // Write 2-byte size in big-endian
+        putUnalignedInt16BigEndian(pPayload, (UINT16) pNaluInfos[i].length);
+        pPayload += SIZEOF(UINT16);
+
+        // Write NAL unit data
+        MEMCPY(pPayload, pNaluInfos[i].pNalu, pNaluInfos[i].length);
+        pPayload += pNaluInfos[i].length;
+    }
+
+    pPayloadArray->payloadSubLength[0] = totalSize;
+
+CleanUp:
+    return retStatus;
+}
+
 STATUS createPayloadForH264(UINT32 mtu, PBYTE nalus, UINT32 nalusLength, PBYTE payloadBuffer, PUINT32 pPayloadLength, PUINT32 pPayloadSubLength,
                             PUINT32 pPayloadSubLenSize)
 {
@@ -15,6 +80,16 @@ STATUS createPayloadForH264(UINT32 mtu, PBYTE nalus, UINT32 nalusLength, PBYTE p
     UINT32 singlePayloadSubLenSize = 0;
     BOOL sizeCalculationOnly = (payloadBuffer == NULL);
     PayloadArray payloadArray;
+
+    // Arrays to collect NAL units for aggregation
+    NaluInfo naluInfos[MAX_NALUS_PER_FRAME];
+    UINT32 naluCount = 0;
+    UINT32 i;
+
+    // Variables for STAP-A aggregation tracking
+    UINT32 stapStartIndex = 0;
+    UINT32 stapNaluCount = 0;
+    UINT32 currentStapSize = STAP_A_HEADER_SIZE;
 
     CHK(nalus != NULL && pPayloadSubLenSize != NULL && pPayloadLength != NULL && (sizeCalculationOnly || pPayloadSubLength != NULL), STATUS_NULL_ARG);
     CHK(mtu > FU_A_HEADER_SIZE, STATUS_RTP_INPUT_MTU_TOO_SMALL);
@@ -33,30 +108,167 @@ STATUS createPayloadForH264(UINT32 mtu, PBYTE nalus, UINT32 nalusLength, PBYTE p
     payloadArray.payloadBuffer = payloadBuffer;
     payloadArray.payloadSubLength = pPayloadSubLength;
 
-    do {
+    // First pass: collect all NAL units
+    while (remainNalusLength > 0 && naluCount < MAX_NALUS_PER_FRAME) {
         CHK_STATUS(getNextNaluLength(curPtrInNalus, remainNalusLength, &startIndex, &nextNaluLength));
 
         curPtrInNalus += startIndex;
-
         remainNalusLength -= startIndex;
 
-        CHK(remainNalusLength != 0, retStatus);
+        if (remainNalusLength == 0) {
+            break;
+        }
 
+        naluInfos[naluCount].pNalu = curPtrInNalus;
+        naluInfos[naluCount].length = nextNaluLength;
+        naluCount++;
+
+        remainNalusLength -= nextNaluLength;
+        curPtrInNalus += nextNaluLength;
+    }
+
+    // Check if we exceeded the limit
+    if (remainNalusLength > 0 && naluCount >= MAX_NALUS_PER_FRAME) {
+        DLOGE("Frame has more than %u NAL units, cannot process", MAX_NALUS_PER_FRAME);
+        CHK(FALSE, STATUS_INVALID_ARG);
+    }
+
+    CHK(naluCount > 0, retStatus);
+
+    // Second pass: decide aggregation strategy and create payloads
+    stapStartIndex = 0;
+    stapNaluCount = 0;
+    currentStapSize = STAP_A_HEADER_SIZE;
+
+    for (i = 0; i < naluCount; i++) {
+        UINT32 naluSize = naluInfos[i].length;
+        UINT32 stapNaluSize = STAP_A_NALU_OVERHEAD + naluSize; // size with 2-byte length prefix
+
+        if (naluSize > mtu) {
+            // NAL unit too large - flush any pending STAP-A and use FU-A
+
+            // Flush pending STAP-A aggregation
+            if (stapNaluCount > 1) {
+                // Create STAP-A packet
+                if (sizeCalculationOnly) {
+                    CHK_STATUS(createStapAPayload(&naluInfos[stapStartIndex], stapNaluCount, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadLength += singlePayloadLength;
+                    payloadArray.payloadSubLenSize += singlePayloadSubLenSize;
+                } else {
+                    CHK_STATUS(createStapAPayload(&naluInfos[stapStartIndex], stapNaluCount, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadBuffer += singlePayloadLength;
+                    payloadArray.payloadSubLength += singlePayloadSubLenSize;
+                    payloadArray.maxPayloadLength -= singlePayloadLength;
+                    payloadArray.maxPayloadSubLenSize -= singlePayloadSubLenSize;
+                }
+            } else if (stapNaluCount == 1) {
+                // Only one NAL - send as single NAL packet
+                if (sizeCalculationOnly) {
+                    CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[stapStartIndex].pNalu, naluInfos[stapStartIndex].length, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadLength += singlePayloadLength;
+                    payloadArray.payloadSubLenSize += singlePayloadSubLenSize;
+                } else {
+                    CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[stapStartIndex].pNalu, naluInfos[stapStartIndex].length, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadBuffer += singlePayloadLength;
+                    payloadArray.payloadSubLength += singlePayloadSubLenSize;
+                    payloadArray.maxPayloadLength -= singlePayloadLength;
+                    payloadArray.maxPayloadSubLenSize -= singlePayloadSubLenSize;
+                }
+            }
+
+            // Reset STAP tracking
+            stapStartIndex = i + 1;
+            stapNaluCount = 0;
+            currentStapSize = STAP_A_HEADER_SIZE;
+
+            // Use FU-A for this large NAL
+            if (sizeCalculationOnly) {
+                CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[i].pNalu, naluInfos[i].length, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
+                payloadArray.payloadLength += singlePayloadLength;
+                payloadArray.payloadSubLenSize += singlePayloadSubLenSize;
+            } else {
+                CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[i].pNalu, naluInfos[i].length, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
+                payloadArray.payloadBuffer += singlePayloadLength;
+                payloadArray.payloadSubLength += singlePayloadSubLenSize;
+                payloadArray.maxPayloadLength -= singlePayloadLength;
+                payloadArray.maxPayloadSubLenSize -= singlePayloadSubLenSize;
+            }
+
+        } else if (currentStapSize + stapNaluSize <= mtu) {
+            // NAL fits in current STAP-A - add it
+            if (stapNaluCount == 0) {
+                stapStartIndex = i;
+            }
+            stapNaluCount++;
+            currentStapSize += stapNaluSize;
+
+        } else {
+            // NAL doesn't fit in current STAP-A - flush and start new
+
+            // Flush current STAP-A
+            if (stapNaluCount > 1) {
+                // Create STAP-A packet
+                if (sizeCalculationOnly) {
+                    CHK_STATUS(createStapAPayload(&naluInfos[stapStartIndex], stapNaluCount, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadLength += singlePayloadLength;
+                    payloadArray.payloadSubLenSize += singlePayloadSubLenSize;
+                } else {
+                    CHK_STATUS(createStapAPayload(&naluInfos[stapStartIndex], stapNaluCount, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadBuffer += singlePayloadLength;
+                    payloadArray.payloadSubLength += singlePayloadSubLenSize;
+                    payloadArray.maxPayloadLength -= singlePayloadLength;
+                    payloadArray.maxPayloadSubLenSize -= singlePayloadSubLenSize;
+                }
+            } else if (stapNaluCount == 1) {
+                // Only one NAL - send as single NAL packet
+                if (sizeCalculationOnly) {
+                    CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[stapStartIndex].pNalu, naluInfos[stapStartIndex].length, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadLength += singlePayloadLength;
+                    payloadArray.payloadSubLenSize += singlePayloadSubLenSize;
+                } else {
+                    CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[stapStartIndex].pNalu, naluInfos[stapStartIndex].length, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
+                    payloadArray.payloadBuffer += singlePayloadLength;
+                    payloadArray.payloadSubLength += singlePayloadSubLenSize;
+                    payloadArray.maxPayloadLength -= singlePayloadLength;
+                    payloadArray.maxPayloadSubLenSize -= singlePayloadSubLenSize;
+                }
+            }
+
+            // Start new STAP-A with current NAL
+            stapStartIndex = i;
+            stapNaluCount = 1;
+            currentStapSize = STAP_A_HEADER_SIZE + stapNaluSize;
+        }
+    }
+
+    // Flush any remaining NALs
+    if (stapNaluCount > 1) {
+        // Create STAP-A packet for remaining NALs
         if (sizeCalculationOnly) {
-            CHK_STATUS(createPayloadFromNalu(mtu, curPtrInNalus, nextNaluLength, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
+            CHK_STATUS(createStapAPayload(&naluInfos[stapStartIndex], stapNaluCount, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
             payloadArray.payloadLength += singlePayloadLength;
             payloadArray.payloadSubLenSize += singlePayloadSubLenSize;
         } else {
-            CHK_STATUS(createPayloadFromNalu(mtu, curPtrInNalus, nextNaluLength, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
+            CHK_STATUS(createStapAPayload(&naluInfos[stapStartIndex], stapNaluCount, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
             payloadArray.payloadBuffer += singlePayloadLength;
             payloadArray.payloadSubLength += singlePayloadSubLenSize;
             payloadArray.maxPayloadLength -= singlePayloadLength;
             payloadArray.maxPayloadSubLenSize -= singlePayloadSubLenSize;
         }
-
-        remainNalusLength -= nextNaluLength;
-        curPtrInNalus += nextNaluLength;
-    } while (remainNalusLength != 0);
+    } else if (stapNaluCount == 1) {
+        // Single remaining NAL - send as single NAL packet
+        if (sizeCalculationOnly) {
+            CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[stapStartIndex].pNalu, naluInfos[stapStartIndex].length, NULL, &singlePayloadLength, &singlePayloadSubLenSize));
+            payloadArray.payloadLength += singlePayloadLength;
+            payloadArray.payloadSubLenSize += singlePayloadSubLenSize;
+        } else {
+            CHK_STATUS(createPayloadFromNalu(mtu, naluInfos[stapStartIndex].pNalu, naluInfos[stapStartIndex].length, &payloadArray, &singlePayloadLength, &singlePayloadSubLenSize));
+            payloadArray.payloadBuffer += singlePayloadLength;
+            payloadArray.payloadSubLength += singlePayloadSubLenSize;
+            payloadArray.maxPayloadLength -= singlePayloadLength;
+            payloadArray.maxPayloadSubLenSize -= singlePayloadSubLenSize;
+        }
+    }
 
 CleanUp:
     if (STATUS_FAILED(retStatus) && sizeCalculationOnly) {
@@ -236,7 +448,9 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
     BOOL isStartingPacket = FALSE;
     PBYTE pCurPtr = pRawPacket;
     static BYTE start4ByteCode[] = {0x00, 0x00, 0x00, 0x01};
+    static BYTE start3ByteCode[] = {0x00, 0x00, 0x01};
     UINT16 subNaluSize = 0;
+    BOOL firstNaluInStap = TRUE;
 
     CHK(pRawPacket != NULL && pNaluLength != NULL, STATUS_NULL_ARG);
     CHK(packetLength > 0, retStatus);
@@ -263,20 +477,26 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             break;
         case STAP_A_INDICATOR:
             pCurPtr += STAP_A_HEADER_SIZE;
+            firstNaluInStap = TRUE;
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                naluLength += subNaluSize + SIZEOF(start4ByteCode);
+                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
+                naluLength += subNaluSize + (firstNaluInStap ? SIZEOF(start4ByteCode) : SIZEOF(start3ByteCode));
+                firstNaluInStap = FALSE;
                 pCurPtr += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
             isStartingPacket = TRUE;
             break;
         case STAP_B_INDICATOR:
             pCurPtr += STAP_B_HEADER_SIZE;
+            firstNaluInStap = TRUE;
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                naluLength += subNaluSize + SIZEOF(start4ByteCode);
+                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
+                naluLength += subNaluSize + (firstNaluInStap ? SIZEOF(start4ByteCode) : SIZEOF(start3ByteCode));
+                firstNaluInStap = FALSE;
                 pCurPtr += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
             isStartingPacket = TRUE;
@@ -322,30 +542,50 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
         case STAP_A_INDICATOR:
             naluLength = 0;
             pCurPtr = pRawPacket + STAP_A_HEADER_SIZE;
+            firstNaluInStap = TRUE;
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                MEMCPY(pNaluData, start4ByteCode, SIZEOF(start4ByteCode));
-                pNaluData += SIZEOF(start4ByteCode);
+                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
+                if (firstNaluInStap) {
+                    MEMCPY(pNaluData, start4ByteCode, SIZEOF(start4ByteCode));
+                    pNaluData += SIZEOF(start4ByteCode);
+                    naluLength += SIZEOF(start4ByteCode);
+                    firstNaluInStap = FALSE;
+                } else {
+                    MEMCPY(pNaluData, start3ByteCode, SIZEOF(start3ByteCode));
+                    pNaluData += SIZEOF(start3ByteCode);
+                    naluLength += SIZEOF(start3ByteCode);
+                }
                 MEMCPY(pNaluData, pCurPtr, subNaluSize);
                 pCurPtr += subNaluSize;
                 pNaluData += subNaluSize;
-                naluLength += SIZEOF(start4ByteCode) + subNaluSize;
+                naluLength += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
             DLOGS("STAP_A_INDICATOR starting packet %d len %d", isStartingPacket, naluLength);
             break;
         case STAP_B_INDICATOR:
             naluLength = 0;
-            pCurPtr = pRawPacket + STAP_A_HEADER_SIZE;
+            pCurPtr = pRawPacket + STAP_B_HEADER_SIZE;
+            firstNaluInStap = TRUE;
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                MEMCPY(pNaluData, start4ByteCode, SIZEOF(start4ByteCode));
-                pNaluData += SIZEOF(start4ByteCode);
+                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
+                if (firstNaluInStap) {
+                    MEMCPY(pNaluData, start4ByteCode, SIZEOF(start4ByteCode));
+                    pNaluData += SIZEOF(start4ByteCode);
+                    naluLength += SIZEOF(start4ByteCode);
+                    firstNaluInStap = FALSE;
+                } else {
+                    MEMCPY(pNaluData, start3ByteCode, SIZEOF(start3ByteCode));
+                    pNaluData += SIZEOF(start3ByteCode);
+                    naluLength += SIZEOF(start3ByteCode);
+                }
                 MEMCPY(pNaluData, pCurPtr, subNaluSize);
                 pCurPtr += subNaluSize;
                 pNaluData += subNaluSize;
-                naluLength += SIZEOF(start4ByteCode) + subNaluSize;
+                naluLength += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
             DLOGS("STAP_B_INDICATOR starting packet %d len %d", isStartingPacket, naluLength);
             break;
