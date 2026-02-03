@@ -939,8 +939,8 @@ TEST_F(TurnConnectionFunctionalityTest, turnConnectionCallMultipleTurnSendDataIn
 
     BOOL turnReady = FALSE;
     KvsIpAddress turnPeerAddr;
-    const UINT32 bufLen = 5;
-    const UINT32 reqCount = 5;
+    static constexpr UINT32 bufLen = 5;
+    static constexpr UINT32 reqCount = 5;
     BYTE buf[reqCount][bufLen];
     std::thread threads[reqCount];
     UINT32 i, j;
