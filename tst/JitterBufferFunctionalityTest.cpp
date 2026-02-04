@@ -1851,6 +1851,157 @@ TEST_F(JitterBufferFunctionalityTest, LongRunningWithDroppedPacketsTest)
 }
 #endif
 
+TEST_F(JitterBufferFunctionalityTest, markerBitTriggersImmediateDelivery)
+{
+    UINT32 i;
+    UINT32 pktCount = 4;
+    UINT32 startingSequenceNumber = 0;
+
+    srand(time(0));
+    startingSequenceNumber = rand() % UINT16_MAX;
+
+    initializeJitterBuffer(2, 0, pktCount);
+
+    // First frame: 3 packets with marker on last one, timestamp 100
+    // Packet 0: start packet
+    mPRtpPackets[0]->payloadLength = 1;
+    mPRtpPackets[0]->payload = (PBYTE) MEMALLOC(mPRtpPackets[0]->payloadLength + 1);
+    mPRtpPackets[0]->payload[0] = 1;
+    mPRtpPackets[0]->payload[1] = 1; // First packet of a frame
+    mPRtpPackets[0]->header.timestamp = 100;
+    mPRtpPackets[0]->header.sequenceNumber = startingSequenceNumber++;
+    mPRtpPackets[0]->header.marker = FALSE;
+
+    // Packet 1: middle packet
+    mPRtpPackets[1]->payloadLength = 1;
+    mPRtpPackets[1]->payload = (PBYTE) MEMALLOC(mPRtpPackets[1]->payloadLength + 1);
+    mPRtpPackets[1]->payload[0] = 2;
+    mPRtpPackets[1]->payload[1] = 0; // Following packet
+    mPRtpPackets[1]->header.timestamp = 100;
+    mPRtpPackets[1]->header.sequenceNumber = startingSequenceNumber++;
+    mPRtpPackets[1]->header.marker = FALSE;
+
+    // Packet 2: last packet with MARKER BIT SET
+    mPRtpPackets[2]->payloadLength = 1;
+    mPRtpPackets[2]->payload = (PBYTE) MEMALLOC(mPRtpPackets[2]->payloadLength + 1);
+    mPRtpPackets[2]->payload[0] = 3;
+    mPRtpPackets[2]->payload[1] = 0; // Following packet
+    mPRtpPackets[2]->header.timestamp = 100;
+    mPRtpPackets[2]->header.sequenceNumber = startingSequenceNumber++;
+    mPRtpPackets[2]->header.marker = TRUE; // MARKER BIT!
+
+    // Expected to get frame "123" IMMEDIATELY after packet 2 (not waiting for packet 3)
+    mPExpectedFrameArr[0] = (PBYTE) MEMALLOC(3);
+    mPExpectedFrameArr[0][0] = 1;
+    mPExpectedFrameArr[0][1] = 2;
+    mPExpectedFrameArr[0][2] = 3;
+    mExpectedFrameSizeArr[0] = 3;
+
+    // Second frame: single packet with marker, timestamp 200
+    mPRtpPackets[3]->payloadLength = 1;
+    mPRtpPackets[3]->payload = (PBYTE) MEMALLOC(mPRtpPackets[3]->payloadLength + 1);
+    mPRtpPackets[3]->payload[0] = 4;
+    mPRtpPackets[3]->payload[1] = 1; // First packet of a frame
+    mPRtpPackets[3]->header.timestamp = 200;
+    mPRtpPackets[3]->header.sequenceNumber = startingSequenceNumber++;
+    mPRtpPackets[3]->header.marker = TRUE; // Single packet frame, marker set
+
+    // Expected to get frame "4"
+    mPExpectedFrameArr[1] = (PBYTE) MEMALLOC(1);
+    mPExpectedFrameArr[1][0] = 4;
+    mExpectedFrameSizeArr[1] = 1;
+
+    setPayloadToFree();
+
+    for (i = 0; i < pktCount; i++) {
+        EXPECT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, mPRtpPackets[i], nullptr));
+        switch (i) {
+            case 0:
+            case 1:
+                EXPECT_EQ(0, mReadyFrameIndex); // Frame not complete yet
+                break;
+            case 2:
+                EXPECT_EQ(1, mReadyFrameIndex); // Frame delivered on marker!
+                break;
+            case 3:
+                EXPECT_EQ(2, mReadyFrameIndex); // Second frame delivered on marker
+                break;
+            default:
+                ASSERT_TRUE(FALSE);
+        }
+        EXPECT_EQ(0, mDroppedFrameIndex);
+    }
+
+    clearJitterBufferForTest();
+}
+
+TEST_F(JitterBufferFunctionalityTest, markerBitOutOfOrderWaitsForCompletion)
+{
+    UINT32 i;
+    UINT32 pktCount = 3;
+
+    initializeJitterBuffer(1, 0, pktCount);
+
+    // Frame with 3 packets, but marker arrives before middle packet
+    // Push order: packet 0 (seq 0), packet 1 (seq 2, marker), packet 2 (seq 1)
+    // Frame should NOT be delivered until all packets arrive, even though marker arrived early
+
+    // Packet 0: start packet, seq 0
+    mPRtpPackets[0]->payloadLength = 1;
+    mPRtpPackets[0]->payload = (PBYTE) MEMALLOC(mPRtpPackets[0]->payloadLength + 1);
+    mPRtpPackets[0]->payload[0] = 1;
+    mPRtpPackets[0]->payload[1] = 1;
+    mPRtpPackets[0]->header.timestamp = 100;
+    mPRtpPackets[0]->header.sequenceNumber = 0;
+    mPRtpPackets[0]->header.marker = FALSE;
+
+    // Packet 1: marker packet, seq 2 (arrives second, before seq 1)
+    mPRtpPackets[1]->payloadLength = 1;
+    mPRtpPackets[1]->payload = (PBYTE) MEMALLOC(mPRtpPackets[1]->payloadLength + 1);
+    mPRtpPackets[1]->payload[0] = 3;
+    mPRtpPackets[1]->payload[1] = 0;
+    mPRtpPackets[1]->header.timestamp = 100;
+    mPRtpPackets[1]->header.sequenceNumber = 2;
+    mPRtpPackets[1]->header.marker = TRUE;
+
+    // Packet 2: middle packet, seq 1 (arrives third, filling the gap)
+    mPRtpPackets[2]->payloadLength = 1;
+    mPRtpPackets[2]->payload = (PBYTE) MEMALLOC(mPRtpPackets[2]->payloadLength + 1);
+    mPRtpPackets[2]->payload[0] = 2;
+    mPRtpPackets[2]->payload[1] = 0;
+    mPRtpPackets[2]->header.timestamp = 100;
+    mPRtpPackets[2]->header.sequenceNumber = 1;
+    mPRtpPackets[2]->header.marker = FALSE;
+
+    // Expected frame "123"
+    mPExpectedFrameArr[0] = (PBYTE) MEMALLOC(3);
+    mPExpectedFrameArr[0][0] = 1;
+    mPExpectedFrameArr[0][1] = 2;
+    mPExpectedFrameArr[0][2] = 3;
+    mExpectedFrameSizeArr[0] = 3;
+
+    setPayloadToFree();
+
+    for (i = 0; i < pktCount; i++) {
+        EXPECT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, mPRtpPackets[i], nullptr));
+        switch (i) {
+            case 0:
+                EXPECT_EQ(0, mReadyFrameIndex); // Only start, not complete
+                break;
+            case 1:
+                EXPECT_EQ(0, mReadyFrameIndex); // Marker but missing seq 1
+                break;
+            case 2:
+                EXPECT_EQ(1, mReadyFrameIndex); // Now complete with marker!
+                break;
+            default:
+                ASSERT_TRUE(FALSE);
+        }
+    }
+
+    clearJitterBufferForTest();
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis
