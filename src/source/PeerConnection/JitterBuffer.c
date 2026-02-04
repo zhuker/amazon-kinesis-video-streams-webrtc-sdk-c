@@ -74,8 +74,29 @@ STATUS freeJitterBuffer(PJitterBuffer* ppJitterBuffer)
 
     pJitterBuffer = *ppJitterBuffer;
 
-    jitterBufferInternalParse(pJitterBuffer, TRUE);
-    jitterBufferDropBufferData(pJitterBuffer, 0, MAX_RTP_SEQUENCE_NUM, 0);
+    // Parse repeatedly until all frames are processed.
+    // After marker bit delivery, the parse breaks early, so we need to loop
+    // to ensure all remaining frames are delivered/dropped.
+    if (pJitterBuffer->started) {
+        UINT16 prevHead = pJitterBuffer->headSequenceNumber;
+        UINT32 maxIterations = 65536; // Safety limit to prevent infinite loops
+        while (maxIterations-- > 0) {
+            jitterBufferInternalParse(pJitterBuffer, TRUE);
+            // If head didn't advance, we're done or stuck
+            if (pJitterBuffer->headSequenceNumber == prevHead) {
+                break;
+            }
+            // If we've processed everything, we're done
+            // Use signed comparison to handle wraparound
+            INT32 remaining = (INT32) ((UINT16) (pJitterBuffer->tailSequenceNumber - pJitterBuffer->headSequenceNumber + 1));
+            if (remaining <= 0) {
+                break;
+            }
+            prevHead = pJitterBuffer->headSequenceNumber;
+        }
+        // Clean up any remaining packets that weren't delivered/dropped
+        jitterBufferDropBufferData(pJitterBuffer, pJitterBuffer->headSequenceNumber, pJitterBuffer->tailSequenceNumber, 0);
+    }
     hashTableFree(pJitterBuffer->pPkgBufferHashTable);
 
     SAFE_MEMFREE(*ppJitterBuffer);
@@ -259,7 +280,10 @@ BOOL enterTimestampOverflowCheck(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPac
         }
         // underflow check
         else if (pJitterBuffer->headTimestamp < pRtpPacket->header.timestamp && pJitterBuffer->tailTimestamp < pRtpPacket->header.timestamp) {
-            if (headSequenceNumberCheck(pJitterBuffer, pRtpPacket)) {
+            // Only detect underflow if headSequenceNumberCheck actually updates the head (meaning packet is EARLIER than expected).
+            // Don't trigger underflow if packet is exactly at headSequenceNumber (that's the expected next packet, not underflow).
+            UINT16 prevHead = pJitterBuffer->headSequenceNumber;
+            if (headSequenceNumberCheck(pJitterBuffer, pRtpPacket) && pJitterBuffer->headSequenceNumber != prevHead) {
                 underflow = TRUE;
             }
         }
@@ -472,6 +496,7 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
     UINT16 lastIndex;
     UINT32 earliestAllowedTimestamp = 0;
     BOOL isFrameDataContinuous = TRUE;
+    BOOL headFrameIsContiguous = TRUE; // Track continuity for head frame only
     UINT32 curTimestamp = 0;
     UINT16 startDropIndex = 0;
     UINT32 curFrameSize = 0;
@@ -479,6 +504,11 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
     UINT64 hashValue = 0;
     BOOL isStart = FALSE, containStartForEarliestFrame = FALSE, hasEntry = FALSE;
     UINT16 lastNonNullIndex = 0;
+    UINT16 lastHeadFrameSeqNum = 0;    // Last seq number seen with head timestamp
+    BOOL seenHeadFramePacket = FALSE;  // Whether we've seen any packet from head frame
+    UINT16 firstGapIndex = 0;          // First gap sequence number since last frame boundary
+    BOOL sawGapSinceLastFrame = FALSE; // Whether we've seen any gap since last frame boundary
+    BOOL headFrameEnded = FALSE;       // Whether head frame's last packet had marker bit (complete frame)
     PRtpPacket pCurPacket = NULL;
 
     CHK(pJitterBuffer != NULL && pJitterBuffer->onFrameDroppedFn != NULL && pJitterBuffer->onFrameReadyFn != NULL, STATUS_NULL_ARG);
@@ -510,6 +540,17 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
         CHK_STATUS(hashTableContains(pJitterBuffer->pPkgBufferHashTable, index, &hasEntry));
         if (!hasEntry) {
             isFrameDataContinuous = FALSE;
+            // Track where first gap is found - we'll determine at frame boundary if it's in head frame
+            if (!sawGapSinceLastFrame) {
+                firstGapIndex = index;
+                sawGapSinceLastFrame = TRUE;
+            }
+            // If we've seen head frame packets but not the marker bit yet, this gap might be in the head frame.
+            // Set headFrameIsContiguous=FALSE proactively to prevent incorrect marker bit delivery.
+            // If the gap turns out to be in a later frame, headFrameIsContiguous will be reset at frame boundary.
+            if (seenHeadFramePacket && !headFrameEnded) {
+                headFrameIsContiguous = FALSE;
+            }
             // if the max latency has not been reached, or the buffer is not being closed, exit parse when a missing entry is found
             CHK(pJitterBuffer->headTimestamp < earliestAllowedTimestamp || bufferClosed, retStatus);
         } else {
@@ -524,10 +565,38 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
             pCurPacket = (PRtpPacket) hashValue;
             CHK(pCurPacket != NULL, STATUS_NULL_ARG);
             curTimestamp = pCurPacket->header.timestamp;
+
+            // Track packets belonging to the head frame
+            if (curTimestamp == pJitterBuffer->headTimestamp) {
+                lastHeadFrameSeqNum = index;
+                seenHeadFramePacket = TRUE;
+                // Track if this packet has marker bit (indicates end of frame)
+                if (pCurPacket->header.marker) {
+                    headFrameEnded = TRUE;
+                }
+            }
+
             // new timestamp on an RTP packet means new frame
             if (curTimestamp != pJitterBuffer->headTimestamp) {
+                // Determine if head frame is contiguous by checking if any gaps are within its range
+                // Key insight: If head frame's last packet had marker bit, the frame is complete.
+                // Any gap AFTER that is in the next frame, not the head frame.
+                if (sawGapSinceLastFrame && seenHeadFramePacket) {
+                    // Only evaluate continuity if we've actually seen head frame packets.
+                    // If seenHeadFramePacket=FALSE, the head frame was already delivered via marker
+                    // and any gaps are in inter-frame space, not the head frame.
+                    if (firstGapIndex <= lastHeadFrameSeqNum) {
+                        // Gap is within head frame's known packet range
+                        headFrameIsContiguous = FALSE;
+                    } else if (!headFrameEnded) {
+                        // Gap is after last seen head packet, but head frame didn't have marker bit
+                        // The gap might still be in the head frame (frame not complete)
+                        headFrameIsContiguous = FALSE;
+                    }
+                    // else: gap is AFTER head frame's marker bit, so it's in next frame
+                }
                 // was previous frame complete? Deliver it
-                if (containStartForEarliestFrame && isFrameDataContinuous) {
+                if (containStartForEarliestFrame && headFrameIsContiguous) {
                     // Decrement the index because this is an inclusive end parser, and we don't want to include the current index in the processed
                     // frame.
                     CHK_STATUS(pJitterBuffer->onFrameReadyFn(pJitterBuffer->customData, startDropIndex, UINT16_DEC(index), curFrameSize));
@@ -535,19 +604,52 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
                     pJitterBuffer->firstFrameProcessed = TRUE;
                     startDropIndex = index;
                     containStartForEarliestFrame = FALSE;
+                    // Reset tracking for the new head frame
+                    headFrameIsContiguous = TRUE;
+                    sawGapSinceLastFrame = FALSE;
+                    // Track the current packet as the new head frame's first packet
+                    // (headTimestamp was just updated to curTimestamp by jitterBufferDropBufferData)
+                    lastHeadFrameSeqNum = index;
+                    seenHeadFramePacket = TRUE;
+                    headFrameEnded = pCurPacket->header.marker;
                 }
                 // are we forcibly clearing out the buffer? if so drop the contents of incomplete frame
-                else if (pJitterBuffer->headTimestamp < earliestAllowedTimestamp || bufferClosed) {
+                // Only force clear if:
+                // 1. We've seen head frame packets (seenHeadFramePacket) - otherwise there's nothing to drop
+                // 2. There are packets to drop (startDropIndex != index)
+                // If seenHeadFramePacket=FALSE, the head frame was already delivered via marker bit
+                // and we should go to the else block to reset state for the new frame.
+                else if (seenHeadFramePacket && startDropIndex != index &&
+                         (pJitterBuffer->headTimestamp < earliestAllowedTimestamp || bufferClosed)) {
                     // do not CHK_STATUS of onFrameDropped because we need to clear the jitter buffer no matter what else happens.
                     pJitterBuffer->onFrameDroppedFn(pJitterBuffer->customData, startDropIndex, UINT16_DEC(index), pJitterBuffer->headTimestamp);
                     CHK_STATUS(jitterBufferDropBufferData(pJitterBuffer, startDropIndex, UINT16_DEC(index), curTimestamp));
                     pJitterBuffer->firstFrameProcessed = TRUE;
                     isFrameDataContinuous = TRUE;
+                    // Reset tracking for the new head frame
+                    headFrameIsContiguous = TRUE;
+                    sawGapSinceLastFrame = FALSE;
+                    // Track the current packet as the new head frame's first packet
+                    // (headTimestamp was just updated to curTimestamp by jitterBufferDropBufferData)
+                    lastHeadFrameSeqNum = index;
+                    seenHeadFramePacket = TRUE;
+                    headFrameEnded = pCurPacket->header.marker;
                     startDropIndex = index;
-                } else {
+                } else if (seenHeadFramePacket) {
                     // if you're here, it means we're not force clearing the buffer, and the previous frame must be missing its starting packet.
                     // The starting packet isn't going to be found at an incremental sequence number, so we can save some time and break here.
                     break;
+                } else {
+                    // No head frame packets were seen - the head frame was likely already delivered via marker bit.
+                    // Update state for the new frame and continue processing.
+                    pJitterBuffer->headTimestamp = curTimestamp;
+                    startDropIndex = index;
+                    // Track the current packet as the new head frame's first packet
+                    lastHeadFrameSeqNum = index;
+                    seenHeadFramePacket = TRUE;
+                    headFrameEnded = pCurPacket->header.marker;
+                    headFrameIsContiguous = TRUE;
+                    sawGapSinceLastFrame = FALSE;
                 }
                 // new timestamp means new frame, drop tracking for previous frame size
                 curFrameSize = 0;
@@ -559,6 +661,25 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
             curFrameSize += partialFrameSize;
             if (isStart && pJitterBuffer->headTimestamp == curTimestamp) {
                 containStartForEarliestFrame = TRUE;
+            }
+
+            // Immediate marker bit delivery: if we have a complete frame (start + marker + no gaps), deliver now
+            // This reduces latency by not waiting for the next frame's first packet
+            // Use headFrameIsContiguous (per-frame tracking) instead of isFrameDataContinuous (global) for consistency
+            // with the frame boundary delivery logic
+            if (curTimestamp == pJitterBuffer->headTimestamp && pCurPacket->header.marker && containStartForEarliestFrame && headFrameIsContiguous) {
+                // Frame is complete: has start, has marker, all packets contiguous
+                CHK_STATUS(pJitterBuffer->onFrameReadyFn(pJitterBuffer->customData, startDropIndex, index, curFrameSize));
+                CHK_STATUS(jitterBufferDropBufferData(pJitterBuffer, startDropIndex, index, curTimestamp));
+                pJitterBuffer->firstFrameProcessed = TRUE;
+                // Update startDropIndex so the bufferClosed block doesn't try to re-deliver
+                startDropIndex = index + 1;
+                curFrameSize = 0;
+                // Note: jitterBufferDropBufferData sets headTimestamp to curTimestamp (delivered frame's timestamp)
+                // since we don't know the next frame's timestamp yet. Break here and let the next parse
+                // correctly detect the frame boundary via the else branch at lines 606-617.
+                // When buffer is being closed, freeJitterBuffer will call parse repeatedly until all frames are done.
+                break;
             }
         }
     }
