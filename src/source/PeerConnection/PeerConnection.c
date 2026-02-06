@@ -1569,8 +1569,11 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
 
     for (i = 0; i < pSessionDescription->sessionAttributesCount; i++) {
         if (STRCMP(pSessionDescription->sdpAttributes[i].attributeName, "fingerprint") == 0) {
-            STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, pSessionDescription->sdpAttributes[i].attributeValue + 8,
-                    CERTIFICATE_FINGERPRINT_LENGTH);
+            PCHAR attrValue = pSessionDescription->sdpAttributes[i].attributeValue;
+            PCHAR space = STRCHR(attrValue, ' ');
+            if (space != NULL) {
+                STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, space + 1, CERTIFICATE_FINGERPRINT_LENGTH);
+            }
         } else if (pKvsPeerConnection->isOffer && STRCMP(pSessionDescription->sdpAttributes[i].attributeName, "setup") == 0) {
             // possible values are actpass, passive and active. If the incoming SDP has active, it indicates it is taking up a client role
             // In case of actpass and passive, the other peer is taking up a server role and is waiting for incoming connection
@@ -1600,8 +1603,11 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
                 // Ignore the return value, we have candidates we don't support yet like TURN
                 iceAgentAddRemoteCandidate(pKvsPeerConnection->pIceAgent, pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue);
             } else if (STRCMP(pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeName, "fingerprint") == 0) {
-                STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint,
-                        pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue + 8, CERTIFICATE_FINGERPRINT_LENGTH);
+                PCHAR attrValue = pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue;
+                PCHAR space = STRCHR(attrValue, ' ');
+                if (space != NULL) {
+                    STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, space + 1, CERTIFICATE_FINGERPRINT_LENGTH);
+                }
             } else if (pKvsPeerConnection->isOffer &&
                        STRCMP(pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeName, "setup") == 0) {
                 pKvsPeerConnection->dtlsIsServer = STRCMP(pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue, "active") == 0;
