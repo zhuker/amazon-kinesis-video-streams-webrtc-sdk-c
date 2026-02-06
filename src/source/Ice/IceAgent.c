@@ -1148,10 +1148,10 @@ STATUS createIceCandidatePairs(PIceAgent pIceAgent, PIceCandidate pIceCandidate,
             pIceCandidatePair->priority = computeCandidatePairPriority(pIceCandidatePair, pIceAgent->isControlling);
 
             if (pIceCandidatePair->pRtcIceCandidatePairDiagnostics != NULL) {
-                STRNCPY(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->localCandidateId, pIceCandidatePair->local->id,
-                        ARRAY_SIZE(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->localCandidateId));
-                STRNCPY(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->remoteCandidateId, pIceCandidatePair->remote->id,
-                        ARRAY_SIZE(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->remoteCandidateId));
+                SNPRINTF(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->localCandidateId,
+                         ARRAY_SIZE(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->localCandidateId), "%s", pIceCandidatePair->local->id);
+                SNPRINTF(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->remoteCandidateId,
+                         ARRAY_SIZE(pIceCandidatePair->pRtcIceCandidatePairDiagnostics->remoteCandidateId), "%s", pIceCandidatePair->remote->id);
                 pIceCandidatePair->pRtcIceCandidatePairDiagnostics->state = pIceCandidatePair->state;
                 pIceCandidatePair->pRtcIceCandidatePairDiagnostics->nominated = pIceCandidatePair->nominated;
                 pIceCandidatePair->pRtcIceCandidatePairDiagnostics->lastPacketSentTimestamp = pIceCandidatePair->lastDataSentTime;
