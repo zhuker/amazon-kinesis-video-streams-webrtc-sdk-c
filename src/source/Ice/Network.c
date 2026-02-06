@@ -15,6 +15,11 @@ STATUS getLocalhostIpAddresses(PKvsIpAddress destIpList, PUINT32 pDestIpListLen,
     DWORD retWinStatus, sizeAAPointer;
     PIP_ADAPTER_ADDRESSES adapterAddresses, aa = NULL;
     PIP_ADAPTER_UNICAST_ADDRESS ua;
+#elif defined(__ANDROID__)
+    INT32 sockfd = -1;
+    struct ifconf ifc;
+    struct ifreq ifr[32];
+    INT32 numInterfaces, i;
 #else
     struct ifaddrs *ifaddr = NULL, *ifa = NULL;
 #endif
@@ -83,6 +88,82 @@ STATUS getLocalhostIpAddresses(PKvsIpAddress destIpList, PUINT32 pDestIpListLen,
             }
         }
     }
+#elif defined(__ANDROID__)
+    // Android: use ioctl with SIOCGIFCONF since getifaddrs is not available on older API levels
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd == -1) {
+        DLOGW("socket() failed with errno %s", getErrorString(getErrorCode()));
+        CHK(FALSE, STATUS_GET_LOCAL_IP_ADDRESSES_FAILED);
+    }
+
+    MEMSET(&ifc, 0, SIZEOF(ifc));
+    MEMSET(ifr, 0, SIZEOF(ifr));
+    ifc.ifc_len = SIZEOF(ifr);
+    ifc.ifc_req = ifr;
+
+    if (ioctl(sockfd, SIOCGIFCONF, &ifc) == -1) {
+        DLOGW("ioctl(SIOCGIFCONF) failed with errno %s", getErrorString(getErrorCode()));
+        close(sockfd);
+        CHK(FALSE, STATUS_GET_LOCAL_IP_ADDRESSES_FAILED);
+    }
+
+    numInterfaces = ifc.ifc_len / SIZEOF(struct ifreq);
+
+    for (i = 0; i < numInterfaces && ipCount < destIpListLen; i++) {
+        // Skip loopback interfaces
+        if (STRNCMP(ifr[i].ifr_name, "lo", 2) == 0) {
+            continue;
+        }
+
+        // Get interface flags
+        if (ioctl(sockfd, SIOCGIFFLAGS, &ifr[i]) == -1) {
+            continue;
+        }
+
+        // Skip interfaces that are not up or running
+        if ((ifr[i].ifr_flags & IFF_UP) == 0 || (ifr[i].ifr_flags & IFF_RUNNING) == 0) {
+            continue;
+        }
+
+        // Skip loopback
+        if ((ifr[i].ifr_flags & IFF_LOOPBACK) != 0) {
+            continue;
+        }
+
+        // Mark VPN interface
+        destIpList[ipCount].isPointToPoint = ((ifr[i].ifr_flags & IFF_POINTOPOINT) != 0);
+
+        if (filter != NULL) {
+            if (filter(customData, ifr[i].ifr_name) == FALSE) {
+                filterSet = FALSE;
+            } else {
+                filterSet = TRUE;
+            }
+        }
+
+        if (filterSet == TRUE) {
+            // Get interface address
+            if (ioctl(sockfd, SIOCGIFADDR, &ifr[i]) == -1) {
+                continue;
+            }
+
+            if (ifr[i].ifr_addr.sa_family == AF_INET) {
+                destIpList[ipCount].family = KVS_IP_FAMILY_TYPE_IPV4;
+                destIpList[ipCount].port = 0;
+                pIpv4Addr = (struct sockaddr_in*) &ifr[i].ifr_addr;
+                MEMCPY(destIpList[ipCount].address, &pIpv4Addr->sin_addr, IPV4_ADDRESS_LENGTH);
+                ipCount++;
+            }
+            // Note: SIOCGIFCONF on Android typically only returns IPv4 addresses
+        }
+    }
+
+    close(sockfd);
+    sockfd = -1;
+
+    if (ipCount == 0 && ipCount < destIpListLen) {
+        DLOGW("No network interfaces found on Android");
+    }
 #else
     CHK(getifaddrs(&ifaddr) != -1, STATUS_GET_LOCAL_IP_ADDRESSES_FAILED);
     for (ifa = ifaddr; ifa != NULL && ipCount < destIpListLen; ifa = ifa->ifa_next) {
@@ -136,7 +217,7 @@ CleanUp:
     if (adapterAddresses != NULL) {
         SAFE_MEMFREE(adapterAddresses);
     }
-#else
+#elif !defined(__ANDROID__)
     if (ifaddr != NULL) {
         freeifaddrs(ifaddr);
     }
