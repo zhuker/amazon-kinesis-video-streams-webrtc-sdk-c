@@ -8,6 +8,17 @@
 // forward declaration
 STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed);
 
+// NACK helper function forward declarations
+static PNackTrackingEntry nackTrackerFind(PNackTracker pTracker, UINT16 seqNum);
+static PNackTrackingEntry nackTrackerAdd(PNackTracker pTracker, UINT16 seqNum, UINT64 currentTime);
+static VOID nackTrackerRemove(PNackTracker pTracker, UINT16 seqNum);
+static VOID nackTrackerCleanupRange(PNackTracker pTracker, UINT16 startSeq, UINT16 endSeq);
+static VOID nackTrackerIncrementPacketsSeen(PNackTracker pTracker);
+static UINT16 nackTrackerBuildBlp(PNackTracker pTracker, UINT16 pid);
+static STATUS nackTrackerProcess(PJitterBuffer pJitterBuffer, UINT64 currentTime);
+static BOOL nackTrackerIsRecovered(PNackTracker pTracker, UINT16 seqNum);
+static VOID nackTrackerAddRecovered(PNackTracker pTracker, UINT16 seqNum);
+
 STATUS createJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedFunc onFrameDroppedFunc, DepayRtpPayloadFunc depayRtpPayloadFunc,
                           UINT32 maxLatency, UINT32 clockRate, UINT64 customData, PJitterBuffer* ppJitterBuffer)
 {
@@ -421,8 +432,12 @@ STATUS jitterBufferPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOO
     STATUS retStatus = STATUS_SUCCESS, status = STATUS_SUCCESS;
     UINT64 hashValue = 0;
     PRtpPacket pCurPacket = NULL;
+    UINT64 currentTime = GETTIME();
+    UINT16 expectedSeq, receivedSeq, gapSeq;
 
     CHK(pJitterBuffer != NULL && pRtpPacket != NULL, STATUS_NULL_ARG);
+
+    receivedSeq = pRtpPacket->header.sequenceNumber;
 
     if (!pJitterBuffer->started) {
         // Set to started and initialize the sequence number
@@ -430,6 +445,11 @@ STATUS jitterBufferPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOO
         pJitterBuffer->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         pJitterBuffer->tailSequenceNumber = pRtpPacket->header.sequenceNumber;
         pJitterBuffer->headTimestamp = pRtpPacket->header.timestamp;
+    }
+
+    // NACK: Remove this packet from tracking if it was being tracked (retransmit received)
+    if (pJitterBuffer->onPacketMissingFn != NULL) {
+        nackTrackerRemove(&pJitterBuffer->nackTracker, receivedSeq);
     }
 
     // We'll check sequence numbers first, with our MAX Out of Order packet count to avoid
@@ -469,6 +489,51 @@ STATUS jitterBufferPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOO
         }
         // DONE with considering the head.
 
+        // NACK: Detect gaps and track missing packets
+        if (pJitterBuffer->onPacketMissingFn != NULL) {
+            // Increment packetsSeenAfter for all tracked missing packets
+            nackTrackerIncrementPacketsSeen(&pJitterBuffer->nackTracker);
+
+            // Check for gaps between head and received sequence number
+            // Only track gaps for packets after the head (not for out-of-order arrivals before head)
+            expectedSeq = pJitterBuffer->headSequenceNumber;
+            if (!pJitterBuffer->sequenceNumberOverflowState) {
+                // Normal case: no sequence number overflow
+                if (receivedSeq > expectedSeq) {
+                    BOOL nackListOverflow = FALSE;
+                    // Check for gaps between head and this packet
+                    for (gapSeq = expectedSeq; gapSeq != receivedSeq; gapSeq++) {
+                        // Check if we already have this packet
+                        status = hashTableGet(pJitterBuffer->pPkgBufferHashTable, gapSeq, &hashValue);
+                        if (STATUS_FAILED(status) || hashValue == 0) {
+                            // Missing packet - add to tracker
+                            PNackTrackingEntry pEntry = nackTrackerAdd(&pJitterBuffer->nackTracker, gapSeq, currentTime);
+                            if (pEntry == NULL && pJitterBuffer->nackTracker.count >= NACK_MAX_MISSING_PACKETS) {
+                                // NACK list overflow - need to request keyframe
+                                nackListOverflow = TRUE;
+                                break;
+                            }
+                        }
+                    }
+
+                    // If NACK list overflowed, request a keyframe (like libwebrtc)
+                    if (nackListOverflow && pJitterBuffer->onKeyframeRequestFn != NULL) {
+                        DLOGW("NACK list overflow (%u packets), clearing list and requesting keyframe",
+                              pJitterBuffer->nackTracker.count);
+                        // Clear NACK tracker
+                        UINT16 j;
+                        for (j = 0; j < NACK_MAX_MISSING_PACKETS; j++) {
+                            pJitterBuffer->nackTracker.entries[j].active = FALSE;
+                        }
+                        pJitterBuffer->nackTracker.count = 0;
+                        // Request keyframe
+                        pJitterBuffer->onKeyframeRequestFn(pJitterBuffer->onKeyframeRequestCustomData);
+                    }
+                }
+            }
+            // Note: Overflow case gap detection is more complex and skipped for simplicity
+        }
+
         DLOGS("jitterBufferPush get packet timestamp %lu seqNum %lu", pRtpPacket->header.timestamp, pRtpPacket->header.sequenceNumber);
     } else {
         // Free the packet if it is out of range, jitter buffer need to own the packet and do free
@@ -476,6 +541,11 @@ STATUS jitterBufferPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOO
         if (pPacketDiscarded != NULL) {
             *pPacketDiscarded = TRUE;
         }
+    }
+
+    // NACK: Process tracker and send NACKs for packets meeting criteria
+    if (pJitterBuffer->onPacketMissingFn != NULL) {
+        nackTrackerProcess(pJitterBuffer, currentTime);
     }
 
     CHK_STATUS(jitterBufferInternalParse(pJitterBuffer, FALSE));
@@ -727,6 +797,12 @@ STATUS jitterBufferDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex
     BOOL hasEntry = FALSE;
 
     CHK(pJitterBuffer != NULL, STATUS_NULL_ARG);
+
+    // NACK: Clean up tracking for dropped range
+    if (pJitterBuffer->onPacketMissingFn != NULL) {
+        nackTrackerCleanupRange(&pJitterBuffer->nackTracker, startIndex, endIndex);
+    }
+
     for (; UINT16_DEC(index) != endIndex; index++) {
         CHK_STATUS(hashTableContains(pJitterBuffer->pPkgBufferHashTable, index, &hasEntry));
         if (hasEntry) {
@@ -785,5 +861,324 @@ CleanUp:
     CHK_LOG_ERR(retStatus);
 
     LEAVES();
+    return retStatus;
+}
+
+//-------------------------------------------------------------------
+// NACK Support Functions
+//-------------------------------------------------------------------
+
+STATUS jitterBufferSetOnPacketMissing(PJitterBuffer pJitterBuffer, PacketMissingFunc onPacketMissingFn, UINT64 customData)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    CHK(pJitterBuffer != NULL, STATUS_NULL_ARG);
+
+    pJitterBuffer->onPacketMissingFn = onPacketMissingFn;
+    pJitterBuffer->onPacketMissingCustomData = customData;
+
+    // Initialize NACK tracker
+    MEMSET(&pJitterBuffer->nackTracker, 0, SIZEOF(NackTracker));
+    pJitterBuffer->nackTracker.rttMs = NACK_DEFAULT_RTT_MS; // Default RTT until measured
+
+CleanUp:
+    return retStatus;
+}
+
+STATUS jitterBufferSetOnKeyframeRequest(PJitterBuffer pJitterBuffer, KeyframeRequestFunc onKeyframeRequestFn, UINT64 customData)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    CHK(pJitterBuffer != NULL, STATUS_NULL_ARG);
+
+    pJitterBuffer->onKeyframeRequestFn = onKeyframeRequestFn;
+    pJitterBuffer->onKeyframeRequestCustomData = customData;
+
+CleanUp:
+    return retStatus;
+}
+
+STATUS jitterBufferSetRtt(PJitterBuffer pJitterBuffer, UINT32 rttMs)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    CHK(pJitterBuffer != NULL, STATUS_NULL_ARG);
+
+    // Clamp RTT to reasonable values (1ms - 5000ms)
+    if (rttMs < 1) {
+        rttMs = 1;
+    } else if (rttMs > 5000) {
+        rttMs = 5000;
+    }
+
+    pJitterBuffer->nackTracker.rttMs = rttMs;
+    DLOGD("NACK RTT updated to %u ms", rttMs);
+
+CleanUp:
+    return retStatus;
+}
+
+STATUS jitterBufferMarkRecovered(PJitterBuffer pJitterBuffer, UINT16 seqNum)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+
+    CHK(pJitterBuffer != NULL, STATUS_NULL_ARG);
+
+    // Add to recovered list and remove from NACK tracker
+    nackTrackerAddRecovered(&pJitterBuffer->nackTracker, seqNum);
+    nackTrackerRemove(&pJitterBuffer->nackTracker, seqNum);
+
+CleanUp:
+    return retStatus;
+}
+
+STATUS jitterBufferProcessNacks(PJitterBuffer pJitterBuffer)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT64 currentTime;
+
+    CHK(pJitterBuffer != NULL, STATUS_NULL_ARG);
+    CHK(pJitterBuffer->onPacketMissingFn != NULL, STATUS_SUCCESS); // NACK not enabled
+
+    currentTime = GETTIME();
+    CHK_STATUS(nackTrackerProcess(pJitterBuffer, currentTime));
+
+CleanUp:
+    return retStatus;
+}
+
+// Find an entry in the NACK tracker by sequence number
+static PNackTrackingEntry nackTrackerFind(PNackTracker pTracker, UINT16 seqNum)
+{
+    UINT16 i;
+    for (i = 0; i < NACK_MAX_MISSING_PACKETS; i++) {
+        if (pTracker->entries[i].active && pTracker->entries[i].seqNum == seqNum) {
+            return &pTracker->entries[i];
+        }
+    }
+    return NULL;
+}
+
+// Add a new entry to the NACK tracker
+// Returns NULL if packet was recovered, tracker is full, or entry already exists
+static PNackTrackingEntry nackTrackerAdd(PNackTracker pTracker, UINT16 seqNum, UINT64 currentTime)
+{
+    UINT16 i;
+    PNackTrackingEntry pEntry = NULL;
+
+    // Don't NACK packets that were already recovered via RTX
+    if (nackTrackerIsRecovered(pTracker, seqNum)) {
+        return NULL;
+    }
+
+    // Check if already tracking
+    pEntry = nackTrackerFind(pTracker, seqNum);
+    if (pEntry != NULL) {
+        return pEntry;
+    }
+
+    // Find empty slot
+    for (i = 0; i < NACK_MAX_MISSING_PACKETS; i++) {
+        if (!pTracker->entries[i].active) {
+            pEntry = &pTracker->entries[i];
+            pEntry->seqNum = seqNum;
+            pEntry->firstDetectedTime = currentTime;
+            pEntry->packetsSeenAfter = 0;
+            pEntry->nackCount = 0;
+            pEntry->active = TRUE;
+            pTracker->count++;
+            return pEntry;
+        }
+    }
+
+    // No space available - tracker is full (overflow condition)
+    // Caller should handle this by requesting a keyframe
+    return NULL;
+}
+
+// Remove an entry from the NACK tracker
+static VOID nackTrackerRemove(PNackTracker pTracker, UINT16 seqNum)
+{
+    PNackTrackingEntry pEntry = nackTrackerFind(pTracker, seqNum);
+    if (pEntry != NULL) {
+        pEntry->active = FALSE;
+        pTracker->count--;
+    }
+}
+
+// Remove all entries within a sequence number range (inclusive)
+static VOID nackTrackerCleanupRange(PNackTracker pTracker, UINT16 startSeq, UINT16 endSeq)
+{
+    UINT16 i;
+    UINT16 seq;
+
+    for (i = 0; i < NACK_MAX_MISSING_PACKETS; i++) {
+        if (pTracker->entries[i].active) {
+            seq = pTracker->entries[i].seqNum;
+            // Check if seq is in range [startSeq, endSeq], handling wraparound
+            if (startSeq <= endSeq) {
+                // No wraparound
+                if (seq >= startSeq && seq <= endSeq) {
+                    pTracker->entries[i].active = FALSE;
+                    pTracker->count--;
+                }
+            } else {
+                // Wraparound case
+                if (seq >= startSeq || seq <= endSeq) {
+                    pTracker->entries[i].active = FALSE;
+                    pTracker->count--;
+                }
+            }
+        }
+    }
+}
+
+// Increment packetsSeenAfter counter for all active entries
+static VOID nackTrackerIncrementPacketsSeen(PNackTracker pTracker)
+{
+    UINT16 i;
+    for (i = 0; i < NACK_MAX_MISSING_PACKETS; i++) {
+        if (pTracker->entries[i].active) {
+            pTracker->entries[i].packetsSeenAfter++;
+        }
+    }
+}
+
+// Build BLP (Bitmask of Lost Packets) for consecutive missing packets starting from pid
+static UINT16 nackTrackerBuildBlp(PNackTracker pTracker, UINT16 pid)
+{
+    UINT16 blp = 0;
+    UINT16 i;
+    UINT16 checkSeq;
+
+    // BLP bits 0-15 indicate if packets pid+1 through pid+16 are also missing
+    for (i = 0; i < 16; i++) {
+        checkSeq = pid + i + 1;
+        if (nackTrackerFind(pTracker, checkSeq) != NULL) {
+            blp |= (1 << i);
+        }
+    }
+
+    return blp;
+}
+
+// Check if a packet was recently recovered (via RTX retransmission)
+static BOOL nackTrackerIsRecovered(PNackTracker pTracker, UINT16 seqNum)
+{
+    UINT16 i;
+    for (i = 0; i < pTracker->recoveredCount; i++) {
+        UINT16 idx = (pTracker->recoveredHead + NACK_RECOVERED_LIST_SIZE - 1 - i) % NACK_RECOVERED_LIST_SIZE;
+        if (pTracker->recoveredList[idx] == seqNum) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+// Add a packet to the recovered list (circular buffer)
+static VOID nackTrackerAddRecovered(PNackTracker pTracker, UINT16 seqNum)
+{
+    // Add to circular buffer
+    pTracker->recoveredList[pTracker->recoveredHead] = seqNum;
+    pTracker->recoveredHead = (pTracker->recoveredHead + 1) % NACK_RECOVERED_LIST_SIZE;
+    if (pTracker->recoveredCount < NACK_RECOVERED_LIST_SIZE) {
+        pTracker->recoveredCount++;
+    }
+}
+
+// Process NACK tracker - send NACKs for packets that meet the criteria
+static STATUS nackTrackerProcess(PJitterBuffer pJitterBuffer, UINT64 currentTime)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PNackTracker pTracker = NULL;
+    PNackTrackingEntry pEntry = NULL;
+    UINT16 i;
+    UINT64 timeSinceDetected;
+    UINT64 timeSinceLastNack;
+    UINT64 timeSinceLastNackForEntry;
+    UINT16 blp;
+    UINT32 rttMs;
+    UINT16 retriesExceededCount = 0;
+
+    CHK(pJitterBuffer != NULL, STATUS_NULL_ARG);
+    CHK(pJitterBuffer->onPacketMissingFn != NULL, STATUS_SUCCESS); // NACK not enabled
+
+    pTracker = &pJitterBuffer->nackTracker;
+    timeSinceLastNack = (currentTime - pTracker->lastNackTime) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    rttMs = pTracker->rttMs;
+
+    for (i = 0; i < NACK_MAX_MISSING_PACKETS; i++) {
+        pEntry = &pTracker->entries[i];
+        if (!pEntry->active) {
+            continue;
+        }
+
+        timeSinceDetected = (currentTime - pEntry->firstDetectedTime) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+        // Check give-up threshold
+        if (timeSinceDetected >= NACK_GIVEUP_THRESHOLD_MS) {
+            // Give up on this packet
+            DLOGD("NACK give up on seqNum %u after %llu ms", pEntry->seqNum, (unsigned long long) timeSinceDetected);
+            pEntry->active = FALSE;
+            pTracker->count--;
+            continue;
+        }
+
+        // Check if we should send NACK (reorder threshold OR time threshold met)
+        if (pEntry->packetsSeenAfter >= NACK_REORDER_THRESHOLD || timeSinceDetected >= NACK_TIME_THRESHOLD_MS) {
+            // Check retry limit
+            if (pEntry->nackCount >= NACK_MAX_RETRIES) {
+                retriesExceededCount++;
+                continue; // Already sent max NACKs, waiting for give-up threshold
+            }
+
+            // Rate limiting check - use RTT for retransmission timing
+            if (timeSinceLastNack < NACK_MIN_INTERVAL_MS) {
+                continue; // Too soon since last NACK (global rate limit)
+            }
+
+            // RTT-based timing: wait at least one RTT between NACKs for same packet
+            // First NACK (nackCount == 0) can be sent immediately after reorder threshold
+            if (pEntry->nackCount > 0) {
+                // Calculate time since we last NACKed this specific entry
+                // For simplicity, use global lastNackTime as approximation
+                // In libwebrtc, each entry tracks its own sent_at_time
+                timeSinceLastNackForEntry = timeSinceDetected - ((UINT64) pEntry->nackCount * rttMs);
+                if (timeSinceLastNackForEntry < rttMs && timeSinceDetected < (UINT64) rttMs * (pEntry->nackCount + 1)) {
+                    continue; // Wait for RTT to pass before retransmitting
+                }
+            }
+
+            // Build BLP for consecutive missing packets
+            blp = nackTrackerBuildBlp(pTracker, pEntry->seqNum);
+
+            // Send NACK
+            DLOGI("Sending NACK for seqNum=%u blp=0x%04x (retry %u, after %u pkts, %llu ms, RTT=%u ms)",
+                  pEntry->seqNum, blp, pEntry->nackCount, pEntry->packetsSeenAfter,
+                  (unsigned long long) timeSinceDetected, rttMs);
+
+            retStatus = pJitterBuffer->onPacketMissingFn(pJitterBuffer->onPacketMissingCustomData, pEntry->seqNum, blp);
+            if (STATUS_SUCCEEDED(retStatus)) {
+                pEntry->nackCount++;
+                pTracker->lastNackTime = currentTime;
+            }
+            // Only send one NACK per call to respect rate limiting
+            break;
+        }
+    }
+
+    // If many packets have exceeded retry limit, request a keyframe
+    // This is a fallback similar to libwebrtc's behavior
+    if (retriesExceededCount >= 5 && pJitterBuffer->onKeyframeRequestFn != NULL) {
+        DLOGW("Many packets (%u) exceeded NACK retry limit, requesting keyframe", retriesExceededCount);
+        pJitterBuffer->onKeyframeRequestFn(pJitterBuffer->onKeyframeRequestCustomData);
+        // Clear the tracker since we're getting a new keyframe
+        for (i = 0; i < NACK_MAX_MISSING_PACKETS; i++) {
+            pTracker->entries[i].active = FALSE;
+        }
+        pTracker->count = 0;
+    }
+
+CleanUp:
     return retStatus;
 }

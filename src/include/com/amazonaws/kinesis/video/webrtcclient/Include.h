@@ -2399,6 +2399,45 @@ PUBLIC_API STATUS requestKeyFrame(PRtcRtpTransceiver);
 PUBLIC_API STATUS transceiverSendPli(PRtcRtpTransceiver);
 
 /**
+ * @brief Notifies the transceiver that a keyframe was received.
+ *
+ * This clears the pending PLI state and updates the last decodable frame time.
+ * Call this when a keyframe is successfully received from the remote peer.
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverOnKeyframeReceived(PRtcRtpTransceiver);
+
+/**
+ * @brief Notifies the transceiver that a decodable frame was received.
+ *
+ * This function implements:
+ * 1. First frame keyframe check - requests keyframe if first frame is not a keyframe (like libwebrtc)
+ * 2. Updates the last decodable frame time for timeout detection
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ * @param[in] BOOL isKeyframe TRUE if the received frame is a keyframe.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverOnDecodableFrame(PRtcRtpTransceiver, BOOL);
+
+/**
+ * @brief Checks for decodable frame timeout and requests keyframe if needed.
+ *
+ * Call this periodically (e.g., every second) to implement automatic keyframe
+ * request when no decodable frame has been received within DECODABLE_FRAME_TIMEOUT_MS.
+ * This provides automatic recovery from stream stalls (like libwebrtc).
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverCheckDecodableFrameTimeout(PRtcRtpTransceiver);
+
+/**
  * @brief Sends a Full Intra Request (FIR) packet to the remote peer.
  *
  * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
@@ -2406,6 +2445,60 @@ PUBLIC_API STATUS transceiverSendPli(PRtcRtpTransceiver);
  * @return STATUS code of the execution. STATUS_SUCCESS on success.
  */
 PUBLIC_API STATUS transceiverSendFir(PRtcRtpTransceiver);
+
+/**
+ * @brief Sends a NACK (Negative Acknowledgement) packet to request retransmission of lost packets.
+ *
+ * RFC 4585 Section 6.2.1 - Generic NACK
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ * @param[in] UINT16 pid Packet ID - RTP sequence number of the first lost packet.
+ * @param[in] UINT16 blp Bitmask of Lost Packets - bit i set means packet (pid + i + 1) is also lost.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverSendNack(PRtcRtpTransceiver, UINT16, UINT16);
+
+/**
+ * @brief Processes H264 frame data and checks for missing SPS/PPS.
+ *
+ * This function implements H264 SPS/PPS tracking like libwebrtc. When an IDR frame
+ * is received without the necessary SPS/PPS, it automatically requests a keyframe.
+ *
+ * Call this function when an H264 frame is received, before attempting to decode it.
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ * @param[in] PBYTE pFrameData Pointer to the H264 frame data (Annex-B format with start codes).
+ * @param[in] UINT32 frameSize Size of the frame data in bytes.
+ * @param[out] PBOOL pKeyframeRequested Optional. Set to TRUE if a keyframe was requested due to missing SPS/PPS.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverProcessH264Frame(PRtcRtpTransceiver, PBYTE, UINT32, PBOOL);
+
+/**
+ * @brief Resets the H264 SPS/PPS tracker.
+ *
+ * Call this when the stream is restarted or when you want to force a new SPS/PPS
+ * to be received (e.g., after a stream switch or reconnection).
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverResetH264SpsPpsTracker(PRtcRtpTransceiver);
+
+/**
+ * @brief Initializes the H264 SPS/PPS tracker.
+ *
+ * This is called automatically when the transceiver is created, but can be called
+ * manually to reinitialize the tracker.
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverInitH264SpsPpsTracker(PRtcRtpTransceiver);
 
 /*!@} */
 #ifdef __cplusplus

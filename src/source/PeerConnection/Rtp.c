@@ -560,14 +560,139 @@ CleanUp:
     return retStatus;
 }
 
+// Forward declaration for PLI rate limiting
+static STATUS transceiverSendPliWithRateLimitInternal(PKvsRtpTransceiver pKvsRtpTransceiver, BOOL force);
+
 STATUS transceiverSendPli(PRtcRtpTransceiver pRtcRtpTransceiver)
+{
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+    return transceiverSendPliWithRateLimitInternal(pKvsRtpTransceiver, FALSE);
+}
+
+// Send PLI with rate limiting (like libwebrtc)
+// If force is TRUE, bypass rate limiting (for initial PLI or critical situations)
+static STATUS transceiverSendPliWithRateLimitInternal(PKvsRtpTransceiver pKvsRtpTransceiver, BOOL force)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT64 currentTime;
+    UINT64 timeSinceLastPli;
+    BOOL shouldSendPli = FALSE;
+
+    CHK(pKvsRtpTransceiver != NULL && pKvsRtpTransceiver->pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+
+    currentTime = GETTIME();
+
+    if (force) {
+        // Forced PLI bypasses rate limiting
+        shouldSendPli = TRUE;
+        DLOGI("Sending forced PLI (bypassing rate limit)");
+    } else if (pKvsRtpTransceiver->keyframeRequestPending) {
+        // Already waiting for keyframe - check if we should retry
+        timeSinceLastPli = (currentTime - pKvsRtpTransceiver->lastPliRequestTime) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        if (timeSinceLastPli >= PLI_KEYFRAME_RECEIVE_TIMEOUT) {
+            // Keyframe hasn't arrived within timeout, retry PLI
+            shouldSendPli = TRUE;
+            DLOGW("Keyframe not received within %u ms, retrying PLI", PLI_KEYFRAME_RECEIVE_TIMEOUT);
+        } else {
+            DLOGD("PLI request pending, skipping duplicate PLI (waiting %llu ms)", timeSinceLastPli);
+        }
+    } else {
+        // Check minimum interval between PLI requests
+        if (pKvsRtpTransceiver->lastPliRequestTime == 0) {
+            // First PLI request
+            shouldSendPli = TRUE;
+        } else {
+            timeSinceLastPli = (currentTime - pKvsRtpTransceiver->lastPliRequestTime) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+            if (timeSinceLastPli >= PLI_MIN_INTERVAL_MS) {
+                shouldSendPli = TRUE;
+            } else {
+                DLOGD("PLI rate limited: only %llu ms since last PLI (min %u ms)", timeSinceLastPli, PLI_MIN_INTERVAL_MS);
+            }
+        }
+    }
+
+    if (shouldSendPli) {
+        CHK_STATUS(sendRtcpPLI(pKvsRtpTransceiver->pKvsPeerConnection, pKvsRtpTransceiver->sender.ssrc, pKvsRtpTransceiver->jitterBufferSsrc));
+        pKvsRtpTransceiver->lastPliRequestTime = currentTime;
+        pKvsRtpTransceiver->keyframeRequestPending = TRUE;
+        DLOGI("PLI sent, waiting for keyframe");
+    }
+
+CleanUp:
+    return retStatus;
+}
+
+// Call this when a keyframe is received to clear the pending state
+STATUS transceiverOnKeyframeReceived(PRtcRtpTransceiver pRtcRtpTransceiver)
 {
     STATUS retStatus = STATUS_SUCCESS;
     PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
 
-    CHK(pKvsRtpTransceiver != NULL && pKvsRtpTransceiver->pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK(pKvsRtpTransceiver != NULL, STATUS_NULL_ARG);
 
-    CHK_STATUS(sendRtcpPLI(pKvsRtpTransceiver->pKvsPeerConnection, pKvsRtpTransceiver->sender.ssrc, pKvsRtpTransceiver->jitterBufferSsrc));
+    if (pKvsRtpTransceiver->keyframeRequestPending) {
+        DLOGI("Keyframe received, clearing pending PLI state");
+        pKvsRtpTransceiver->keyframeRequestPending = FALSE;
+    }
+    pKvsRtpTransceiver->lastDecodableFrameTime = GETTIME();
+
+CleanUp:
+    return retStatus;
+}
+
+// Call this when a decodable frame is received (for timeout detection)
+STATUS transceiverOnDecodableFrame(PRtcRtpTransceiver pRtcRtpTransceiver, BOOL isKeyframe)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+
+    CHK(pKvsRtpTransceiver != NULL, STATUS_NULL_ARG);
+
+    pKvsRtpTransceiver->lastDecodableFrameTime = GETTIME();
+
+    // First frame handling
+    if (!pKvsRtpTransceiver->hasReceivedFirstFrame) {
+        pKvsRtpTransceiver->hasReceivedFirstFrame = TRUE;
+        pKvsRtpTransceiver->firstFrameWasKeyframe = isKeyframe;
+
+        if (!isKeyframe) {
+            // First frame is not a keyframe - request one (like libwebrtc)
+            DLOGW("First received frame is not a keyframe, requesting keyframe");
+            CHK_STATUS(transceiverSendPliWithRateLimitInternal(pKvsRtpTransceiver, TRUE));
+        } else {
+            DLOGI("First frame is keyframe, stream started correctly");
+        }
+    }
+
+    if (isKeyframe) {
+        CHK_STATUS(transceiverOnKeyframeReceived(pRtcRtpTransceiver));
+    }
+
+CleanUp:
+    return retStatus;
+}
+
+// Check for decodable frame timeout and request keyframe if needed
+// Call this periodically (e.g., from a timer)
+STATUS transceiverCheckDecodableFrameTimeout(PRtcRtpTransceiver pRtcRtpTransceiver)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+    UINT64 currentTime;
+    UINT64 timeSinceLastDecodable;
+
+    CHK(pKvsRtpTransceiver != NULL, STATUS_NULL_ARG);
+
+    // Only check timeout if we've received at least one frame
+    CHK(pKvsRtpTransceiver->hasReceivedFirstFrame && pKvsRtpTransceiver->lastDecodableFrameTime > 0, retStatus);
+
+    currentTime = GETTIME();
+    timeSinceLastDecodable = (currentTime - pKvsRtpTransceiver->lastDecodableFrameTime) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+    if (timeSinceLastDecodable >= DECODABLE_FRAME_TIMEOUT_MS) {
+        DLOGW("No decodable frame in %llu ms, requesting keyframe", timeSinceLastDecodable);
+        CHK_STATUS(transceiverSendPliWithRateLimitInternal(pKvsRtpTransceiver, FALSE));
+    }
 
 CleanUp:
     return retStatus;
@@ -587,7 +712,94 @@ CleanUp:
     return retStatus;
 }
 
+STATUS transceiverSendNack(PRtcRtpTransceiver pRtcRtpTransceiver, UINT16 pid, UINT16 blp)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+
+    CHK(pKvsRtpTransceiver != NULL && pKvsRtpTransceiver->pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+
+    CHK_STATUS(sendRtcpNack(pKvsRtpTransceiver->pKvsPeerConnection, pKvsRtpTransceiver->sender.ssrc, pKvsRtpTransceiver->jitterBufferSsrc, pid, blp));
+
+CleanUp:
+    return retStatus;
+}
+
 STATUS requestKeyFrame(PRtcRtpTransceiver pRtcRtpTransceiver)
 {
     return transceiverSendPli(pRtcRtpTransceiver);
+}
+
+// Process H264 frame data and check for SPS/PPS (like libwebrtc)
+// This should be called when an H264 frame is received, before decoding
+// Returns TRUE if keyframe was requested due to missing SPS/PPS
+STATUS transceiverProcessH264Frame(PRtcRtpTransceiver pRtcRtpTransceiver, PBYTE pFrameData, UINT32 frameSize, PBOOL pKeyframeRequested)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+    H264SpsPpsStatus spsPpsStatus;
+    UINT32 offset = 0;
+    UINT32 naluStart = 0;
+    UINT32 naluLength = 0;
+    BOOL keyframeRequested = FALSE;
+
+    CHK(pKvsRtpTransceiver != NULL && pFrameData != NULL, STATUS_NULL_ARG);
+
+    // Process each NAL unit in the frame
+    while (offset < frameSize) {
+        // Find start code (0x000001 or 0x00000001)
+        if (STATUS_SUCCEEDED(getNextNaluLength(pFrameData + offset, frameSize - offset, &naluStart, &naluLength))) {
+            // Process NAL unit
+            spsPpsStatus = h264SpsPpsTrackerProcessNalu(&pKvsRtpTransceiver->h264SpsPpsTracker,
+                                                         pFrameData + offset + naluStart,
+                                                         naluLength);
+
+            // If SPS/PPS missing, request keyframe
+            if (spsPpsStatus != H264_SPS_PPS_OK && !keyframeRequested) {
+                DLOGW("H264 SPS/PPS missing (status=%d), requesting keyframe", spsPpsStatus);
+                CHK_STATUS(transceiverSendPliWithRateLimitInternal(pKvsRtpTransceiver, FALSE));
+                keyframeRequested = TRUE;
+            }
+
+            offset += naluStart + naluLength;
+        } else {
+            // No more NAL units found
+            break;
+        }
+    }
+
+    if (pKeyframeRequested != NULL) {
+        *pKeyframeRequested = keyframeRequested;
+    }
+
+CleanUp:
+    return retStatus;
+}
+
+// Reset the H264 SPS/PPS tracker (call when stream restarts or keyframe received)
+STATUS transceiverResetH264SpsPpsTracker(PRtcRtpTransceiver pRtcRtpTransceiver)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+
+    CHK(pKvsRtpTransceiver != NULL, STATUS_NULL_ARG);
+
+    h264SpsPpsTrackerReset(&pKvsRtpTransceiver->h264SpsPpsTracker);
+
+CleanUp:
+    return retStatus;
+}
+
+// Initialize H264 SPS/PPS tracker (call when transceiver is created)
+STATUS transceiverInitH264SpsPpsTracker(PRtcRtpTransceiver pRtcRtpTransceiver)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+
+    CHK(pKvsRtpTransceiver != NULL, STATUS_NULL_ARG);
+
+    h264SpsPpsTrackerInit(&pKvsRtpTransceiver->h264SpsPpsTracker);
+
+CleanUp:
+    return retStatus;
 }
