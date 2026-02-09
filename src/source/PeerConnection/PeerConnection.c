@@ -459,28 +459,90 @@ CleanUp:
 STATUS onFrameDroppedFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex, UINT32 timestamp)
 {
     ENTERS();
-    UNUSED_PARAM(endIndex);
     STATUS retStatus = STATUS_SUCCESS;
     UINT64 hashValue = 0;
     PRtpPacket pPacket = NULL;
+    PRtpPacket pFirstPacket = NULL;
     PKvsRtpTransceiver pTransceiver = (PKvsRtpTransceiver) customData;
-    DLOGW("Frame with timestamp %ld is dropped!", timestamp);
+    UINT16 index;
+    UINT32 partialFrameSize = 0;
+    UINT32 totalPartialSize = 0;
+    UINT32 filledSize = 0;
+    PBYTE pCurPtrInFrame = NULL;
+    Frame frame;
+    BOOL hasEntry = FALSE;
+
+    DLOGW("Frame with timestamp %u is dropped!", timestamp);
     CHK(pTransceiver != NULL, STATUS_NULL_ARG);
+
+    // Get first available packet for stats and timestamp
     retStatus = hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, startIndex, &hashValue);
-    pPacket = (PRtpPacket) hashValue;
+    pFirstPacket = (PRtpPacket) hashValue;
     if (retStatus == STATUS_SUCCESS || retStatus == STATUS_HASH_KEY_NOT_PRESENT) {
         retStatus = STATUS_SUCCESS;
     } else {
         CHK(FALSE, retStatus);
     }
-    CHK(pPacket != NULL, STATUS_NULL_ARG);
+    CHK(pFirstPacket != NULL, STATUS_NULL_ARG);
+
     MUTEX_LOCK(pTransceiver->statsLock);
     // https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-jitterbufferdelay
-    pTransceiver->inboundStats.jitterBufferDelay += (DOUBLE) (GETTIME() - pPacket->receivedTime) / HUNDREDS_OF_NANOS_IN_A_SECOND;
+    pTransceiver->inboundStats.jitterBufferDelay += (DOUBLE) (GETTIME() - pFirstPacket->receivedTime) / HUNDREDS_OF_NANOS_IN_A_SECOND;
     pTransceiver->inboundStats.jitterBufferEmittedCount++;
     pTransceiver->inboundStats.received.framesDropped++;
     pTransceiver->inboundStats.received.fullFramesLost++;
     MUTEX_UNLOCK(pTransceiver->statsLock);
+
+    // If no partial frame callback registered, skip partial frame extraction
+    CHK(pTransceiver->onPartialFrame != NULL, retStatus);
+
+    // Calculate total size of available packets
+    for (index = startIndex; UINT16_DEC(index) != endIndex; index++) {
+        CHK_STATUS(hashTableContains(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hasEntry));
+        if (hasEntry) {
+            CHK_STATUS(hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hashValue));
+            pPacket = (PRtpPacket) hashValue;
+            CHK_STATUS(pTransceiver->pJitterBuffer->depayPayloadFn(pPacket->payload, pPacket->payloadLength, NULL, &partialFrameSize, NULL));
+            totalPartialSize += partialFrameSize;
+        }
+    }
+
+    // If no data available, skip callback
+    CHK(totalPartialSize > 0, retStatus);
+
+    // Ensure buffer is large enough
+    if (totalPartialSize > pTransceiver->peerFrameBufferSize) {
+        MEMFREE(pTransceiver->peerFrameBuffer);
+        pTransceiver->peerFrameBufferSize = (UINT32) (totalPartialSize * PEER_FRAME_BUFFER_SIZE_INCREMENT_FACTOR);
+        pTransceiver->peerFrameBuffer = (PBYTE) MEMALLOC(pTransceiver->peerFrameBufferSize);
+        CHK(pTransceiver->peerFrameBuffer != NULL, STATUS_NOT_ENOUGH_MEMORY);
+    }
+
+    // Fill partial frame data (skipping missing packets)
+    pCurPtrInFrame = pTransceiver->peerFrameBuffer;
+    for (index = startIndex; UINT16_DEC(index) != endIndex; index++) {
+        CHK_STATUS(hashTableContains(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hasEntry));
+        if (hasEntry) {
+            CHK_STATUS(hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hashValue));
+            pPacket = (PRtpPacket) hashValue;
+            partialFrameSize = totalPartialSize - filledSize;
+            CHK_STATUS(pTransceiver->pJitterBuffer->depayPayloadFn(pPacket->payload, pPacket->payloadLength, pCurPtrInFrame, &partialFrameSize, NULL));
+            pCurPtrInFrame += partialFrameSize;
+            filledSize += partialFrameSize;
+        }
+    }
+
+    // Build frame struct and invoke callback
+    frame.version = FRAME_CURRENT_VERSION;
+    frame.decodingTs = pFirstPacket->header.timestamp * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    frame.presentationTs = frame.decodingTs;
+    frame.frameData = pTransceiver->peerFrameBuffer;
+    frame.size = filledSize;
+    frame.duration = 0;
+    frame.index = pTransceiver->inboundStats.jitterBufferEmittedCount - 1;
+    frame.flags = FRAME_FLAG_NONE;
+
+    pTransceiver->onPartialFrame(pTransceiver->onPartialFrameCustomData, &frame);
 
 CleanUp:
     CHK_LOG_ERR(retStatus);
