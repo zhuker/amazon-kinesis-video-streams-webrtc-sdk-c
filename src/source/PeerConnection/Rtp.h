@@ -68,6 +68,9 @@ typedef struct {
     UINT64 onFrameCustomData;
     RtcOnFrame onFrame;
 
+    UINT64 onPartialFrameCustomData;
+    RtcOnFrame onPartialFrame;
+
     UINT64 onBandwidthEstimationCustomData;
     RtcOnBandwidthEstimation onBandwidthEstimation;
     UINT64 onPictureLossCustomData;

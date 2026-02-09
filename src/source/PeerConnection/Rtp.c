@@ -198,6 +198,23 @@ CleanUp:
     return retStatus;
 }
 
+STATUS transceiverOnPartialFrame(PRtcRtpTransceiver pRtcRtpTransceiver, UINT64 customData, RtcOnFrame rtcOnPartialFrame)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+
+    CHK(pKvsRtpTransceiver != NULL && rtcOnPartialFrame != NULL, STATUS_NULL_ARG);
+
+    pKvsRtpTransceiver->onPartialFrame = rtcOnPartialFrame;
+    pKvsRtpTransceiver->onPartialFrameCustomData = customData;
+
+CleanUp:
+
+    LEAVES();
+    return retStatus;
+}
+
 STATUS transceiverOnBandwidthEstimation(PRtcRtpTransceiver pRtcRtpTransceiver, UINT64 customData, RtcOnBandwidthEstimation rtcOnBandwidthEstimation)
 {
     ENTERS();
