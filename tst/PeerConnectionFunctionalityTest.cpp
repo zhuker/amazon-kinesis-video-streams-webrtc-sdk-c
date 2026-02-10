@@ -643,7 +643,13 @@ TEST_F(PeerConnectionFunctionalityTest, noLostFramesAfterConnected)
     RtcMediaStreamTrack offerVideoTrack, answerVideoTrack;
     PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver;
     RtcSessionDescriptionInit sdp;
-    ATOMIC_BOOL seenFirstFrame = FALSE;
+    struct NoLostFramesContext {
+        ATOMIC_BOOL seenFirstFrame;
+        UINT64 receivedDecodingTs;
+    };
+    NoLostFramesContext frameCtx;
+    ATOMIC_STORE_BOOL(&frameCtx.seenFirstFrame, FALSE);
+    frameCtx.receivedDecodingTs = 0;
     Frame videoFrame;
 
     PeerContainer offer;
@@ -654,7 +660,7 @@ TEST_F(PeerConnectionFunctionalityTest, noLostFramesAfterConnected)
 
     videoFrame.frameData = (PBYTE) MEMALLOC(1);
     videoFrame.size = 1;
-    videoFrame.presentationTs = 0;
+    videoFrame.presentationTs = HUNDREDS_OF_NANOS_IN_A_SECOND;
 
     context.mutex = MUTEX_CREATE(FALSE);
     ASSERT_NE(context.mutex, INVALID_MUTEX_VALUE);
@@ -696,12 +702,13 @@ TEST_F(PeerConnectionFunctionalityTest, noLostFramesAfterConnected)
     };
 
     auto onFrameHandler = [](UINT64 customData, PFrame pFrame) -> void {
-        UNUSED_PARAM(pFrame);
+        NoLostFramesContext* ctx = (NoLostFramesContext*) customData;
         if (pFrame->frameData[0] == 1) {
-            ATOMIC_STORE_BOOL((PSIZE_T) customData, 1);
+            ctx->receivedDecodingTs = pFrame->decodingTs;
+            ATOMIC_STORE_BOOL(&ctx->seenFirstFrame, 1);
         }
     };
-    EXPECT_EQ(transceiverOnFrame(answerVideoTransceiver, (UINT64) &seenFirstFrame, onFrameHandler), STATUS_SUCCESS);
+    EXPECT_EQ(transceiverOnFrame(answerVideoTransceiver, (UINT64) &frameCtx, onFrameHandler), STATUS_SUCCESS);
 
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) &answer, onICECandidateHdlr));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) &offer, onICECandidateHdlr));
@@ -738,7 +745,7 @@ TEST_F(PeerConnectionFunctionalityTest, noLostFramesAfterConnected)
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND / 25);
     }
 
-    for (auto i = 0; i <= 1000 && !ATOMIC_LOAD_BOOL(&seenFirstFrame); i++) {
+    for (auto i = 0; i <= 1000 && !ATOMIC_LOAD_BOOL(&frameCtx.seenFirstFrame); i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
@@ -762,7 +769,11 @@ TEST_F(PeerConnectionFunctionalityTest, noLostFramesAfterConnected)
     CVAR_FREE(context.cvar);
     MUTEX_FREE(context.mutex);
 
-    EXPECT_EQ(ATOMIC_LOAD_BOOL(&seenFirstFrame), TRUE);
+    EXPECT_EQ(ATOMIC_LOAD_BOOL(&frameCtx.seenFirstFrame), TRUE);
+
+    // Verify timestamp conversion: first frame was sent with presentationTs = HUNDREDS_OF_NANOS_IN_A_SECOND
+    // With correct conversion, received decodingTs should match (not be ~90x too large)
+    EXPECT_EQ(frameCtx.receivedDecodingTs, HUNDREDS_OF_NANOS_IN_A_SECOND);
 }
 
 // Assert that two PeerConnections can connect and then send media until the receiver gets both audio/video
@@ -774,7 +785,13 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
     RtcMediaStreamTrack offerVideoTrack, answerVideoTrack, offerAudioTrack, answerAudioTrack;
     PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver, offerAudioTransceiver, answerAudioTransceiver;
-    SIZE_T seenVideo = 0;
+    struct ExchangeMediaFrameContext {
+        SIZE_T seenVideo;
+        UINT64 receivedDecodingTs;
+        UINT64 receivedPresentationTs;
+    };
+    ExchangeMediaFrameContext frameCtx;
+    MEMSET(&frameCtx, 0, SIZEOF(frameCtx));
     Frame videoFrame;
 
     initRtcConfiguration(&configuration);
@@ -794,10 +811,12 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     addTrackToPeerConnection(answerPc, &answerAudioTrack, &answerAudioTransceiver, RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
 
     auto onFrameHandler = [](UINT64 customData, PFrame pFrame) -> void {
-        UNUSED_PARAM(pFrame);
-        ATOMIC_INCREMENT((PSIZE_T) customData);
+        ExchangeMediaFrameContext* ctx = (ExchangeMediaFrameContext*) customData;
+        ctx->receivedDecodingTs = pFrame->decodingTs;
+        ctx->receivedPresentationTs = pFrame->presentationTs;
+        ATOMIC_INCREMENT((PSIZE_T) &ctx->seenVideo);
     };
-    EXPECT_EQ(transceiverOnFrame(answerVideoTransceiver, (UINT64) &seenVideo, onFrameHandler), STATUS_SUCCESS);
+    EXPECT_EQ(transceiverOnFrame(answerVideoTransceiver, (UINT64) &frameCtx, onFrameHandler), STATUS_SUCCESS);
 
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
@@ -810,7 +829,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 
     // Wait for receiver to see at least 1 frame
     // exact number of frames depends on timing
-    for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&seenVideo) < 2; i++) {
+    for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&frameCtx.seenVideo) < 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
@@ -829,8 +848,6 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 
     RtcInboundRtpStreamStats answerStats{};
     EXPECT_EQ(STATUS_SUCCESS, getRtpInboundStats(answerPc, answerVideoTransceiver, &answerStats));
-
-    EXPECT_LE(1, ATOMIC_LOAD(&seenVideo));
     EXPECT_LE(1, answerStats.framesReceived);
     EXPECT_LT(103, answerStats.received.packetsReceived);
     EXPECT_LT(120000, answerStats.bytesReceived);
@@ -843,6 +860,14 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
 
+    EXPECT_EQ(ATOMIC_LOAD(&frameCtx.seenVideo), 1);
+
+    // Verify timestamp conversion: received timestamps should be in the correct range
+    // Sent timestamps start at HUNDREDS_OF_NANOS_IN_A_SECOND (1s) with 25fps increments
+    // With the old bug (treating RTP clock rate units as ms), they'd be ~90x too large
+    EXPECT_GE(frameCtx.receivedDecodingTs, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_LE(frameCtx.receivedDecodingTs, (UINT64) 50 * HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(frameCtx.receivedDecodingTs, frameCtx.receivedPresentationTs);
 }
 
 // Same test as exchangeMedia, but assert that if one side is RSA DTLS and Key Extraction works
