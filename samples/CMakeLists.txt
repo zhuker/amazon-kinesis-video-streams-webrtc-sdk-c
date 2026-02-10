@@ -99,6 +99,15 @@ set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
 # Copy examples directory for WHEP/WHIP server static files
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/../examples" DESTINATION .)
 
+# H264 Jitter Buffer Simulator (standalone, no signaling deps)
+add_executable(
+        h264JitterBufferSim
+        h264JitterBufferSim.cpp)
+target_include_directories(h264JitterBufferSim PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/source)
+target_link_libraries(h264JitterBufferSim kvsWebrtcClient kvspicUtils)
+set_target_properties(h264JitterBufferSim PROPERTIES CXX_STANDARD 17)
+
 add_executable(
   kvsWebrtcClientViewer
   Common.c
@@ -153,7 +162,7 @@ if(GST_FOUND AND ENABLE_SIGNALING)
 endif()
 
 if (ENABLE_SIGNALING)
-install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior whepServer whipServer
+install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior whepServer whipServer h264JitterBufferSim
   RUNTIME DESTINATION bin
 )
 else ()
