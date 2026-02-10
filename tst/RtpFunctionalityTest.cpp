@@ -631,6 +631,51 @@ TEST_F(RtpFunctionalityTest, twccPayload)
     EXPECT_EQ(0, ptr[3]);
 }
 
+TEST_F(RtpFunctionalityTest, rtpTimestampConversion)
+{
+    UINT64 rtpTs, hundredNsTs;
+
+    // Video 90kHz: 1 second of RTP timestamps should equal HUNDREDS_OF_NANOS_IN_A_SECOND
+    rtpTs = VIDEO_CLOCKRATE; // 90000 = 1 second
+    hundredNsTs = KVS_CONVERT_TIMESCALE(rtpTs, VIDEO_CLOCKRATE, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(HUNDREDS_OF_NANOS_IN_A_SECOND, hundredNsTs);
+
+    // Opus 48kHz: 1 second
+    rtpTs = OPUS_CLOCKRATE; // 48000 = 1 second
+    hundredNsTs = KVS_CONVERT_TIMESCALE(rtpTs, OPUS_CLOCKRATE, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(HUNDREDS_OF_NANOS_IN_A_SECOND, hundredNsTs);
+
+    // G.711 8kHz: 1 second
+    rtpTs = PCM_CLOCKRATE; // 8000 = 1 second
+    hundredNsTs = KVS_CONVERT_TIMESCALE(rtpTs, PCM_CLOCKRATE, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(HUNDREDS_OF_NANOS_IN_A_SECOND, hundredNsTs);
+
+    // Roundtrip: 100ns -> RTP -> 100ns should preserve the value
+    // Video at 25fps: each frame is 1/25 second (divides evenly into 90kHz)
+    UINT64 originalTs = HUNDREDS_OF_NANOS_IN_A_SECOND / 25;
+    rtpTs = CONVERT_TIMESTAMP_TO_RTP(VIDEO_CLOCKRATE, originalTs);
+    hundredNsTs = KVS_CONVERT_TIMESCALE(rtpTs, VIDEO_CLOCKRATE, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(originalTs, hundredNsTs);
+
+    // Opus at 20ms frames (typical)
+    originalTs = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    rtpTs = CONVERT_TIMESTAMP_TO_RTP(OPUS_CLOCKRATE, originalTs);
+    hundredNsTs = KVS_CONVERT_TIMESCALE(rtpTs, OPUS_CLOCKRATE, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(originalTs, hundredNsTs);
+
+    // G.711 at 20ms frames
+    originalTs = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    rtpTs = CONVERT_TIMESTAMP_TO_RTP(PCM_CLOCKRATE, originalTs);
+    hundredNsTs = KVS_CONVERT_TIMESCALE(rtpTs, PCM_CLOCKRATE, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(originalTs, hundredNsTs);
+
+    // Larger timestamp: 60 seconds of video
+    originalTs = 60 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    rtpTs = CONVERT_TIMESTAMP_TO_RTP(VIDEO_CLOCKRATE, originalTs);
+    hundredNsTs = KVS_CONVERT_TIMESCALE(rtpTs, VIDEO_CLOCKRATE, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    EXPECT_EQ(originalTs, hundredNsTs);
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis
