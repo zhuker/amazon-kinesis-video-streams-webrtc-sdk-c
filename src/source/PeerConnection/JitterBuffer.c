@@ -500,6 +500,7 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
     UINT32 curTimestamp = 0;
     UINT16 startDropIndex = 0;
     UINT32 curFrameSize = 0;
+    BOOL sizeCalcIsFirst = TRUE; // tracks first packet in frame for start code size calculation
     UINT32 partialFrameSize = 0;
     UINT64 hashValue = 0;
     BOOL isStart = FALSE, containStartForEarliestFrame = FALSE, hasEntry = FALSE;
@@ -653,12 +654,15 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
                 }
                 // new timestamp means new frame, drop tracking for previous frame size
                 curFrameSize = 0;
+                sizeCalcIsFirst = TRUE;
             }
 
-            // With the missing output buffer parameter, this will only return the size of the packet, and identify if it is a starting packet of a
-            // frame
+            // Size-only call: pass sizeCalcIsFirst as input so start code size matches jitterBufferFillFrameData.
+            // The depayloader reads *pIsStart for start code choice, then overwrites with isStartingPacket output.
+            isStart = sizeCalcIsFirst;
             CHK_STATUS(pJitterBuffer->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, NULL, &partialFrameSize, &isStart));
             curFrameSize += partialFrameSize;
+            sizeCalcIsFirst = FALSE;
             if (isStart && pJitterBuffer->headTimestamp == curTimestamp) {
                 containStartForEarliestFrame = TRUE;
             }
@@ -675,6 +679,7 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
                 // Update startDropIndex so the bufferClosed block doesn't try to re-deliver
                 startDropIndex = index + 1;
                 curFrameSize = 0;
+                sizeCalcIsFirst = TRUE;
                 // Note: jitterBufferDropBufferData sets headTimestamp to curTimestamp (delivered frame's timestamp)
                 // since we don't know the next frame's timestamp yet. Break here and let the next parse
                 // correctly detect the frame boundary via the else branch at lines 606-617.
@@ -687,14 +692,17 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
     // Deal with last frame, we're force clearing the entire buffer.
     if (bufferClosed && curFrameSize > 0) {
         curFrameSize = 0;
+        sizeCalcIsFirst = TRUE;
         hasEntry = TRUE;
         for (index = startDropIndex; UINT16_DEC(index) != lastNonNullIndex && hasEntry; index++) {
             CHK_STATUS(hashTableContains(pJitterBuffer->pPkgBufferHashTable, index, &hasEntry));
             if (hasEntry) {
                 CHK_STATUS(hashTableGet(pJitterBuffer->pPkgBufferHashTable, index, &hashValue));
                 pCurPacket = (PRtpPacket) hashValue;
-                CHK_STATUS(pJitterBuffer->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, NULL, &partialFrameSize, NULL));
+                isStart = sizeCalcIsFirst;
+                CHK_STATUS(pJitterBuffer->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, NULL, &partialFrameSize, &isStart));
                 curFrameSize += partialFrameSize;
+                sizeCalcIsFirst = FALSE;
             }
         }
 
@@ -767,15 +775,17 @@ STATUS jitterBufferFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT
     UINT32 partialFrameSize = 0;
 
     CHK(pJitterBuffer != NULL && pFrame != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
+    BOOL isFirstInFrame = TRUE;
     for (; UINT16_DEC(index) != endIndex; index++) {
         hashValue = 0;
         CHK_STATUS(hashTableGet(pJitterBuffer->pPkgBufferHashTable, index, &hashValue));
         pCurPacket = (PRtpPacket) hashValue;
         CHK(pCurPacket != NULL, STATUS_NULL_ARG);
         partialFrameSize = remainingFrameSize;
-        CHK_STATUS(pJitterBuffer->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, pCurPtrInFrame, &partialFrameSize, NULL));
+        CHK_STATUS(pJitterBuffer->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, pCurPtrInFrame, &partialFrameSize, &isFirstInFrame));
         pCurPtrInFrame += partialFrameSize;
         remainingFrameSize -= partialFrameSize;
+        isFirstInFrame = FALSE;
     }
 
 CleanUp:
