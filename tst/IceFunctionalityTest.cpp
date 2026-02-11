@@ -208,6 +208,8 @@ TEST_F(IceFunctionalityTest, connectionListenerFunctionalityTest)
     ATOMIC_STORE_BOOL(&pConnectionListener->terminate, TRUE);
 
     THREAD_JOIN(threadId, NULL);
+    // Clear TID so freeConnectionListener won't double-join (Android bionic aborts on that)
+    pConnectionListener->receiveDataRoutine = INVALID_TID_VALUE;
 
     EXPECT_EQ(STATUS_SUCCESS, freeConnectionListener(&pConnectionListener));
 

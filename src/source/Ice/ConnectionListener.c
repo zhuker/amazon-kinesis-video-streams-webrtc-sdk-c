@@ -76,6 +76,7 @@ STATUS freeConnectionListener(PConnectionListener* ppConnectionListener)
         // wait for thread to finish.
         if (IS_VALID_TID_VALUE(threadId)) {
             THREAD_JOIN(pConnectionListener->receiveDataRoutine, NULL);
+            pConnectionListener->receiveDataRoutine = INVALID_TID_VALUE;
         }
 
         MUTEX_FREE(pConnectionListener->lock);

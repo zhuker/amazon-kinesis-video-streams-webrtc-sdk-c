@@ -1218,8 +1218,19 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
      * SCTP to be allocated again after SCTP is freed. */
     CHK_LOG_ERR(iceAgentShutdown(pKvsPeerConnection->pIceAgent));
 
-    // free timer queue first to remove liveness provided by timer
+    // Cancel self-rescheduling timers before shutting down the timer queue.
+    // On Android THREAD_CANCEL is a no-op so the executor thread cannot be
+    // forcefully stopped; cancelling timers lets it exit cleanly.
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
+        if (pKvsPeerConnection->twccFeedbackTimerId != MAX_UINT32) {
+            timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle,
+                                  pKvsPeerConnection->twccFeedbackTimerId,
+                                  (UINT64) pKvsPeerConnection);
+            pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32;
+        }
+        if (pKvsPeerConnection->pPacer != NULL) {
+            pacerStop(pKvsPeerConnection->pPacer);
+        }
         timerQueueShutdown(pKvsPeerConnection->timerQueueHandle);
     }
 
@@ -2024,6 +2035,24 @@ STATUS closePeerConnection(PRtcPeerConnection pPeerConnection)
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
     CHK_LOG_ERR(dtlsSessionShutdown(pKvsPeerConnection->pDtlsSession));
     CHK_LOG_ERR(iceAgentShutdown(pKvsPeerConnection->pIceAgent));
+
+    // Cancel TWCC feedback timer so it stops re-scheduling itself.
+    // This is needed because on Android THREAD_CANCEL is a no-op, so
+    // timerQueueShutdown cannot forcefully stop the executor thread.
+    // Cancelling timers first lets the executor exit cleanly.
+    if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle) &&
+        pKvsPeerConnection->twccFeedbackTimerId != MAX_UINT32) {
+        timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle,
+                              pKvsPeerConnection->twccFeedbackTimerId,
+                              (UINT64) pKvsPeerConnection);
+        pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32;
+    }
+
+    // Stop pacer timer
+    if (pKvsPeerConnection->pPacer != NULL) {
+        pacerStop(pKvsPeerConnection->pPacer);
+    }
+
     PROFILE_WITH_START_TIME_OBJ(startTime, pKvsPeerConnection->peerConnectionDiagnostics.closePeerConnectionTime, "Close peer connection");
 
 CleanUp:
