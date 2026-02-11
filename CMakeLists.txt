@@ -321,11 +321,11 @@ else()
   endif()
 endif()
 
-#if (WIN32)
-#  SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
-#else()
-#  pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
-#endif()
+if (WIN32)
+  SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
+else()
+  pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
+endif()
 
 # usrsctp dont support pkgconfig yet
 if (OPEN_SRC_INSTALL_PREFIX)
