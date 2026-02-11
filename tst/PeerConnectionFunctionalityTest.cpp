@@ -790,8 +790,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
         UINT64 receivedDecodingTs;
         UINT64 receivedPresentationTs;
     };
-    ExchangeMediaFrameContext frameCtx;
-    MEMSET(&frameCtx, 0, SIZEOF(frameCtx));
+    ExchangeMediaFrameContext frameCtx{};
     Frame videoFrame;
 
     initRtcConfiguration(&configuration);
@@ -827,8 +826,6 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
         THREAD_SLEEP(40 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
-    // Wait for receiver to see at least 1 frame
-    // exact number of frames depends on timing
     for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&frameCtx.seenVideo) < 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
@@ -860,7 +857,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
 
-    EXPECT_EQ(ATOMIC_LOAD(&frameCtx.seenVideo), 1);
+    EXPECT_EQ(ATOMIC_LOAD(&frameCtx.seenVideo), 2);
 
     // Verify timestamp conversion: received timestamps should be in the correct range
     // Sent timestamps start at HUNDREDS_OF_NANOS_IN_A_SECOND (1s) with 25fps increments
@@ -1350,7 +1347,7 @@ TEST_F(PeerConnectionFunctionalityTest, pliRequestTriggersKeyFrame)
     Frame videoFrame;
     PliTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(PliTestContext));
 
@@ -1497,7 +1494,7 @@ TEST_F(PeerConnectionFunctionalityTest, firRequestTriggersKeyFrame)
     Frame videoFrame;
     FirTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(FirTestContext));
 
@@ -1639,7 +1636,7 @@ TEST_F(PeerConnectionFunctionalityTest, twccFeedbackTriggersBandwidthEstimation)
     Frame videoFrame;
     TwccTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(TwccTestContext));
 
@@ -1772,7 +1769,7 @@ TEST_F(PeerConnectionFunctionalityTest, twccReceiverGeneratesFeedback)
     Frame videoFrame;
     TwccReceiverTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(TwccReceiverTestContext));
 
@@ -1943,7 +1940,7 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
     Frame videoFrame;
     PBYTE pFrameBuffer = NULL;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     context.feedbackCount = 0;
     context.totalPackets = 0;

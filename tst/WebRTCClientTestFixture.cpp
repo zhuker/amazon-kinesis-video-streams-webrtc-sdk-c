@@ -322,6 +322,17 @@ void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfigurat
     pRtcConfiguration->kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(2000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
 }
 
+void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfiguration)
+{
+    MEMSET(pRtcConfiguration, 0x00, SIZEOF(RtcConfiguration));
+    pRtcConfiguration->kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceConnectionCheckTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceSetInterfaceFilterFunc = [](UINT64, PCHAR name) -> BOOL {
+        return STRNCMP(name, "utun", 4) != 0;
+    };
+}
+
 PCHAR WebRtcClientTestBase::GetTestName()
 {
     return (PCHAR)::testing::UnitTest::GetInstance()->current_test_info()->test_case_name();
