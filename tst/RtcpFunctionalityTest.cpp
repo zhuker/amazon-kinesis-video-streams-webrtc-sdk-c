@@ -521,6 +521,7 @@ TEST_F(RtcpFunctionalityTest, twccReceiverOnPacketReceivedBasic)
     PRtcPeerConnection pRtcPeerConnection = NULL;
     PKvsPeerConnection pKvsPeerConnection = NULL;
     RtcConfiguration config{};
+    initRtcConfiguration(&config);
     RtpPacket rtpPacket;
     BYTE extensionPayload[4];
     UINT64 packetInfoValue = 0;
@@ -581,6 +582,7 @@ TEST_F(RtcpFunctionalityTest, twccReceiverOnPacketReceivedOutOfOrder)
     PRtcPeerConnection pRtcPeerConnection = NULL;
     PKvsPeerConnection pKvsPeerConnection = NULL;
     RtcConfiguration config{};
+    initRtcConfiguration(&config);
     RtpPacket rtpPacket;
     BYTE extensionPayload[4];
 
@@ -631,6 +633,7 @@ TEST_F(RtcpFunctionalityTest, twccReceiverOnPacketReceivedSeqNumWraparound)
     PRtcPeerConnection pRtcPeerConnection = NULL;
     PKvsPeerConnection pKvsPeerConnection = NULL;
     RtcConfiguration config{};
+    initRtcConfiguration(&config);
     RtpPacket rtpPacket;
     BYTE extensionPayload[4];
 
@@ -689,6 +692,7 @@ TEST_F(RtcpFunctionalityTest, twccReceiverDuplicatePacketHandling)
     PRtcPeerConnection pRtcPeerConnection = NULL;
     PKvsPeerConnection pKvsPeerConnection = NULL;
     RtcConfiguration config{};
+    initRtcConfiguration(&config);
     RtpPacket rtpPacket;
     BYTE extensionPayload[4];
     UINT32 itemCount = 0;
