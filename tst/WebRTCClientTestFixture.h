@@ -286,6 +286,7 @@ class WebRtcClientTestBase : public ::testing::Test {
     void addTrackToPeerConnection(PRtcPeerConnection pRtcPeerConnection, PRtcMediaStreamTrack track, PRtcRtpTransceiver* transceiver, RTC_CODEC codec,
                                   MEDIA_STREAM_TRACK_KIND kind);
     void getIceServers(PRtcConfiguration pRtcConfiguration);
+    static void initRtcConfiguration(PRtcConfiguration pRtcConfiguration);
 
   protected:
     virtual void SetUp();

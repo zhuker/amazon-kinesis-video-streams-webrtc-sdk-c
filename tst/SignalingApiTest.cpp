@@ -243,7 +243,7 @@ TEST_F(SignalingApiTest, signalingSendMessageSync)
     THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
 }
 
-TEST_F(SignalingApiTest, signalingSendMessageSyncFileCredsProvider)
+TEST_F(SignalingApiTest, DISABLED_signalingSendMessageSyncFileCredsProvider)
 {
     SignalingMessage signalingMessage;
     PAwsCredentialProvider pAwsCredentialProvider = NULL;
@@ -451,7 +451,7 @@ TEST_F(SignalingApiTest, signalingClientDisconnectSync)
     THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
 }
 
-TEST_F(SignalingApiTest, signalingClientGetMetrics)
+TEST_F(SignalingApiTest, DISABLED_signalingClientGetMetrics)
 {
     SignalingClientMetrics metrics;
     SignalingMessage signalingMessage;

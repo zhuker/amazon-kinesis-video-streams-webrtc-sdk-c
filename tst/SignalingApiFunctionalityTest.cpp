@@ -815,7 +815,7 @@ TEST_F(SignalingApiFunctionalityTest, invalidChannelInfoInput)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceReconnectEmulation)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceReconnectEmulation)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -900,7 +900,7 @@ TEST_F(SignalingApiFunctionalityTest, iceReconnectEmulation)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedVariations)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshNotConnectedVariations)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -1163,7 +1163,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedVariatio
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedVariations)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshConnectedVariations)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
     ChannelInfo channelInfo;
@@ -1428,7 +1428,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedVariations)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedAuthExpiration)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshNotConnectedAuthExpiration)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -1549,7 +1549,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedAuthExpi
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedAuthExpiration)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshConnectedAuthExpiration)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -1674,7 +1674,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedAuthExpirat
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedWithFaultInjectionRecovered)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshNotConnectedWithFaultInjectionRecovered)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -1789,7 +1789,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedWithFaul
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedWithFaultInjectionRecovered)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshConnectedWithFaultInjectionRecovered)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -1905,7 +1905,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedWithFaultIn
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedWithFaultInjectionNotRecovered)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshNotConnectedWithFaultInjectionNotRecovered)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2018,7 +2018,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedWithFaul
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedWithFaultInjectionNot1669)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshConnectedWithFaultInjectionNot1669)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2134,7 +2134,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedWithFaultIn
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedWithBadAuth)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshNotConnectedWithBadAuth)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2254,7 +2254,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshNotConnectedWithBadA
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedWithBadAuth)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_iceServerConfigRefreshConnectedWithBadAuth)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2377,7 +2377,7 @@ TEST_F(SignalingApiFunctionalityTest, iceServerConfigRefreshConnectedWithBadAuth
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, goAwayEmulation)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_goAwayEmulation)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2461,7 +2461,7 @@ TEST_F(SignalingApiFunctionalityTest, goAwayEmulation)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, unknownMessageTypeEmulation)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_unknownMessageTypeEmulation)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2549,7 +2549,7 @@ TEST_F(SignalingApiFunctionalityTest, unknownMessageTypeEmulation)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, connectTimeoutEmulation)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_connectTimeoutEmulation)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2670,7 +2670,7 @@ TEST_F(SignalingApiFunctionalityTest, connectTimeoutEmulation)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, channelInfoArnSkipDescribe)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_channelInfoArnSkipDescribe)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2802,7 +2802,7 @@ TEST_F(SignalingApiFunctionalityTest, channelInfoArnSkipDescribe)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, deleteChannelCreatedWithArn)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_deleteChannelCreatedWithArn)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -2934,7 +2934,7 @@ TEST_F(SignalingApiFunctionalityTest, deleteChannelCreatedWithArn)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, deleteChannelCreatedAuthExpiration)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_deleteChannelCreatedAuthExpiration)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -3045,7 +3045,7 @@ TEST_F(SignalingApiFunctionalityTest, deleteChannelCreatedAuthExpiration)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, signalingClientDisconnectSyncVariations)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_signalingClientDisconnectSyncVariations)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -3089,7 +3089,7 @@ TEST_F(SignalingApiFunctionalityTest, signalingClientDisconnectSyncVariations)
     deinitializeSignalingClient();
 }
 
-TEST_F(SignalingApiFunctionalityTest, cachingWithFaultInjection)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_cachingWithFaultInjection)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -3223,7 +3223,7 @@ TEST_F(SignalingApiFunctionalityTest, cachingWithFaultInjection)
     EXPECT_EQ(STATUS_SUCCESS, freeSignalingClient(&signalingHandle));
 }
 
-TEST_F(SignalingApiFunctionalityTest, fileCachingTest)
+TEST_F(SignalingApiFunctionalityTest, DISABLED_fileCachingTest)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 

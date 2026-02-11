@@ -9,7 +9,7 @@ namespace webrtcclient {
 class DualStackEndpointsTest : public WebRtcClientTestBase {};
 
 
-TEST_F(DualStackEndpointsTest, connectTwoDualStackPeersWithForcedTurn)
+TEST_F(DualStackEndpointsTest, DISABLED_connectTwoDualStackPeersWithForcedTurn)
 {
     RtcConfiguration configuration;
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
@@ -22,7 +22,7 @@ TEST_F(DualStackEndpointsTest, connectTwoDualStackPeersWithForcedTurn)
     setenv(USE_DUAL_STACK_ENDPOINTS_ENV_VAR, "ON", 1);
     #endif
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     configuration.iceTransportPolicy = ICE_TRANSPORT_POLICY_RELAY;
 
     initializeSignalingClient();

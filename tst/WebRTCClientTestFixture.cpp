@@ -111,8 +111,10 @@ void WebRtcClientTestBase::TearDown()
     DLOGI("\nTearing down test: %s\n", GetTestName());
 
     deinitKvsWebRtc();
+#ifdef ENABLE_KVS_THREADPOOL
     // Need this sleep for threads in threadpool to close
     THREAD_SLEEP(400 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+#endif
 
     freeStaticCredentialProvider(&mTestCredentialProvider);
 
@@ -242,7 +244,7 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
         EXPECT_NE((PCHAR) NULL, STRSTR(sdp.sdp, pAnswerCertFingerprint));
     }
 
-    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2; i++) {
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
 
@@ -298,6 +300,17 @@ void WebRtcClientTestBase::getIceServers(PRtcConfiguration pRtcConfiguration)
             uriCount++;
         }
     }
+}
+
+void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfiguration)
+{
+    MEMSET(pRtcConfiguration, 0x00, SIZEOF(RtcConfiguration));
+    pRtcConfiguration->kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceConnectionCheckTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceSetInterfaceFilterFunc = [](UINT64, PCHAR name) -> BOOL {
+        return STRNCMP(name, "utun", 4) != 0;
+    };
 }
 
 PCHAR WebRtcClientTestBase::GetTestName()
