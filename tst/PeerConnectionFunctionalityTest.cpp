@@ -780,8 +780,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
         UINT64 receivedDecodingTs;
         UINT64 receivedPresentationTs;
     };
-    ExchangeMediaFrameContext frameCtx;
-    MEMSET(&frameCtx, 0, SIZEOF(frameCtx));
+    ExchangeMediaFrameContext frameCtx{};
     Frame videoFrame;
 
     initRtcConfiguration(&configuration);
@@ -804,16 +803,19 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
         ExchangeMediaFrameContext* ctx = (ExchangeMediaFrameContext*) customData;
         ctx->receivedDecodingTs = pFrame->decodingTs;
         ctx->receivedPresentationTs = pFrame->presentationTs;
-        ATOMIC_STORE((PSIZE_T) &ctx->seenVideo, 1);
+        ATOMIC_INCREMENT((PSIZE_T) &ctx->seenVideo);
     };
     EXPECT_EQ(transceiverOnFrame(answerVideoTransceiver, (UINT64) &frameCtx, onFrameHandler), STATUS_SUCCESS);
 
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
-    for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&frameCtx.seenVideo) != 1; i++) {
+    for (int i = 0; i < 2; i++) {
         EXPECT_EQ(writeFrame(offerVideoTransceiver, &videoFrame), STATUS_SUCCESS);
         videoFrame.presentationTs += (HUNDREDS_OF_NANOS_IN_A_SECOND / 25);
+        THREAD_SLEEP(40 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
 
+    for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&frameCtx.seenVideo) < 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
@@ -844,7 +846,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
 
-    EXPECT_EQ(ATOMIC_LOAD(&frameCtx.seenVideo), 1);
+    EXPECT_EQ(ATOMIC_LOAD(&frameCtx.seenVideo), 2);
 
     // Verify timestamp conversion: received timestamps should be in the correct range
     // Sent timestamps start at HUNDREDS_OF_NANOS_IN_A_SECOND (1s) with 25fps increments
