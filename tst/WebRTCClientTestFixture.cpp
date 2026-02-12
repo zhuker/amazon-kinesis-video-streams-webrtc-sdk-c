@@ -89,12 +89,16 @@ void WebRtcClientTestBase::SetUp()
         mCaCertPath = (PCHAR) DEFAULT_KVS_CACERT_PATH;
     }
 
+#ifdef ENABLE_SIGNALING
     if (mAccessKey) {
         ASSERT_EQ(STATUS_SUCCESS,
                   createStaticCredentialProvider(mAccessKey, 0, mSecretKey, 0, mSessionToken, 0, MAX_UINT64, &mTestCredentialProvider));
     } else {
         mTestCredentialProvider = nullptr;
     }
+#else
+    mTestCredentialProvider = nullptr;
+#endif
 
     // Prepare the test channel name by prefixing with test channel name
     // and generating random chars replacing a potentially bad characters with '.'
@@ -289,6 +293,7 @@ void WebRtcClientTestBase::addTrackToPeerConnection(PRtcPeerConnection pRtcPeerC
     EXPECT_EQ(STATUS_SUCCESS, addTransceiver(pRtcPeerConnection, track, NULL, transceiver));
 }
 
+#ifdef ENABLE_SIGNALING
 void WebRtcClientTestBase::getIceServers(PRtcConfiguration pRtcConfiguration)
 {
 #ifdef ENABLE_SIGNALING
@@ -321,6 +326,7 @@ void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfigurat
     pRtcConfiguration->kvsRtcConfiguration.iceConnectionCheckTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
     pRtcConfiguration->kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(2000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
 }
+#endif /* ENABLE_SIGNALING */
 
 void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfiguration)
 {

@@ -6,7 +6,7 @@
 #include "httplib.h"
 
 extern "C" {
-#include "Samples.h"
+#include "SamplesCommon.h"
 }
 
 #include <atomic>

@@ -424,6 +424,10 @@ if (ENABLE_DATA_CHANNEL)
       )
 endif()
 
+if (ENABLE_SIGNALING)
+  add_definitions(-DENABLE_SIGNALING)
+endif()
+
 if (INSTRUMENTED_ALLOCATORS)
   add_definitions(-DINSTRUMENTED_ALLOCATORS)
 endif()
@@ -553,7 +557,9 @@ endif()
 
 if(COMPILER_WARNINGS)
   target_compile_options(kvsWebrtcClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
-  target_compile_options(kvsWebrtcSignalingClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
+  if(ENABLE_SIGNALING)
+    target_compile_options(kvsWebrtcSignalingClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
+  endif()
 endif()
 
 if(ENABLE_KVS_THREADPOOL)

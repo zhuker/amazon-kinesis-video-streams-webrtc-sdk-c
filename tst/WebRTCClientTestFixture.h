@@ -50,7 +50,9 @@ class WebRtcClientTestBase : public ::testing::Test {
     UINT32 mExpectedDroppedFrameCount;
     PRtpPacket* mPRtpPackets;
     UINT32 mRtpPacketCount;
+#ifdef ENABLE_SIGNALING
     SIGNALING_CLIENT_HANDLE mSignalingClientHandle;
+#endif
     std::vector<std::thread> threads;
     std::mutex lock;
     BOOL noNewThreads = FALSE;
@@ -336,10 +338,12 @@ class WebRtcClientTestBase : public ::testing::Test {
     UINT32 mReadyFrameIndex;
     UINT32 mDroppedFrameIndex;
 
+#ifdef ENABLE_SIGNALING
     ChannelInfo mChannelInfo;
     SignalingClientCallbacks mSignalingClientCallbacks;
     SignalingClientInfo mClientInfo;
     Tag mTags[3];
+#endif
 };
 
 typedef struct {
