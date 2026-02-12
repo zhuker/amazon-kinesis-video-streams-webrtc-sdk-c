@@ -715,6 +715,7 @@ TEST_F(IceFunctionalityTest, IceAgentPruneUnconnectedIceCandidatePairUnitTest)
     EXPECT_EQ(STATUS_SUCCESS, doubleListFree(iceAgent.iceCandidatePairs));
 }
 
+#ifdef ENABLE_SIGNALING
 TEST_F(IceFunctionalityTest, DISABLED_IceAgentCandidateGatheringTest)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
@@ -791,6 +792,7 @@ TEST_F(IceFunctionalityTest, DISABLED_IceAgentCandidateGatheringTest)
 
     deinitializeSignalingClient();
 }
+#endif /* ENABLE_SIGNALING */
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

@@ -18,6 +18,7 @@ option(BUILD_LIBSRTP_HOST_PLATFORM "If buildng LibSRTP what is the current platf
 option(BUILD_LIBSRTP_DESTINATION_PLATFORM "If buildng LibSRTP what is the destination platform" OFF)
 option(BUILD_SAMPLE "Build available samples" ON)
 option(ENABLE_DATA_CHANNEL "Enable support for data channel" ON)
+option(ENABLE_SIGNALING "Enable AWS signaling client (requires libwebsockets)" ON)
 option(ENABLE_KVS_THREADPOOL "Enable support for KVS thread pool in signaling" OFF)
 option(INSTRUMENTED_ALLOCATORS "Enable memory instrumentation" OFF)
 option(ENABLE_AWS_SDK_IN_TESTS "Enable support for compiling AWS SDKs for tests" ON)
@@ -244,7 +245,9 @@ if(BUILD_DEPENDENCIES)
                   -DLWS_MBEDTLS_LIBRARIES=${MBEDTLS_LIBRARIES_ALT_SEP}
                   -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
   endif()
-  build_dependency(websockets ${BUILD_ARGS})
+  if(ENABLE_SIGNALING)
+    build_dependency(websockets ${BUILD_ARGS})
+  endif()
 
   set(BUILD_ARGS
       -DBUILD_STATIC_LIBS=${BUILD_STATIC_LIBS}
@@ -289,7 +292,11 @@ if(BUILD_DEPENDENCIES)
           -DUSE_MBEDTLS=${USE_MBEDTLS}
           -DKVS_DEFAULT_STACK_SIZE=${KVS_DEFAULT_STACK_SIZE}
           -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
-  build_dependency(kvsCommonLws ${BUILD_ARGS})
+  if(ENABLE_SIGNALING)
+    build_dependency(kvsCommonLws ${BUILD_ARGS})
+  else()
+    build_dependency(kvspic ${BUILD_ARGS})
+  endif()
 
   message(STATUS "Finished building dependencies.")
 endif()
@@ -321,10 +328,12 @@ else()
   endif()
 endif()
 
-if (WIN32)
-  SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
-else()
-  pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
+if (ENABLE_SIGNALING)
+  if (WIN32)
+    SET(LIBWEBSOCKETS_LIBRARIES "websockets.lib")
+  else()
+    pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
+  endif()
 endif()
 
 # usrsctp dont support pkgconfig yet
@@ -340,11 +349,16 @@ find_library(
   )
 endif()
 
-set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS}
-                          ${CURL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS})
+set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS})
+if(ENABLE_SIGNALING)
+  set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS}
+                            ${CURL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS})
+endif()
 
 link_directories(${LIBSRTP_LIBRARY_DIRS})
-link_directories(${LIBWEBSOCKETS_LIBRARY_DIRS})
+if(ENABLE_SIGNALING)
+  link_directories(${LIBWEBSOCKETS_LIBRARY_DIRS})
+endif()
 link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
 
 if(EXISTS ${OPEN_SRC_INSTALL_PREFIX}/lib64)
@@ -393,6 +407,10 @@ if (ENABLE_DATA_CHANNEL)
       )
 endif()
 
+if (ENABLE_SIGNALING)
+  add_definitions(-DENABLE_SIGNALING)
+endif()
+
 if (INSTRUMENTED_ALLOCATORS)
   add_definitions(-DINSTRUMENTED_ALLOCATORS)
 endif()
@@ -429,7 +447,9 @@ elseif (USE_MBEDTLS)
   list(FILTER WEBRTC_CLIENT_SOURCE_FILES EXCLUDE REGEX ".*_openssl\\.c")
 endif()
 
-file(GLOB WEBRTC_SIGNALING_CLIENT_SOURCE_FILES "src/source/Signaling/*.c")
+if(ENABLE_SIGNALING)
+  file(GLOB WEBRTC_SIGNALING_CLIENT_SOURCE_FILES "src/source/Signaling/*.c")
+endif()
 
 
 message(STATUS "OPEN_SRC_INSTALL_PREFIX: ${OPEN_SRC_INSTALL_PREFIX}")
@@ -464,26 +484,28 @@ target_link_libraries(
           ${GPERFTOOLS_PROFILER_LIBRARIES}
           ${EXTRA_DEPS})
 
-add_library(kvsWebrtcSignalingClient ${LINKAGE} ${WEBRTC_SIGNALING_CLIENT_SOURCE_FILES})
+if(ENABLE_SIGNALING)
+  add_library(kvsWebrtcSignalingClient ${LINKAGE} ${WEBRTC_SIGNALING_CLIENT_SOURCE_FILES})
 
-if(USE_MBEDTLS)
-  target_compile_definitions(kvsWebrtcSignalingClient PRIVATE LWS_WITH_MBEDTLS)
+  if(USE_MBEDTLS)
+    target_compile_definitions(kvsWebrtcSignalingClient PRIVATE LWS_WITH_MBEDTLS)
+  endif()
+
+  target_link_libraries(
+    kvsWebrtcSignalingClient
+    PUBLIC
+          kvsCommonLws
+          ${LIBWEBSOCKETS_LIBRARIES}
+    PRIVATE kvspicUtils
+           kvspicState
+           ${CMAKE_THREAD_LIBS_INIT}
+           ${EXTRA_DEPS}
+           ${OPENSSL_SSL_LIBRARY}
+           ${OPENSSL_CRYPTO_LIBRARY}
+           ${GPERFTOOLS_MALLOC_LIBRARIES}
+           ${GPERFTOOLS_PROFILER_LIBRARIES}
+           ${MBEDTLS_LIBRARIES})
 endif()
-
-target_link_libraries(
-  kvsWebrtcSignalingClient
-  PUBLIC
-        kvsCommonLws
-        ${LIBWEBSOCKETS_LIBRARIES}
-  PRIVATE kvspicUtils
-         kvspicState
-         ${CMAKE_THREAD_LIBS_INIT}
-         ${EXTRA_DEPS}
-         ${OPENSSL_SSL_LIBRARY}
-         ${OPENSSL_CRYPTO_LIBRARY}
-         ${GPERFTOOLS_MALLOC_LIBRARIES}
-         ${GPERFTOOLS_PROFILER_LIBRARIES}
-         ${MBEDTLS_LIBRARIES})
 
 if (WIN32)
   target_link_libraries(kvsWebrtcClient PRIVATE "Ws2_32" "iphlpapi")
@@ -491,7 +513,9 @@ endif()
 
 if(COMPILER_WARNINGS)
   target_compile_options(kvsWebrtcClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
-  target_compile_options(kvsWebrtcSignalingClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
+  if(ENABLE_SIGNALING)
+    target_compile_options(kvsWebrtcSignalingClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
+  endif()
 endif()
 
 if(ENABLE_KVS_THREADPOOL)
@@ -501,10 +525,17 @@ if(ENABLE_KVS_THREADPOOL)
   )
 endif()
 
-install(TARGETS kvsWebrtcClient kvsWebrtcSignalingClient
+install(TARGETS kvsWebrtcClient
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
 )
+
+if(ENABLE_SIGNALING)
+  install(TARGETS kvsWebrtcSignalingClient
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+  )
+endif()
 
 install(DIRECTORY ${KINESIS_VIDEO_WEBRTC_CLIENT_SRC}/src/include/
   DESTINATION include

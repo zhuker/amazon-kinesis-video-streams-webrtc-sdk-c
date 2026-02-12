@@ -221,6 +221,7 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithPresetCerts)
 }
 #endif
 
+#ifdef ENABLE_SIGNALING
 // Assert that two PeerConnections with forced TURN can connect to each other and go to connected
 TEST_F(PeerConnectionFunctionalityTest, DISABLED_connectTwoPeersForcedTURN)
 {
@@ -248,6 +249,7 @@ TEST_F(PeerConnectionFunctionalityTest, DISABLED_connectTwoPeersForcedTURN)
 
     deinitializeSignalingClient();
 }
+#endif /* ENABLE_SIGNALING */
 
 TEST_F(PeerConnectionFunctionalityTest, DISABLED_sendDataWithClosedSocketConnectionWithHostAndStun)
 {
@@ -310,6 +312,7 @@ TEST_F(PeerConnectionFunctionalityTest, DISABLED_sendDataWithClosedSocketConnect
     freePeerConnection(&answerPc);
 }
 
+#ifdef ENABLE_SIGNALING
 TEST_F(PeerConnectionFunctionalityTest, DISABLED_sendDataWithClosedSocketConnectionWithForcedTurn)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
@@ -539,6 +542,7 @@ TEST_F(PeerConnectionFunctionalityTest, DISABLED_shutdownTurnDueToP2PFoundAfterT
 
     deinitializeSignalingClient();
 }
+#endif /* ENABLE_SIGNALING */
 
 // Assert that two PeerConnections with host and stun candidate can go to connected
 TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithHostAndStun)
@@ -937,6 +941,7 @@ TEST_F(PeerConnectionFunctionalityTest, iceRestartTest)
     freePeerConnection(&answerPc);
 }
 
+#ifdef ENABLE_SIGNALING
 TEST_F(PeerConnectionFunctionalityTest, DISABLED_iceRestartTestForcedTurn)
 {
     RtcConfiguration configuration{};
@@ -970,6 +975,7 @@ TEST_F(PeerConnectionFunctionalityTest, DISABLED_iceRestartTestForcedTurn)
 
     deinitializeSignalingClient();
 }
+#endif /* ENABLE_SIGNALING */
 
 TEST_F(PeerConnectionFunctionalityTest, peerConnectionOfferCloseConnection)
 {
@@ -991,6 +997,7 @@ TEST_F(PeerConnectionFunctionalityTest, peerConnectionOfferCloseConnection)
     freePeerConnection(&answerPc);
 }
 
+#ifdef ENABLE_SIGNALING
 TEST_F(PeerConnectionFunctionalityTest, peerConnectionAnswerCloseConnection)
 {
     RtcConfiguration configuration{};
@@ -1099,6 +1106,7 @@ TEST_F(PeerConnectionFunctionalityTest, DISABLED_exchangeMediaThroughTurnRandomS
 
     deinitializeSignalingClient();
 }
+#endif /* ENABLE_SIGNALING */
 
 // Check that even when multiple successful candidate pairs are found, only one dtls negotiation takes place
 // and that it is on the same candidate throughout the connection.

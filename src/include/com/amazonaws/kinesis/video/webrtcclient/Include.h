@@ -301,6 +301,7 @@ extern "C" {
  *  @{
  */
 #define STATUS_SIGNALING_BASE                                      STATUS_RTP_BASE + 0x01000000
+#ifdef ENABLE_SIGNALING
 #define STATUS_SIGNALING_INVALID_READY_STATE                       STATUS_SIGNALING_BASE + 0x00000001
 #define STATUS_SIGNALING_GET_TOKEN_CALL_FAILED                     STATUS_SIGNALING_BASE + 0x00000002
 #define STATUS_SIGNALING_DESCRIBE_CALL_FAILED                      STATUS_SIGNALING_BASE + 0x00000003
@@ -361,6 +362,7 @@ extern "C" {
 #define STATUS_SIGNALING_JOIN_SESSION_CALL_FAILED                  STATUS_SIGNALING_BASE + 0x0000004a
 #define STATUS_SIGNALING_JOIN_SESSION_CONNECTED_FAILED             STATUS_SIGNALING_BASE + 0x0000004b
 #define STATUS_SIGNALING_DESCRIBE_MEDIA_CALL_FAILED                STATUS_SIGNALING_BASE + 0x0000004c
+#endif /* ENABLE_SIGNALING */
 
 /*!@} */
 
@@ -790,6 +792,7 @@ extern "C" {
  */
 #define CREATE_SIGNALING_CLIENT_RETRY_ATTEMPTS_SENTINEL_VALUE -1
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Definition of the signaling client handle
  */
@@ -809,6 +812,7 @@ typedef SIGNALING_CLIENT_HANDLE* PSIGNALING_CLIENT_HANDLE;
 #ifndef IS_VALID_SIGNALING_CLIENT_HANDLE
 #define IS_VALID_SIGNALING_CLIENT_HANDLE(h) ((h) != INVALID_SIGNALING_CLIENT_HANDLE_VALUE)
 #endif
+#endif /* ENABLE_SIGNALING */
 
 ////////////////////////////////////////////////
 /// Public Enums
@@ -889,6 +893,7 @@ typedef enum {
     RTC_RTP_TRANSCEIVER_DIRECTION_INACTIVE = 4, //!< This indicates that the peer can not send or receive data
 } RTC_RTP_TRANSCEIVER_DIRECTION;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Defines channel status as reported by the service
  */
@@ -959,6 +964,7 @@ typedef enum {
     SIGNALING_CHANNEL_ROLE_TYPE_MASTER,  //!< Channel role is master
     SIGNALING_CHANNEL_ROLE_TYPE_VIEWER,  //!< Channel role is viewer
 } SIGNALING_CHANNEL_ROLE_TYPE;
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief Detected network environment
@@ -972,6 +978,7 @@ typedef enum {
     NAT_BEHAVIOR_PORT_DEPENDENT,       //!< Nat behavior changes when external address or port is changed.
 } NAT_BEHAVIOR;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Type of caching implementation to use with the signaling client
  */
@@ -994,6 +1001,7 @@ typedef enum {
                                                         //!< information will be cached into file
                                                         //!< which will allow the cache to persist next time the signaling client is created.
 } SIGNALING_API_CALL_CACHE_TYPE;
+#endif /* ENABLE_SIGNALING */
 
 /*!@} */
 
@@ -1335,6 +1343,7 @@ typedef struct {
                                                               //!<
 } RtcIceCandidateInit, *PRtcIceCandidateInit;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Structure defining the basic signaling message
  */
@@ -1556,6 +1565,7 @@ typedef struct {
                                                     //!< The values are in the range of 5 and 120 seconds
     UINT64 creationTime;                            //!< Timestamp of when the channel gets created
 } SignalingChannelDescription, *PSignalingChannelDescription;
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief RtcRtpTransceiverInit is used to configure a transceiver when creating it
@@ -1620,6 +1630,7 @@ typedef struct {
     RtcTransportStats rtcTransportStats;            //!< Transport stats. Reference in Stats.h
 } RtcStreamMetrics, *PRtcStreamMetrics;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief SignalingStats Collection of signaling related stats. Can be expanded in the future
  */
@@ -1630,6 +1641,7 @@ typedef struct {
     UINT64 signalingCallTime;
     SignalingClientStats signalingClientStats; //!< Signaling client metrics stats. Reference in Stats.h
 } SignalingClientMetrics, *PSignalingClientMetrics;
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief KVS ICE Agent Collection of ICE agent related stats. Can be expanded in the future
@@ -2193,6 +2205,7 @@ PUBLIC_API STATUS discoverNatBehavior(PCHAR, NAT_BEHAVIOR*, NAT_BEHAVIOR*, IceSe
  */
 PUBLIC_API PCHAR getNatBehaviorStr(NAT_BEHAVIOR natBehavior);
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Creates a Signaling client and returns a handle to it
  *
@@ -2333,6 +2346,7 @@ PUBLIC_API STATUS signalingClientDeleteSync(SIGNALING_CLIENT_HANDLE);
  * @param[in,out] PSignalingClientMetrics Signaling stats
  */
 PUBLIC_API STATUS signalingClientGetMetrics(SIGNALING_CLIENT_HANDLE, PSignalingClientMetrics);
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief Get peer connection related metrics

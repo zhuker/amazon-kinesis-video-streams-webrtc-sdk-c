@@ -34,7 +34,11 @@ CleanUp:
 }
 
 WebRtcClientTestBase::WebRtcClientTestBase()
-    : mSignalingClientHandle(INVALID_SIGNALING_CLIENT_HANDLE_VALUE), mAccessKey(NULL), mSecretKey(NULL), mSessionToken(NULL), mRegion(NULL),
+    :
+#ifdef ENABLE_SIGNALING
+      mSignalingClientHandle(INVALID_SIGNALING_CLIENT_HANDLE_VALUE),
+#endif
+      mAccessKey(NULL), mSecretKey(NULL), mSessionToken(NULL), mRegion(NULL),
       mCaCertPath(NULL), mAccessKeyIdSet(FALSE)
 {
     // Initialize the endianness of the library
@@ -84,12 +88,16 @@ void WebRtcClientTestBase::SetUp()
         mCaCertPath = (PCHAR) DEFAULT_KVS_CACERT_PATH;
     }
 
+#ifdef ENABLE_SIGNALING
     if (mAccessKey) {
         ASSERT_EQ(STATUS_SUCCESS,
                   createStaticCredentialProvider(mAccessKey, 0, mSecretKey, 0, mSessionToken, 0, MAX_UINT64, &mTestCredentialProvider));
     } else {
         mTestCredentialProvider = nullptr;
     }
+#else
+    mTestCredentialProvider = nullptr;
+#endif
 
     // Prepare the test channel name by prefixing with test channel name
     // and generating random chars replacing a potentially bad characters with '.'
@@ -116,7 +124,9 @@ void WebRtcClientTestBase::TearDown()
     THREAD_SLEEP(400 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
 #endif
 
+#ifdef ENABLE_SIGNALING
     freeStaticCredentialProvider(&mTestCredentialProvider);
+#endif
 
     EXPECT_EQ(STATUS_SUCCESS, RESET_INSTRUMENTED_ALLOCATORS());
 }
@@ -279,6 +289,7 @@ void WebRtcClientTestBase::addTrackToPeerConnection(PRtcPeerConnection pRtcPeerC
     EXPECT_EQ(STATUS_SUCCESS, addTransceiver(pRtcPeerConnection, track, NULL, transceiver));
 }
 
+#ifdef ENABLE_SIGNALING
 void WebRtcClientTestBase::getIceServers(PRtcConfiguration pRtcConfiguration)
 {
     UINT32 i, j, iceConfigCount, uriCount;
@@ -301,6 +312,7 @@ void WebRtcClientTestBase::getIceServers(PRtcConfiguration pRtcConfiguration)
         }
     }
 }
+#endif /* ENABLE_SIGNALING */
 
 void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfiguration)
 {

@@ -1,7 +1,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <dirent.h>
-#include "Samples.h"
+#include "SamplesCommon.h"
 
 struct MySession {
     RtcConfiguration rtcConfig;
@@ -138,14 +138,42 @@ INT32 main(INT32 argc, CHAR* argv[])
         sleep(1);
     }
     if (session.connectionState == RTC_PEER_CONNECTION_STATE_CONNECTED) {
-        // send frames
-        SampleConfiguration config = {0};
-        config.streamingSessionListReadLock = MUTEX_CREATE(FALSE);
-        SampleStreamingSession sampleStreamingSession = {0};
-        sampleStreamingSession.pVideoRtcRtpTransceiver = session.transceiver;
-        config.streamingSessionCount = 1;
-        config.sampleStreamingSessionList[0] = &sampleStreamingSession;
-        sendVideoPackets(&config);
+        // Send H264 sample frames in a loop
+        Frame frame;
+        MEMSET(&frame, 0, SIZEOF(Frame));
+        UINT32 fileIndex = 0, frameSize;
+        CHAR filePath[MAX_PATH_LEN + 1];
+        PBYTE pVideoBuffer = NULL;
+        UINT32 videoBufferSize = 0;
+        UINT64 startTime = GETTIME();
+        UINT64 lastFrameTime = startTime;
+        UINT64 elapsed;
+
+        while (session.connectionState == RTC_PEER_CONNECTION_STATE_CONNECTED) {
+            fileIndex = fileIndex % NUMBER_OF_H264_FRAME_FILES + 1;
+            snprintf(filePath, MAX_PATH_LEN, "./h264SampleFrames/frame-%04d.h264", fileIndex);
+
+            CHK_STATUS(readFrameFromDisk(NULL, &frameSize, filePath));
+
+            if (frameSize > videoBufferSize) {
+                pVideoBuffer = (PBYTE) MEMREALLOC(pVideoBuffer, frameSize);
+                CHK(pVideoBuffer != NULL, STATUS_NOT_ENOUGH_MEMORY);
+                videoBufferSize = frameSize;
+            }
+
+            frame.frameData = pVideoBuffer;
+            frame.size = frameSize;
+            CHK_STATUS(readFrameFromDisk(frame.frameData, &frameSize, filePath));
+            frame.presentationTs += SAMPLE_VIDEO_FRAME_DURATION;
+
+            writeFrame(session.transceiver, &frame);
+
+            elapsed = lastFrameTime - startTime;
+            THREAD_SLEEP(SAMPLE_VIDEO_FRAME_DURATION - elapsed % SAMPLE_VIDEO_FRAME_DURATION);
+            lastFrameTime = GETTIME();
+        }
+
+        MEMFREE(pVideoBuffer);
     }
 
     return 0;

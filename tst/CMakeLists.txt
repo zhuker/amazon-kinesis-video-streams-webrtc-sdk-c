@@ -38,13 +38,33 @@ endif()
 
 file(GLOB WEBRTC_CLIENT_TEST_SOURCE_FILES "*.cpp" )
 
-add_executable(webrtc_client_test ${WEBRTC_CLIENT_TEST_SOURCE_FILES} SignalingApiFunctionalityTest.h)
-target_link_libraries(webrtc_client_test
-    kvsWebrtcClient
-    kvsWebrtcSignalingClient
-    ${EXTRA_DEPS}
-    kvsCommonLws
-    ${OPENSSL_CRYPTO_LIBRARY}
-    kvspicUtils
-    ${GTEST_LIBNAME}
-    ${AWS_SDK_TEST_LIBS})
+if(NOT ENABLE_SIGNALING)
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX ".*Signaling.*\\.cpp")
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX ".*IngestionFunctionalityTests\\.cpp")
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX ".*CustomEndpointTest\\.cpp")
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX ".*DualStackEndpointsTest\\.cpp")
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX ".*TurnConnectionFunctionalityTest\\.cpp")
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX ".*IceConfigParsingTest\\.cpp")
+endif()
+
+if(ENABLE_SIGNALING)
+  add_executable(webrtc_client_test ${WEBRTC_CLIENT_TEST_SOURCE_FILES} SignalingApiFunctionalityTest.h)
+  target_link_libraries(webrtc_client_test
+      kvsWebrtcClient
+      kvsWebrtcSignalingClient
+      ${EXTRA_DEPS}
+      kvsCommonLws
+      ${OPENSSL_CRYPTO_LIBRARY}
+      kvspicUtils
+      ${GTEST_LIBNAME}
+      ${AWS_SDK_TEST_LIBS})
+else()
+  add_executable(webrtc_client_test ${WEBRTC_CLIENT_TEST_SOURCE_FILES})
+  target_link_libraries(webrtc_client_test
+      kvsWebrtcClient
+      ${EXTRA_DEPS}
+      ${OPENSSL_CRYPTO_LIBRARY}
+      kvspicUtils
+      ${GTEST_LIBNAME}
+      ${AWS_SDK_TEST_LIBS})
+endif()

@@ -48,7 +48,9 @@ class WebRtcClientTestBase : public ::testing::Test {
     UINT32 mExpectedDroppedFrameCount;
     PRtpPacket* mPRtpPackets;
     UINT32 mRtpPacketCount;
+#ifdef ENABLE_SIGNALING
     SIGNALING_CLIENT_HANDLE mSignalingClientHandle;
+#endif
     std::vector<std::thread> threads;
     std::mutex lock;
     BOOL noNewThreads = FALSE;
@@ -70,6 +72,7 @@ class WebRtcClientTestBase : public ::testing::Test {
         return mSessionToken;
     }
 
+#ifdef ENABLE_SIGNALING
     VOID initializeSignalingClientStructs()
     {
         mTags[0].version = TAG_CURRENT_VERSION;
@@ -152,6 +155,7 @@ class WebRtcClientTestBase : public ::testing::Test {
 
         return STATUS_SUCCESS;
     }
+#endif /* ENABLE_SIGNALING */
 
     static STATUS testFrameReadyFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex, UINT32 frameSize)
     {
@@ -285,7 +289,9 @@ class WebRtcClientTestBase : public ::testing::Test {
                          PCHAR pAnswerCertFingerprint = NULL);
     void addTrackToPeerConnection(PRtcPeerConnection pRtcPeerConnection, PRtcMediaStreamTrack track, PRtcRtpTransceiver* transceiver, RTC_CODEC codec,
                                   MEDIA_STREAM_TRACK_KIND kind);
+#ifdef ENABLE_SIGNALING
     void getIceServers(PRtcConfiguration pRtcConfiguration);
+#endif
     static void initRtcConfiguration(PRtcConfiguration pRtcConfiguration);
 
   protected:
@@ -320,10 +326,12 @@ class WebRtcClientTestBase : public ::testing::Test {
     UINT32 mReadyFrameIndex;
     UINT32 mDroppedFrameIndex;
 
+#ifdef ENABLE_SIGNALING
     ChannelInfo mChannelInfo;
     SignalingClientCallbacks mSignalingClientCallbacks;
     SignalingClientInfo mClientInfo;
     Tag mTags[3];
+#endif
 };
 
 typedef struct {
