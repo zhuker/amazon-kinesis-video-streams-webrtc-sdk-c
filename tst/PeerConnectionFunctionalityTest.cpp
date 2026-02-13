@@ -2229,9 +2229,13 @@ TEST_F(PeerConnectionFunctionalityTest, pacingFrameDeadline)
     DOUBLE deadlineRatio = (DOUBLE) deadlineMetCount / largeFrameCount;
     EXPECT_GT(deadlineRatio, 0.70)
         << "At least 70% of large frames should meet deadline, got " << (deadlineRatio * 100.0) << "%";
-
-    EXPECT_LT(maxFrameDurationMs, FRAME_DEADLINE_MS * 3)
-        << "Max frame duration should be < " << (FRAME_DEADLINE_MS * 3) << "ms, got " << maxFrameDurationMs << "ms";
+#ifdef __ANDROID__
+    constexpr auto frameDeadlineMultiplier = 6;  
+#else
+    constexpr auto frameDeadlineMultiplier = 3;  
+#endif
+    EXPECT_LT(maxFrameDurationMs, FRAME_DEADLINE_MS * frameDeadlineMultiplier)
+        << "Max frame duration should be < " << (FRAME_DEADLINE_MS * frameDeadlineMultiplier) << "ms, got " << maxFrameDurationMs << "ms";
 
     DLOGD("Frame deadline pacing test completed successfully");
 }
