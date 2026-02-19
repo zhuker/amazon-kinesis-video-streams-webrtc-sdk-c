@@ -951,6 +951,7 @@ static TWCC_STATUS_SYMBOL getTwccPacketStatus(UINT64 arrivalTimeKvs, UINT64 refe
 STATUS sendRtcpTwccFeedback(PKvsPeerConnection pKvsPeerConnection)
 {
     STATUS retStatus = STATUS_SUCCESS;
+    BOOL hasSrtpSession = FALSE;
     PTwccReceiverManager pManager = NULL;
     PBYTE pPacket = NULL;
     UINT32 packetLen = 0;
@@ -978,7 +979,11 @@ STATUS sendRtcpTwccFeedback(PKvsPeerConnection pKvsPeerConnection)
     TWCC_STATUS_SYMBOL runStatus = TWCC_STATUS_SYMBOL_NOTRECEIVED;
 
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
-    CHK(pKvsPeerConnection->pSrtpSession != NULL, retStatus);
+
+    MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
+    hasSrtpSession = pKvsPeerConnection->pSrtpSession != NULL;
+    MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
+    CHK(hasSrtpSession, retStatus);
 
     pManager = pKvsPeerConnection->pTwccReceiverManager;
     CHK(pManager != NULL, retStatus);
@@ -1222,22 +1227,34 @@ STATUS twccFeedbackCallback(UINT32 timerId, UINT64 currentTime, UINT64 customDat
     STATUS retStatus = STATUS_SUCCESS;
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
     UINT64 delay = 0;
+    BOOL srtpReady = FALSE;
 
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
 
-    // Skip if SRTP not ready yet
-    if (pKvsPeerConnection->pSrtpSession != NULL) {
+    // Skip if SRTP not ready yet - must lock to avoid race with allocateSrtp
+    MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
+    srtpReady = pKvsPeerConnection->pSrtpSession != NULL;
+    MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
+
+    if (srtpReady) {
         // Send TWCC feedback (ignore errors - will try again next interval)
         sendRtcpTwccFeedback(pKvsPeerConnection);
     } else {
         DLOGD("TWCC callback: SRTP not ready yet");
     }
 
-    // Reschedule timer with jitter (80-120ms)
-    delay = 80 + (RAND() % 40);
-    CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
-                                  TIMER_QUEUE_SINGLE_INVOCATION_PERIOD, twccFeedbackCallback, (UINT64) pKvsPeerConnection,
-                                  &pKvsPeerConnection->twccFeedbackTimerId));
+    // Reschedule timer with jitter (80-120ms).
+    // Write to a local first, then copy under twccLock to avoid racing
+    // with closePeerConnection which reads twccFeedbackTimerId.
+    {
+        UINT32 newTimerId = MAX_UINT32;
+        delay = 80 + (RAND() % 40);
+        CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
+                                      TIMER_QUEUE_SINGLE_INVOCATION_PERIOD, twccFeedbackCallback, (UINT64) pKvsPeerConnection, &newTimerId));
+        MUTEX_LOCK(pKvsPeerConnection->twccLock);
+        pKvsPeerConnection->twccFeedbackTimerId = newTimerId;
+        MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+    }
 
 CleanUp:
     CHK_LOG_ERR(retStatus);
