@@ -146,6 +146,7 @@ STATUS pacerStart(PPacer pPacer, PVOID pKvsPeerConnection)
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
     BOOL locked = FALSE;
+    UINT32 timerId = MAX_UINT32;
 
     CHK(pPacer != NULL && pKvsPeerConnection != NULL, STATUS_NULL_ARG);
 
@@ -160,13 +161,24 @@ STATUS pacerStart(PPacer pPacer, PVOID pKvsPeerConnection)
     pPacer->lastSendTimeKvs = GETTIME();
     pPacer->budgetBytes = 0;
 
-    // Start periodic timer
+    // Drop the pacer lock before calling into the timer queue to avoid
+    // lock-order-inversion: pacerStart holds pacer lock then acquires timer
+    // queue lock, while timerQueueExecutor holds timer queue lock then
+    // acquires pacer lock in pacerTimerCallback.
+    MUTEX_UNLOCK(pPacer->lock);
+    locked = FALSE;
+
+    // Start periodic timer without holding the pacer lock
     CHK_STATUS(timerQueueAddTimer(pPacer->timerQueueHandle,
                                    PACER_INTERVAL_KVS,         // Initial delay
                                    PACER_INTERVAL_KVS,         // Period
                                    pacerTimerCallback,
                                    (UINT64) pPacer,
-                                   &pPacer->timerId));
+                                   &timerId));
+
+    MUTEX_LOCK(pPacer->lock);
+    locked = TRUE;
+    pPacer->timerId = timerId;
 
     DLOGD("Pacer started with target bitrate %llu bps", pPacer->targetBitrateBps);
 
@@ -184,6 +196,7 @@ STATUS pacerStop(PPacer pPacer)
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
     BOOL locked = FALSE;
+    UINT32 timerId = MAX_UINT32;
 
     CHK(pPacer != NULL, STATUS_NULL_ARG);
 
@@ -191,8 +204,17 @@ STATUS pacerStop(PPacer pPacer)
     locked = TRUE;
 
     if (pPacer->timerId != MAX_UINT32) {
-        timerQueueCancelTimer(pPacer->timerQueueHandle, pPacer->timerId, (UINT64) pPacer);
+        timerId = pPacer->timerId;
         pPacer->timerId = MAX_UINT32;
+    }
+
+    // Drop the pacer lock before calling into the timer queue to maintain
+    // consistent lock ordering (see pacerStart comment).
+    MUTEX_UNLOCK(pPacer->lock);
+    locked = FALSE;
+
+    if (timerId != MAX_UINT32) {
+        timerQueueCancelTimer(pPacer->timerQueueHandle, timerId, (UINT64) pPacer);
         DLOGD("Pacer stopped");
     }
 

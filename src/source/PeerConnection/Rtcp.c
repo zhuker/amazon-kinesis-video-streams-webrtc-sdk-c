@@ -1244,11 +1244,19 @@ STATUS twccFeedbackCallback(UINT32 timerId, UINT64 currentTime, UINT64 customDat
         DLOGD("TWCC callback: SRTP not ready yet");
     }
 
-    // Reschedule timer with jitter (80-120ms)
-    delay = 80 + (RAND() % 40);
-    CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
-                                  TIMER_QUEUE_SINGLE_INVOCATION_PERIOD, twccFeedbackCallback, (UINT64) pKvsPeerConnection,
-                                  &pKvsPeerConnection->twccFeedbackTimerId));
+    // Reschedule timer with jitter (80-120ms).
+    // Write to a local first, then copy under twccLock to avoid racing
+    // with closePeerConnection which reads twccFeedbackTimerId.
+    {
+        UINT32 newTimerId = MAX_UINT32;
+        delay = 80 + (RAND() % 40);
+        CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, delay * HUNDREDS_OF_NANOS_IN_A_MILLISECOND,
+                                      TIMER_QUEUE_SINGLE_INVOCATION_PERIOD, twccFeedbackCallback, (UINT64) pKvsPeerConnection,
+                                      &newTimerId));
+        MUTEX_LOCK(pKvsPeerConnection->twccLock);
+        pKvsPeerConnection->twccFeedbackTimerId = newTimerId;
+        MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+    }
 
 CleanUp:
     CHK_LOG_ERR(retStatus);

@@ -1223,11 +1223,17 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     // On Android THREAD_CANCEL is a no-op so the executor thread cannot be
     // forcefully stopped; cancelling timers lets it exit cleanly.
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
-        if (pKvsPeerConnection->twccFeedbackTimerId != MAX_UINT32) {
-            timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle,
-                                  pKvsPeerConnection->twccFeedbackTimerId,
-                                  (UINT64) pKvsPeerConnection);
+        if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccLock)) {
+            UINT32 twccTimerId;
+            MUTEX_LOCK(pKvsPeerConnection->twccLock);
+            twccTimerId = pKvsPeerConnection->twccFeedbackTimerId;
             pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32;
+            MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+            if (twccTimerId != MAX_UINT32) {
+                timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle,
+                                      twccTimerId,
+                                      (UINT64) pKvsPeerConnection);
+            }
         }
         if (pKvsPeerConnection->pPacer != NULL) {
             pacerStop(pKvsPeerConnection->pPacer);
@@ -1469,6 +1475,7 @@ STATUS peerConnectionEnablePacing(PRtcPeerConnection pRtcPeerConnection, PRtcPac
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
     BOOL locked = FALSE;
     PacerConfig pacerConfig;
+    PPacer pPacer = NULL;
 
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
 
@@ -1491,9 +1498,17 @@ STATUS peerConnectionEnablePacing(PRtcPeerConnection pRtcPeerConnection, PRtcPac
 
     // Create the pacer
     CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &pacerConfig));
+    pPacer = pKvsPeerConnection->pPacer;
 
-    // Start the pacer immediately (it will only send when packets are queued)
-    CHK_STATUS(pacerStart(pKvsPeerConnection->pPacer, pKvsPeerConnection));
+    // Drop the peer connection lock before starting the pacer timer to avoid
+    // lock-order-inversion: this path acquires peerConnectionObjLock then
+    // timer queue lock, while timer callbacks (e.g. onNewIceLocalCandidate)
+    // acquire timer queue lock then peerConnectionObjLock.
+    MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = FALSE;
+
+    // Start the pacer without holding peerConnectionObjLock
+    CHK_STATUS(pacerStart(pPacer, pKvsPeerConnection));
 
     DLOGI("Pacing enabled for peer connection");
 
@@ -2045,12 +2060,20 @@ STATUS closePeerConnection(PRtcPeerConnection pPeerConnection)
     // This is needed because on Android THREAD_CANCEL is a no-op, so
     // timerQueueShutdown cannot forcefully stop the executor thread.
     // Cancelling timers first lets the executor exit cleanly.
+    // Snapshot and reset twccFeedbackTimerId under twccLock to avoid
+    // racing with twccFeedbackCallback which writes it on the timer thread.
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle) &&
-        pKvsPeerConnection->twccFeedbackTimerId != MAX_UINT32) {
-        timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle,
-                              pKvsPeerConnection->twccFeedbackTimerId,
-                              (UINT64) pKvsPeerConnection);
+        IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccLock)) {
+        UINT32 twccTimerId;
+        MUTEX_LOCK(pKvsPeerConnection->twccLock);
+        twccTimerId = pKvsPeerConnection->twccFeedbackTimerId;
         pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32;
+        MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+        if (twccTimerId != MAX_UINT32) {
+            timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle,
+                                  twccTimerId,
+                                  (UINT64) pKvsPeerConnection);
+        }
     }
 
     // Stop pacer timer
