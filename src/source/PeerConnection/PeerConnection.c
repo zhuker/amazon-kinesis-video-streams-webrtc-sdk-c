@@ -1263,7 +1263,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->pDataChannels));
 
     // free rest of structs
-    CHK_LOG_ERR(freeSrtpSession(&pKvsPeerConnection->pSrtpSession));
+    if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->pSrtpSessionLock)) {
+        MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
+        CHK_LOG_ERR(freeSrtpSession(&pKvsPeerConnection->pSrtpSession));
+        MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
+    }
     CHK_LOG_ERR(freeDtlsSession(&pKvsPeerConnection->pDtlsSession));
     // Since ICE agent has a callback invoked from DTLS during handshake,
     // it is safer to free the ICE agent after DTLS session

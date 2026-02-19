@@ -952,6 +952,7 @@ static TWCC_STATUS_SYMBOL getTwccPacketStatus(UINT64 arrivalTimeKvs, UINT64 refe
 STATUS sendRtcpTwccFeedback(PKvsPeerConnection pKvsPeerConnection)
 {
     STATUS retStatus = STATUS_SUCCESS;
+    BOOL hasSrtpSession = FALSE;
     PTwccReceiverManager pManager = NULL;
     PBYTE pPacket = NULL;
     UINT32 packetLen = 0;
@@ -979,7 +980,11 @@ STATUS sendRtcpTwccFeedback(PKvsPeerConnection pKvsPeerConnection)
     TWCC_STATUS_SYMBOL runStatus = TWCC_STATUS_SYMBOL_NOTRECEIVED;
 
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
-    CHK(pKvsPeerConnection->pSrtpSession != NULL, retStatus);
+
+    MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
+    hasSrtpSession = pKvsPeerConnection->pSrtpSession != NULL;
+    MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
+    CHK(hasSrtpSession, retStatus);
 
     pManager = pKvsPeerConnection->pTwccReceiverManager;
     CHK(pManager != NULL, retStatus);
@@ -1223,11 +1228,16 @@ STATUS twccFeedbackCallback(UINT32 timerId, UINT64 currentTime, UINT64 customDat
     STATUS retStatus = STATUS_SUCCESS;
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
     UINT64 delay = 0;
+    BOOL srtpReady = FALSE;
 
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
 
-    // Skip if SRTP not ready yet
-    if (pKvsPeerConnection->pSrtpSession != NULL) {
+    // Skip if SRTP not ready yet - must lock to avoid race with allocateSrtp
+    MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
+    srtpReady = pKvsPeerConnection->pSrtpSession != NULL;
+    MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
+
+    if (srtpReady) {
         // Send TWCC feedback (ignore errors - will try again next interval)
         sendRtcpTwccFeedback(pKvsPeerConnection);
     } else {
