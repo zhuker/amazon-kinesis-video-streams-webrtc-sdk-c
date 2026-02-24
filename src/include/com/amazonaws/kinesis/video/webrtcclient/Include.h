@@ -1293,6 +1293,10 @@ typedef struct {
                                   //!< aggressively evicts stale incomplete frames, and delivers complete frames without head-of-line blocking.
                                   //!< Frames are still delivered in RTP timestamp order.
 
+    BOOL iceLiteMode; //!< When TRUE, agent operates as ICE-lite (RFC 8445 §2.5).
+                      //!< Only host candidates are gathered, no connectivity checks are initiated.
+                      //!< The agent always assumes the controlled role.
+
 #ifdef ENABLE_STATS_CALCULATION_CONTROL
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined
                          //!< to use this member, else stats are enabled by default.
