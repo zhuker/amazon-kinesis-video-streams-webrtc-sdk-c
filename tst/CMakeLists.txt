@@ -36,7 +36,12 @@ if(ENABLE_AWS_SDK_IN_TESTS)
   set(AWS_SDK_TEST_LIBS ${AWSSDK_LINK_LIBRARIES})
 endif()
 
-file(GLOB WEBRTC_CLIENT_TEST_SOURCE_FILES "*.cpp" )
+file(GLOB WEBRTC_CLIENT_TEST_SOURCE_FILES "*.cpp")
+
+if(NOT ENABLE_NATIVE_SCTP)
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX
+    "SctpAssoc.*\\.cpp|SctpCrc32c.*\\.cpp|SctpPacket.*\\.cpp")
+endif()
 
 add_executable(webrtc_client_test ${WEBRTC_CLIENT_TEST_SOURCE_FILES} SignalingApiFunctionalityTest.h)
 if (ENABLE_SIGNALING)

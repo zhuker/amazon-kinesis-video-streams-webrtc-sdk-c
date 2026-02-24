@@ -101,6 +101,9 @@ typedef struct {
     PSrtpSession pSrtpSession;
 
     PSctpSession pSctpSession;
+#ifdef ENABLE_NATIVE_SCTP
+    UINT32 sctpTimerCallbackId;
+#endif
 
     PSessionDescription pRemoteSessionDescription;
     PDoubleList pTransceivers;

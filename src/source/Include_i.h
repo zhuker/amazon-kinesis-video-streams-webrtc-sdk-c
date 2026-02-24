@@ -48,11 +48,13 @@ extern "C" {
 
 #include <srtp2/srtp.h>
 
+#ifndef ENABLE_NATIVE_SCTP
 // INET/INET6 MUST be defined before usrsctp
 // If removed will cause corruption that is hard to determine at runtime
 #define INET  1
 #define INET6 1
 #include <usrsctp.h>
+#endif
 
 #if !defined __WINDOWS_BUILD__
 #include <signal.h>

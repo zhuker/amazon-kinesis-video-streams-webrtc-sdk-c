@@ -104,6 +104,25 @@ CleanUp:
     return retStatus;
 }
 
+#ifdef ENABLE_NATIVE_SCTP
+// Period for the SCTP retransmission timer tick (50ms)
+#define SCTP_TIMER_TICK_PERIOD (50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
+
+static STATUS sctpTimerCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData)
+{
+    UNUSED_PARAM(timerId);
+    UNUSED_PARAM(currentTime);
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
+
+    if (pKvsPeerConnection == NULL || pKvsPeerConnection->pSctpSession == NULL) {
+        return STATUS_TIMER_QUEUE_STOP_SCHEDULING;
+    }
+
+    sctpSessionTickTimers(pKvsPeerConnection->pSctpSession);
+    return STATUS_SUCCESS;
+}
+#endif
+
 STATUS allocateSctp(PKvsPeerConnection pKvsPeerConnection)
 {
     ENTERS();
@@ -134,6 +153,13 @@ STATUS allocateSctp(PKvsPeerConnection pKvsPeerConnection)
     sctpSessionCallbacks.dataChannelOpenFunc = onSctpSessionDataChannelOpen;
     sctpSessionCallbacks.customData = (UINT64) pKvsPeerConnection;
     CHK_STATUS(createSctpSession(&sctpSessionCallbacks, &(pKvsPeerConnection->pSctpSession)));
+#ifdef ENABLE_NATIVE_SCTP
+    // Start periodic SCTP timer to drive retransmissions independently of incoming packets
+    if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
+        CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, SCTP_TIMER_TICK_PERIOD, SCTP_TIMER_TICK_PERIOD, sctpTimerCallback,
+                                      (UINT64) pKvsPeerConnection, &pKvsPeerConnection->sctpTimerCallbackId));
+    }
+#endif
 
     for (; currentDataChannelId < data.currentDataChannelId; currentDataChannelId += 2) {
         pKvsDataChannel = NULL;
@@ -745,7 +771,6 @@ VOID onSctpSessionDataChannelMessage(UINT64 customData, UINT32 channelId, BOOL i
     pKvsDataChannel->onMessage(pKvsDataChannel->onMessageCustomData, &pKvsDataChannel->dataChannel, isBinary, pMessage, pMessageLen);
 
 CleanUp:
-    CHK_LOG_ERR(retStatus);
 
     LEAVES();
 }
@@ -1173,6 +1198,9 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection->twccReceiverLock = MUTEX_CREATE(TRUE);
     CHK_STATUS(createTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
     pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32; // Invalid timer ID
+#ifdef ENABLE_NATIVE_SCTP
+    pKvsPeerConnection->sctpTimerCallbackId = MAX_UINT32;
+#endif
 
     *ppPeerConnection = (PRtcPeerConnection) pKvsPeerConnection;
 
@@ -1237,6 +1265,12 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
                 timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle, twccTimerId, (UINT64) pKvsPeerConnection);
             }
         }
+#ifdef ENABLE_NATIVE_SCTP
+        if (pKvsPeerConnection->sctpTimerCallbackId != MAX_UINT32) {
+            timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle, pKvsPeerConnection->sctpTimerCallbackId, (UINT64) pKvsPeerConnection);
+            pKvsPeerConnection->sctpTimerCallbackId = MAX_UINT32;
+        }
+#endif
         if (pKvsPeerConnection->pPacer != NULL) {
             pacerStop(pKvsPeerConnection->pPacer);
         }
