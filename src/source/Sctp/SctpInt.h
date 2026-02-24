@@ -103,6 +103,7 @@ typedef enum {
  * Cookie format (44 bytes) — sent in INIT-ACK, echoed in COOKIE-ECHO.
  * No HMAC needed since DTLS provides authentication.
  *****************************************************************************/
+#pragma pack(push, 1)
 typedef struct {
     UINT32 magic1;
     UINT32 magic2;
@@ -116,6 +117,7 @@ typedef struct {
     UINT16 numOutStreams;
     UINT32 reserved;
 } SctpCookie;
+#pragma pack(pop)
 
 /******************************************************************************
  * Outstanding DATA chunk (send queue entry)
