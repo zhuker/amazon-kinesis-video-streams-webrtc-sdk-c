@@ -11,6 +11,11 @@
 extern "C" {
 #endif
 
+#include "SctpCrc32c.h"
+#include "SctpInt.h"
+#include "SctpPacket.h"
+#include "SctpAssoc.h"
+
 // 1200 - 12 (SCTP header Size)
 #define SCTP_MTU                         1188
 #define SCTP_ASSOCIATION_DEFAULT_PORT    5000
@@ -24,8 +29,6 @@ extern "C" {
 #define SCTP_SESSION_SHUTDOWN_COMPLETED 2
 
 #define DEFAULT_SCTP_SHUTDOWN_TIMEOUT 2 * HUNDREDS_OF_NANOS_IN_A_SECOND
-
-#define DEFAULT_USRSCTP_TEARDOWN_POLLING_INTERVAL (10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
 
 enum { SCTP_PPID_DCEP = 50, SCTP_PPID_STRING = 51, SCTP_PPID_BINARY = 53, SCTP_PPID_STRING_EMPTY = 56, SCTP_PPID_BINARY_EMPTY = 57 };
 
@@ -60,8 +63,8 @@ typedef struct {
 
 typedef struct {
     volatile SIZE_T shutdownStatus;
-    struct socket* socket;
-    struct sctp_sendv_spa spa;
+    MUTEX lock;
+    SctpAssociation assoc;
     BYTE packet[SCTP_MAX_ALLOWABLE_PACKET_LENGTH];
     UINT32 packetSize;
     SctpSessionCallbacks sctpSessionCallbacks;
@@ -74,10 +77,6 @@ STATUS freeSctpSession(PSctpSession*);
 STATUS putSctpPacket(PSctpSession, PBYTE, UINT32);
 STATUS sctpSessionWriteMessage(PSctpSession, UINT32, BOOL, PBYTE, UINT32);
 STATUS sctpSessionWriteDcep(PSctpSession, UINT32, PCHAR, UINT32, PRtcDataChannelInit);
-
-// Callbacks used by usrsctp
-INT32 onSctpOutboundPacket(PVOID, PVOID, SIZE_T, UINT8, UINT8);
-INT32 onSctpInboundPacket(struct socket*, union sctp_sockstore, PVOID, SIZE_T, struct sctp_rcvinfo, INT32, PVOID);
 
 #ifdef __cplusplus
 }

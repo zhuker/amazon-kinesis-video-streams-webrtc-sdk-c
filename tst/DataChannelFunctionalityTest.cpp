@@ -244,7 +244,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityUnorder
     pKvsDataChannel = (PKvsDataChannel) pOfferDataChannel;
     pSctpSession = ((PKvsPeerConnection) pKvsDataChannel->pRtcPeerConnection)->pSctpSession;
 
-    ASSERT_NE(pSctpSession->packet[1] & DCEP_DATA_CHANNEL_RELIABLE_UNORDERED, 0);
+    ASSERT_NE(pSctpSession->packet[1] & DCEP_DATA_CHANNEL_RELIABLE_UNORDERED, 0);   
     ASSERT_NE(pSctpSession->packet[1] & DCEP_DATA_CHANNEL_TIMED, 0);
     ASSERT_EQ(getUnalignedInt32BigEndian((PINT32)(pSctpSession->packet + SIZEOF(UINT32))), rtcDataChannelInit.maxPacketLifeTime.value);
 

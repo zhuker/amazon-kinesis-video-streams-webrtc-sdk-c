@@ -265,8 +265,6 @@ if(BUILD_DEPENDENCIES)
       -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
       -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
 
-  build_dependency(usrsctp ${BUILD_ARGS})
-
   if(BUILD_TEST)
     build_dependency(gtest)
 
@@ -336,19 +334,6 @@ if (ENABLE_SIGNALING)
   endif()
 endif()
 
-# usrsctp dont support pkgconfig yet
-if (OPEN_SRC_INSTALL_PREFIX)
-find_library(
-  Usrsctp
-  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
-  PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
-else()
-find_library(
-  Usrsctp
-  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
-  )
-endif()
-
 set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS})
 if(ENABLE_SIGNALING)
   set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS}
@@ -404,6 +389,9 @@ if (ENABLE_DATA_CHANNEL)
   set (DATACHANNEL_SRC
       src/source/PeerConnection/DataChannel.c
       src/source/Sctp/Sctp.c
+      src/source/Sctp/SctpPacket.c
+      src/source/Sctp/SctpAssoc.c
+      src/source/Sctp/SctpCrc32c.c
       )
 endif()
 
@@ -478,7 +466,6 @@ target_link_libraries(
           ${OPENSSL_SSL_LIBRARY}
           ${OPENSSL_CRYPTO_LIBRARY}
           ${SRTP_LIBRARIES}
-          ${Usrsctp}
           ${MBEDTLS_LIBRARIES}
           ${GPERFTOOLS_MALLOC_LIBRARIES}
           ${GPERFTOOLS_PROFILER_LIBRARIES}
