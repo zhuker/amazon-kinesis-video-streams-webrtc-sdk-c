@@ -53,6 +53,8 @@ STATUS createIceAgent(PCHAR username, PCHAR password, PIceAgentCallbacks pIceAge
     pIceAgent->tieBreaker = (UINT64) RAND();
     pIceAgent->iceTransportPolicy = pRtcConfiguration->iceTransportPolicy;
     pIceAgent->kvsRtcConfiguration = pRtcConfiguration->kvsRtcConfiguration;
+    pIceAgent->isLiteAgent = pRtcConfiguration->kvsRtcConfiguration.iceLiteMode;
+    pIceAgent->remoteIsLiteAgent = FALSE;
     CHK_STATUS(iceAgentValidateKvsRtcConfig(&pIceAgent->kvsRtcConfiguration));
 
     if (pIceAgentCallbacks != NULL) {
@@ -643,12 +645,18 @@ STATUS iceAgentStartGathering(PIceAgent pIceAgent)
                                 pIceAgent->iceAgentProfileDiagnostics.localCandidateGatheringTime, "Host candidate gathering from local interfaces");
         PROFILE_CALL_WITH_T_OBJ(CHK_STATUS(iceAgentInitHostCandidate(pIceAgent)), pIceAgent->iceAgentProfileDiagnostics.hostCandidateSetUpTime,
                                 "Host candidates setup time");
-        PROFILE_CALL_WITH_T_OBJ(CHK_STATUS(iceAgentInitSrflxCandidate(pIceAgent)), pIceAgent->iceAgentProfileDiagnostics.srflxCandidateSetUpTime,
-                                "Srflx candidates setup time");
+        // ICE-lite agents only gather host candidates — skip srflx
+        if (!pIceAgent->isLiteAgent) {
+            PROFILE_CALL_WITH_T_OBJ(CHK_STATUS(iceAgentInitSrflxCandidate(pIceAgent)), pIceAgent->iceAgentProfileDiagnostics.srflxCandidateSetUpTime,
+                                    "Srflx candidates setup time");
+        }
     }
 
-    PROFILE_CALL_WITH_T_OBJ(CHK_STATUS(iceAgentInitRelayCandidates(pIceAgent)), pIceAgent->iceAgentProfileDiagnostics.relayCandidateSetUpTime,
-                            "Relay candidates setup time");
+    // ICE-lite agents do not use relay candidates
+    if (!pIceAgent->isLiteAgent) {
+        PROFILE_CALL_WITH_T_OBJ(CHK_STATUS(iceAgentInitRelayCandidates(pIceAgent)), pIceAgent->iceAgentProfileDiagnostics.relayCandidateSetUpTime,
+                                "Relay candidates setup time");
+    }
 
     // start listening for incoming data
     CHK_STATUS(connectionListenerStart(pIceAgent->pConnectionListener));
@@ -1663,6 +1671,7 @@ STATUS iceAgentGatherCandidateTimerCallback(UINT32 timerId, UINT64 currentTime, 
     /* stop scheduling if there is a nominated candidate pair (in cases where the pair does not have relay, which is set via stopGathering flag), no
      * more pending candidate and relay candidates are added or if timeout is reached. */
     if (ATOMIC_LOAD_BOOL(&pIceAgent->stopGathering) ||
+        (pIceAgent->isLiteAgent && totalCandidateCount > 0 && pendingCandidateCount == 0) ||
         (totalCandidateCount > 0 && pendingCandidateCount == 0 && ATOMIC_LOAD_BOOL(&pIceAgent->addedRelayCandidate)) ||
         currentTime >= pIceAgent->candidateGatheringEndTime) {
         DLOGI("Candidate gathering completed.");
@@ -2068,15 +2077,18 @@ STATUS iceAgentCheckConnectionStateSetup(PIceAgent pIceAgent)
         pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_WAITING;
     }
 
-    if (pIceAgent->pBindingRequest != NULL) {
-        CHK_STATUS(freeStunPacket(&pIceAgent->pBindingRequest));
+    // ICE-lite agents do not send binding requests — they only respond to incoming ones
+    if (!pIceAgent->isLiteAgent) {
+        if (pIceAgent->pBindingRequest != NULL) {
+            CHK_STATUS(freeStunPacket(&pIceAgent->pBindingRequest));
+        }
+        CHK_STATUS(createStunPacket(STUN_PACKET_TYPE_BINDING_REQUEST, NULL, &pIceAgent->pBindingRequest));
+        CHK_STATUS(appendStunUsernameAttribute(pIceAgent->pBindingRequest, pIceAgent->combinedUserName));
+        CHK_STATUS(appendStunPriorityAttribute(pIceAgent->pBindingRequest, 0));
+        CHK_STATUS(appendStunIceControllAttribute(pIceAgent->pBindingRequest,
+                                                  pIceAgent->isControlling ? STUN_ATTRIBUTE_TYPE_ICE_CONTROLLING : STUN_ATTRIBUTE_TYPE_ICE_CONTROLLED,
+                                                  pIceAgent->tieBreaker));
     }
-    CHK_STATUS(createStunPacket(STUN_PACKET_TYPE_BINDING_REQUEST, NULL, &pIceAgent->pBindingRequest));
-    CHK_STATUS(appendStunUsernameAttribute(pIceAgent->pBindingRequest, pIceAgent->combinedUserName));
-    CHK_STATUS(appendStunPriorityAttribute(pIceAgent->pBindingRequest, 0));
-    CHK_STATUS(appendStunIceControllAttribute(pIceAgent->pBindingRequest,
-                                              pIceAgent->isControlling ? STUN_ATTRIBUTE_TYPE_ICE_CONTROLLING : STUN_ATTRIBUTE_TYPE_ICE_CONTROLLED,
-                                              pIceAgent->tieBreaker));
 
     pIceAgent->stateEndTime = GETTIME() + pIceAgent->kvsRtcConfiguration.iceConnectionCheckTimeout;
 
@@ -2637,10 +2649,16 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
                 }
             }
 
-            // schedule a connectivity check for the pair
-            if (pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_FROZEN || pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_WAITING ||
-                pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS) {
-                CHK_STATUS(stackQueueEnqueue(pIceAgent->triggeredCheckQueue, (UINT64) pIceCandidatePair));
+            if (pIceAgent->isLiteAgent) {
+                // ICE-lite: successful binding request/response exchange means the pair is valid.
+                // Mark SUCCEEDED directly since we do not initiate outbound checks.
+                pIceCandidatePair->state = ICE_CANDIDATE_PAIR_STATE_SUCCEEDED;
+            } else {
+                // schedule a connectivity check for the pair
+                if (pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_FROZEN || pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_WAITING ||
+                    pIceCandidatePair->state == ICE_CANDIDATE_PAIR_STATE_IN_PROGRESS) {
+                    CHK_STATUS(stackQueueEnqueue(pIceAgent->triggeredCheckQueue, (UINT64) pIceCandidatePair));
+                }
             }
 
             if (pIceCandidatePair == pIceAgent->pDataSendingIceCandidatePair) {

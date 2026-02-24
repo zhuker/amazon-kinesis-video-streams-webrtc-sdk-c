@@ -2764,6 +2764,175 @@ a=rtcp-mux-only
     EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
 }
 
+TEST_F(SdpApiTest, iceLiteAttributeInSDP)
+{
+    RtcConfiguration configuration;
+    PRtcPeerConnection pRtcPeerConnection = nullptr;
+    RtcMediaStreamTrack track;
+    PRtcRtpTransceiver transceiver = nullptr;
+    RtcSessionDescriptionInit offerSdp;
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &pRtcPeerConnection));
+
+    track.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
+    track.codec = RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE;
+    STRNCPY(track.streamId, "videoStream", MAX_MEDIA_STREAM_ID_LEN);
+    STRNCPY(track.trackId, "videoTrack", MAX_MEDIA_STREAM_TRACK_ID_LEN);
+
+    EXPECT_EQ(STATUS_SUCCESS, addSupportedCodec(pRtcPeerConnection, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+    EXPECT_EQ(STATUS_SUCCESS, addTransceiver(pRtcPeerConnection, &track, nullptr, &transceiver));
+
+    MEMSET(&offerSdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(pRtcPeerConnection, &offerSdp));
+
+    std::string sdp(offerSdp.sdp);
+    EXPECT_NE(std::string::npos, sdp.find("a=ice-lite"));
+
+    EXPECT_EQ(STATUS_SUCCESS, closePeerConnection(pRtcPeerConnection));
+    EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
+}
+
+TEST_F(SdpApiTest, noIceLiteByDefault)
+{
+    RtcConfiguration configuration;
+    PRtcPeerConnection pRtcPeerConnection = nullptr;
+    RtcMediaStreamTrack track;
+    PRtcRtpTransceiver transceiver = nullptr;
+    RtcSessionDescriptionInit offerSdp;
+
+    initRtcConfiguration(&configuration);
+    // iceLiteMode defaults to FALSE (MEMSET 0)
+
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &pRtcPeerConnection));
+
+    track.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
+    track.codec = RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE;
+    STRNCPY(track.streamId, "videoStream", MAX_MEDIA_STREAM_ID_LEN);
+    STRNCPY(track.trackId, "videoTrack", MAX_MEDIA_STREAM_TRACK_ID_LEN);
+
+    EXPECT_EQ(STATUS_SUCCESS, addSupportedCodec(pRtcPeerConnection, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+    EXPECT_EQ(STATUS_SUCCESS, addTransceiver(pRtcPeerConnection, &track, nullptr, &transceiver));
+
+    MEMSET(&offerSdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(pRtcPeerConnection, &offerSdp));
+
+    std::string sdp(offerSdp.sdp);
+    EXPECT_EQ(std::string::npos, sdp.find("a=ice-lite"));
+
+    EXPECT_EQ(STATUS_SUCCESS, closePeerConnection(pRtcPeerConnection));
+    EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
+}
+
+TEST_F(SdpApiTest, parseRemoteIceLiteAttribute)
+{
+    PRtcPeerConnection offerPc = NULL;
+    PRtcPeerConnection answerPc = NULL;
+    RtcConfiguration configurationOffer;
+    RtcConfiguration configurationAnswer;
+    RtcSessionDescriptionInit offerSdpInit;
+    RtcSessionDescriptionInit remoteSdpInit;
+    RtcMediaStreamTrack track;
+    PRtcRtpTransceiver transceiver = nullptr;
+
+    initRtcConfiguration(&configurationOffer);
+    initRtcConfiguration(&configurationAnswer);
+
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&configurationOffer, &offerPc));
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&configurationAnswer, &answerPc));
+
+    track.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
+    track.codec = RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE;
+    STRNCPY(track.streamId, "videoStream", MAX_MEDIA_STREAM_ID_LEN);
+    STRNCPY(track.trackId, "videoTrack", MAX_MEDIA_STREAM_TRACK_ID_LEN);
+
+    EXPECT_EQ(STATUS_SUCCESS, addSupportedCodec(offerPc, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+    EXPECT_EQ(STATUS_SUCCESS, addTransceiver(offerPc, &track, nullptr, &transceiver));
+    EXPECT_EQ(STATUS_SUCCESS, addSupportedCodec(answerPc, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+    EXPECT_EQ(STATUS_SUCCESS, addTransceiver(answerPc, &track, nullptr, &transceiver));
+
+    // Create an offer, then inject a=ice-lite into it before setting on answer side
+    MEMSET(&offerSdpInit, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    offerSdpInit.useTrickleIce = TRUE;
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(offerPc, &offerSdpInit));
+
+    // Insert a=ice-lite after the session-level attributes
+    std::string sdp(offerSdpInit.sdp);
+    auto pos = sdp.find("a=group:");
+    ASSERT_NE(std::string::npos, pos);
+    sdp.insert(pos, "a=ice-lite\r\n");
+
+    MEMSET(&remoteSdpInit, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    remoteSdpInit.type = SDP_TYPE_OFFER;
+    STRNCPY(remoteSdpInit.sdp, sdp.c_str(), MAX_SESSION_DESCRIPTION_INIT_SDP_LEN);
+
+    EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(answerPc, &remoteSdpInit));
+
+    // Verify that the answer PC detected ice-lite
+    PKvsPeerConnection pKvsAnswerPc = (PKvsPeerConnection) answerPc;
+    EXPECT_TRUE(pKvsAnswerPc->remoteIsIceLite);
+
+    // The answer side (full agent) should be controlling when remote is ice-lite
+    EXPECT_TRUE(pKvsAnswerPc->pIceAgent->isControlling);
+
+    closePeerConnection(offerPc);
+    freePeerConnection(&offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&answerPc);
+}
+
+TEST_F(SdpApiTest, iceLiteAgentAlwaysControlled)
+{
+    PRtcPeerConnection litePc = NULL;
+    PRtcPeerConnection fullPc = NULL;
+    RtcConfiguration configurationLite;
+    RtcConfiguration configurationFull;
+    RtcSessionDescriptionInit offerSdpInit;
+    RtcSessionDescriptionInit remoteSdpInit;
+    RtcMediaStreamTrack track;
+    PRtcRtpTransceiver transceiver = nullptr;
+
+    initRtcConfiguration(&configurationLite);
+    configurationLite.kvsRtcConfiguration.iceLiteMode = TRUE;
+    initRtcConfiguration(&configurationFull);
+
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&configurationLite, &litePc));
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&configurationFull, &fullPc));
+
+    track.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
+    track.codec = RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE;
+    STRNCPY(track.streamId, "videoStream", MAX_MEDIA_STREAM_ID_LEN);
+    STRNCPY(track.trackId, "videoTrack", MAX_MEDIA_STREAM_TRACK_ID_LEN);
+
+    EXPECT_EQ(STATUS_SUCCESS, addSupportedCodec(fullPc, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+    EXPECT_EQ(STATUS_SUCCESS, addTransceiver(fullPc, &track, nullptr, &transceiver));
+    EXPECT_EQ(STATUS_SUCCESS, addSupportedCodec(litePc, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+    EXPECT_EQ(STATUS_SUCCESS, addTransceiver(litePc, &track, nullptr, &transceiver));
+
+    // Full agent creates the offer
+    MEMSET(&offerSdpInit, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    offerSdpInit.useTrickleIce = TRUE;
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(fullPc, &offerSdpInit));
+
+    // Set the full agent's offer as remote description on the lite agent
+    MEMSET(&remoteSdpInit, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    remoteSdpInit.type = SDP_TYPE_OFFER;
+    STRCPY(remoteSdpInit.sdp, offerSdpInit.sdp);
+    EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(litePc, &remoteSdpInit));
+
+    // ICE-lite agent must be controlled (not controlling), even though it's answering
+    PKvsPeerConnection pKvsLitePc = (PKvsPeerConnection) litePc;
+    EXPECT_FALSE(pKvsLitePc->pIceAgent->isControlling);
+    EXPECT_TRUE(pKvsLitePc->pIceAgent->isLiteAgent);
+
+    closePeerConnection(litePc);
+    freePeerConnection(&litePc);
+    closePeerConnection(fullPc);
+    freePeerConnection(&fullPc);
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

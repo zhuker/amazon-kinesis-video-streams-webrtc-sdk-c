@@ -268,6 +268,9 @@ struct __IceAgent {
     ICE_TRANSPORT_POLICY iceTransportPolicy;
     KvsRtcConfiguration kvsRtcConfiguration;
 
+    BOOL isLiteAgent;       // TRUE if local agent is ICE-lite (RFC 8445 §2.5)
+    BOOL remoteIsLiteAgent; // TRUE if remote peer signaled a=ice-lite
+
     // Pre-allocated stun packets
     PStunPacket pBindingIndication;
     PStunPacket pBindingRequest;

@@ -840,6 +840,72 @@ TEST_F(IceFunctionalityTest, getLocalhostIpAddressesFilterCustomDataTest)
     EXPECT_GE(filterCallCount, ipCount);
 }
 
+TEST_F(IceFunctionalityTest, iceLiteAgentFlagSetCorrectly)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    EXPECT_TRUE(pIceAgent->isLiteAgent);
+    EXPECT_FALSE(pIceAgent->remoteIsLiteAgent);
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
+}
+
+TEST_F(IceFunctionalityTest, iceLiteAgentFlagDefaultFalse)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+
+    initRtcConfiguration(&configuration);
+    // Default: iceLiteMode is FALSE (MEMSET to 0)
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    EXPECT_FALSE(pIceAgent->isLiteAgent);
+    EXPECT_FALSE(pIceAgent->remoteIsLiteAgent);
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
+}
+
 #ifdef ENABLE_SIGNALING
 TEST_F(IceFunctionalityTest, DISABLED_IceAgentCandidateGatheringTest)
 {

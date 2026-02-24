@@ -156,6 +156,8 @@ typedef struct {
 
     NullableBool canTrickleIce;
 
+    BOOL remoteIsIceLite; // TRUE if remote peer advertised a=ice-lite in SDP
+
     // congestion control (sender side)
     // https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
     UINT16 twccExtId;
