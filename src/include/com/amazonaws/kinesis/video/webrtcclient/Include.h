@@ -1303,6 +1303,10 @@ typedef struct {
     UINT8 redForOpusRedundancy; //!< Number of prior Opus frames carried as redundancy in each RED packet. Clamped to 1..9.
                                 //!< If 0, defaults to 1 (Chrome/libwebrtc default). Ignored when useRedForOpus is FALSE.
 
+    BOOL iceLiteMode; //!< When TRUE, agent operates as ICE-lite (RFC 8445 §2.5).
+                      //!< Only host candidates are gathered, no connectivity checks are initiated.
+                      //!< The agent always assumes the controlled role.
+
 #ifdef ENABLE_STATS_CALCULATION_CONTROL
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined
                          //!< to use this member, else stats are enabled by default.

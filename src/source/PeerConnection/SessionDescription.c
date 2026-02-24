@@ -1026,6 +1026,12 @@ STATUS populateSessionDescription(PKvsPeerConnection pKvsPeerConnection, PSessio
         pLocalSessionDescription->sessionAttributesCount++;
     }
 
+    if (pKvsPeerConnection->pIceAgent->isLiteAgent) {
+        STRCPY(pLocalSessionDescription->sdpAttributes[pLocalSessionDescription->sessionAttributesCount].attributeName, "ice-lite");
+        pLocalSessionDescription->sdpAttributes[pLocalSessionDescription->sessionAttributesCount].attributeValue[0] = '\0';
+        pLocalSessionDescription->sessionAttributesCount++;
+    }
+
     // check all session attribute lines to see if a line with BUNDLE is present. If it is present, copy its content and break
     if (!pKvsPeerConnection->isOffer) {
         for (i = 0; i < pRemoteSessionDescription->sessionAttributesCount; i++) {
