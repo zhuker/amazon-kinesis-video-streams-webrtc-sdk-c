@@ -22,6 +22,12 @@ typedef struct {
     RtcOnMessage onMessage;
     RtcDataChannelStats rtcDataChannelDiagnostics;
 
+    // Atomic counters for thread-safe diagnostics updates
+    volatile SIZE_T atomicMessagesSent;
+    volatile UINT64 atomicBytesSent;
+    volatile SIZE_T atomicMessagesReceived;
+    volatile UINT64 atomicBytesReceived;
+
     UINT64 onOpenCustomData;
     RtcOnOpen onOpen;
 } KvsDataChannel, *PKvsDataChannel;

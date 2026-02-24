@@ -733,8 +733,8 @@ VOID onSctpSessionDataChannelMessage(UINT64 customData, UINT32 channelId, BOOL i
         CHK(FALSE, retStatus);
     }
     CHK(pKvsDataChannel != NULL && pKvsDataChannel->onMessage != NULL, STATUS_INTERNAL_ERROR);
-    pKvsDataChannel->rtcDataChannelDiagnostics.messagesReceived++;
-    pKvsDataChannel->rtcDataChannelDiagnostics.bytesReceived += pMessageLen;
+    ATOMIC_INCREMENT(&pKvsDataChannel->atomicMessagesReceived);
+    __atomic_fetch_add(&pKvsDataChannel->atomicBytesReceived, (UINT64) pMessageLen, __ATOMIC_RELAXED);
     if (STATUS_FAILED(hashTableUpsert(pKvsPeerConnection->pDataChannels, channelId, (UINT64) pKvsDataChannel))) {
         DLOGW("Failed to update entry in hash table with recent changes to data channel");
     }

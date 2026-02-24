@@ -212,11 +212,11 @@ STATUS getDataChannelStats(PRtcPeerConnection pRtcPeerConnection, PRtcDataChanne
     CHK(pRtcPeerConnection != NULL && pRtcDataChannelStats != NULL, STATUS_NULL_ARG);
     CHK_STATUS(hashTableGet(pKvsPeerConnection->pDataChannels, pRtcDataChannelStats->dataChannelIdentifier, &hashValue));
     pKvsDataChannel = (PKvsDataChannel) hashValue;
-    pRtcDataChannelStats->bytesReceived = pKvsDataChannel->rtcDataChannelDiagnostics.bytesReceived;
-    pRtcDataChannelStats->bytesSent = pKvsDataChannel->rtcDataChannelDiagnostics.bytesSent;
+    pRtcDataChannelStats->bytesReceived = __atomic_load_n(&pKvsDataChannel->atomicBytesReceived, __ATOMIC_RELAXED);
+    pRtcDataChannelStats->bytesSent = __atomic_load_n(&pKvsDataChannel->atomicBytesSent, __ATOMIC_RELAXED);
     STRCPY(pRtcDataChannelStats->label, pKvsDataChannel->rtcDataChannelDiagnostics.label);
-    pRtcDataChannelStats->messagesReceived = pKvsDataChannel->rtcDataChannelDiagnostics.messagesReceived;
-    pRtcDataChannelStats->messagesSent = pKvsDataChannel->rtcDataChannelDiagnostics.messagesSent;
+    pRtcDataChannelStats->messagesReceived = (UINT32) ATOMIC_LOAD(&pKvsDataChannel->atomicMessagesReceived);
+    pRtcDataChannelStats->messagesSent = (UINT32) ATOMIC_LOAD(&pKvsDataChannel->atomicMessagesSent);
     pRtcDataChannelStats->state = pKvsDataChannel->rtcDataChannelDiagnostics.state;
 CleanUp:
     return retStatus;
