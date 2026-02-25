@@ -77,6 +77,7 @@ STATUS freeSctpSession(PSctpSession*);
 STATUS putSctpPacket(PSctpSession, PBYTE, UINT32);
 STATUS sctpSessionWriteMessage(PSctpSession, UINT32, BOOL, PBYTE, UINT32);
 STATUS sctpSessionWriteDcep(PSctpSession, UINT32, PCHAR, UINT32, PRtcDataChannelInit);
+STATUS sctpSessionTickTimers(PSctpSession);
 
 #ifdef __cplusplus
 }

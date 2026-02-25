@@ -158,6 +158,33 @@ CleanUp:
     return retStatus;
 }
 
+STATUS sctpSessionTickTimers(PSctpSession pSctpSession)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT64 nowMs;
+    BOOL locked = FALSE;
+
+    CHK(pSctpSession != NULL, STATUS_NULL_ARG);
+
+    if (ATOMIC_LOAD(&pSctpSession->shutdownStatus) != SCTP_SESSION_ACTIVE) {
+        CHK(FALSE, retStatus);
+    }
+
+    MUTEX_LOCK(pSctpSession->lock);
+    locked = TRUE;
+
+    nowMs = GETTIME() / (10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    sctpAssocCheckTimers(&pSctpSession->assoc, nowMs, sctpOutboundBridge, (UINT64) pSctpSession);
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pSctpSession->lock);
+    }
+    LEAVES();
+    return retStatus;
+}
+
 STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL isBinary, PBYTE pMessage, UINT32 pMessageLen)
 {
     ENTERS();

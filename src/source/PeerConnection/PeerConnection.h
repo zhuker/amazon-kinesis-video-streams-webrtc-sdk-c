@@ -104,6 +104,7 @@ typedef struct {
     PSrtpSession pSrtpSession;
 
     PSctpSession pSctpSession;
+    UINT32 sctpTimerCallbackId;
 
     PSessionDescription pRemoteSessionDescription;
     PDoubleList pTransceivers;

@@ -1257,6 +1257,208 @@ TEST_F(SctpAssocFunctionalityTest, congestion_cwndRecoveryAfterLoss)
     EXPECT_GT(h.assocA.cwnd, cwndAfterLoss);
 }
 
+/******************************************************************************
+ * SctpSession-level retransmission via sctpSessionTickTimers
+ *
+ * The existing retransmit_* tests call sctpAssocCheckTimers() directly with
+ * a fake timestamp — so they never exercise the real timer path.  In
+ * production, sctpAssocCheckTimers is driven by sctpSessionTickTimers()
+ * which is invoked from a periodic timer callback.  This test verifies that
+ * sctpSessionTickTimers triggers retransmission when no incoming packets
+ * arrive (the exact scenario that caused the Android CI flood-send failure).
+ *****************************************************************************/
+
+// Capture callbacks compatible with SctpSession callback signatures
+struct SessionMessageCapture {
+    UINT32 count;
+    BOOL lastIsBinary;
+    BYTE lastPayload[4096];
+    UINT32 lastPayloadLen;
+
+    void reset()
+    {
+        count = 0;
+        lastIsBinary = FALSE;
+        lastPayloadLen = 0;
+    }
+};
+
+static PacketCapture gSessionCapA;
+static PacketCapture gSessionCapB;
+static SessionMessageCapture gSessionMsgA;
+static SessionMessageCapture gSessionMsgB;
+
+static VOID sessionOutboundCaptureA(UINT64 customData, PBYTE pPacket, UINT32 packetLen)
+{
+    UNUSED_PARAM(customData);
+    if (gSessionCapA.count < SCTP_TEST_MAX_PACKETS && packetLen <= SCTP_TEST_MAX_PKT_LEN) {
+        MEMCPY(gSessionCapA.packets[gSessionCapA.count].data, pPacket, packetLen);
+        gSessionCapA.packets[gSessionCapA.count].len = packetLen;
+        gSessionCapA.count++;
+    }
+}
+
+static VOID sessionOutboundCaptureB(UINT64 customData, PBYTE pPacket, UINT32 packetLen)
+{
+    UNUSED_PARAM(customData);
+    if (gSessionCapB.count < SCTP_TEST_MAX_PACKETS && packetLen <= SCTP_TEST_MAX_PKT_LEN) {
+        MEMCPY(gSessionCapB.packets[gSessionCapB.count].data, pPacket, packetLen);
+        gSessionCapB.packets[gSessionCapB.count].len = packetLen;
+        gSessionCapB.count++;
+    }
+}
+
+static VOID sessionMessageCaptureA(UINT64 customData, UINT32 streamId, BOOL isBinary, PBYTE pMsg, UINT32 msgLen)
+{
+    UNUSED_PARAM(customData);
+    UNUSED_PARAM(streamId);
+    gSessionMsgA.lastIsBinary = isBinary;
+    if (msgLen <= sizeof(gSessionMsgA.lastPayload)) {
+        MEMCPY(gSessionMsgA.lastPayload, pMsg, msgLen);
+    }
+    gSessionMsgA.lastPayloadLen = msgLen;
+    gSessionMsgA.count++;
+}
+
+static VOID sessionMessageCaptureB(UINT64 customData, UINT32 streamId, BOOL isBinary, PBYTE pMsg, UINT32 msgLen)
+{
+    UNUSED_PARAM(customData);
+    UNUSED_PARAM(streamId);
+    gSessionMsgB.lastIsBinary = isBinary;
+    if (msgLen <= sizeof(gSessionMsgB.lastPayload)) {
+        MEMCPY(gSessionMsgB.lastPayload, pMsg, msgLen);
+    }
+    gSessionMsgB.lastPayloadLen = msgLen;
+    gSessionMsgB.count++;
+}
+
+static VOID sessionOpenNoop(UINT64 customData, UINT32 channelId, PBYTE pName, UINT32 nameLen)
+{
+    UNUSED_PARAM(customData);
+    UNUSED_PARAM(channelId);
+    UNUSED_PARAM(pName);
+    UNUSED_PARAM(nameLen);
+}
+
+// Deliver captured packets from one session to another
+static UINT32 deliverSessionPackets(PacketCapture* src, PSctpSession dst)
+{
+    UINT32 delivered = 0;
+    for (UINT32 i = 0; i < src->count; i++) {
+        putSctpPacket(dst, src->packets[i].data, src->packets[i].len);
+        delivered++;
+    }
+    src->reset();
+    return delivered;
+}
+
+// Exchange all pending packets between two sessions
+static UINT32 exchangeSessionPackets(PSctpSession a, PSctpSession b)
+{
+    // Snapshot and reset captures to avoid re-delivering packets
+    // generated during this exchange
+    PacketCapture tmpA, tmpB;
+    MEMCPY(&tmpA, &gSessionCapA, sizeof(PacketCapture));
+    MEMCPY(&tmpB, &gSessionCapB, sizeof(PacketCapture));
+    gSessionCapA.reset();
+    gSessionCapB.reset();
+
+    UINT32 total = 0;
+    // A's outbound → B's inbound
+    for (UINT32 i = 0; i < tmpA.count; i++) {
+        putSctpPacket(b, tmpA.packets[i].data, tmpA.packets[i].len);
+        total++;
+    }
+    // B's outbound → A's inbound
+    for (UINT32 i = 0; i < tmpB.count; i++) {
+        putSctpPacket(a, tmpB.packets[i].data, tmpB.packets[i].len);
+        total++;
+    }
+    return total;
+}
+
+TEST_F(SctpAssocFunctionalityTest, retransmit_sessionTickTimersDrivesRetransmission)
+{
+    PSctpSession sessionA = NULL;
+    PSctpSession sessionB = NULL;
+
+    gSessionCapA.reset();
+    gSessionCapB.reset();
+    gSessionMsgA.reset();
+    gSessionMsgB.reset();
+
+    SctpSessionCallbacks cbA;
+    cbA.customData = 0;
+    cbA.outboundPacketFunc = sessionOutboundCaptureA;
+    cbA.dataChannelMessageFunc = sessionMessageCaptureA;
+    cbA.dataChannelOpenFunc = sessionOpenNoop;
+
+    SctpSessionCallbacks cbB;
+    cbB.customData = 0;
+    cbB.outboundPacketFunc = sessionOutboundCaptureB;
+    cbB.dataChannelMessageFunc = sessionMessageCaptureB;
+    cbB.dataChannelOpenFunc = sessionOpenNoop;
+
+    // Create both sessions — each immediately sends INIT
+    EXPECT_EQ(createSctpSession(&cbA, &sessionA), STATUS_SUCCESS);
+    EXPECT_EQ(createSctpSession(&cbB, &sessionB), STATUS_SUCCESS);
+    ASSERT_TRUE(sessionA != NULL);
+    ASSERT_TRUE(sessionB != NULL);
+
+    // Complete handshake by exchanging packets until both ESTABLISHED
+    for (int round = 0; round < 8; round++) {
+        if (sessionA->assoc.state == SCTP_ASSOC_ESTABLISHED && sessionB->assoc.state == SCTP_ASSOC_ESTABLISHED) {
+            break;
+        }
+        exchangeSessionPackets(sessionA, sessionB);
+    }
+    ASSERT_EQ(sessionA->assoc.state, SCTP_ASSOC_ESTABLISHED);
+    ASSERT_EQ(sessionB->assoc.state, SCTP_ASSOC_ESTABLISHED);
+
+    // Clear captures after handshake
+    gSessionCapA.reset();
+    gSessionCapB.reset();
+
+    // Shorten RTO so the test doesn't need to sleep 10+ seconds.
+    // SCTP_NOW_MS() uses units of 10ms, so rtoMs=10 → 100ms real time.
+    sessionA->assoc.rtoMs = 10;
+
+    // Send a message from A — it will be captured in gSessionCapA
+    BYTE payload[] = "retransmit me";
+    EXPECT_EQ(sctpSessionWriteMessage(sessionA, 0, FALSE, payload, 13), STATUS_SUCCESS);
+    ASSERT_GT(gSessionCapA.count, (UINT32) 0);
+
+    // "Lose" the DATA packet — don't deliver to B
+    gSessionCapA.reset();
+
+    // Verify B has NOT received the message
+    EXPECT_EQ(gSessionMsgB.count, (UINT32) 0);
+
+    // T3-rtx is armed on A, but no packets arrive to trigger putSctpPacket.
+    // Without sctpSessionTickTimers, the message is lost forever.
+    // Sleep past the T3 expiry (rtoMs=10 → 100ms real time, sleep 200ms).
+    THREAD_SLEEP(200 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+
+    // Drive the timer via the same function the periodic callback uses
+    EXPECT_EQ(sctpSessionTickTimers(sessionA), STATUS_SUCCESS);
+
+    // A should have retransmitted the DATA
+    ASSERT_GT(gSessionCapA.count, (UINT32) 0);
+
+    // Deliver the retransmitted DATA to B
+    deliverSessionPackets(&gSessionCapA, sessionB);
+    // Deliver B's SACK back to A
+    deliverSessionPackets(&gSessionCapB, sessionA);
+
+    // B should have received the message
+    ASSERT_EQ(gSessionMsgB.count, (UINT32) 1);
+    EXPECT_EQ(gSessionMsgB.lastPayloadLen, (UINT32) 13);
+    EXPECT_EQ(0, MEMCMP(gSessionMsgB.lastPayload, payload, 13));
+
+    freeSctpSession(&sessionA);
+    freeSctpSession(&sessionB);
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis
