@@ -13,4 +13,7 @@ CMakeLists.txt.user
 *.vscode
 *.swp
 venv/
-
+.cache
+build-*
+open-source-*
+*.log
