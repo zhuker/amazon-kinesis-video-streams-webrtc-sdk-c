@@ -50,7 +50,34 @@ jobs:
           docker build -t webrtc-u22 -f .github/docker/ubuntu22.Dockerfile . &
           docker build -t webrtc-u20 -f .github/docker/ubuntu20.Dockerfile . &
           docker build -t webrtc-alpine -f .github/docker/alpine.Dockerfile . &
+          docker build -t webrtc-u24-sys-deps -f .github/docker/ubuntu24-sys-deps.Dockerfile . &
           wait
+
+      # ---------------------------------------------------------------
+      # Ubuntu 24.04 system-deps build + test (no BUILD_DEPENDENCIES)
+      # ---------------------------------------------------------------
+
+      - name: Ubuntu 24.04 system-deps build + test
+        run: |
+          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u24-sys-deps bash -c "
+            export CC=gcc CXX=g++
+            mkdir -p build-sys-deps && cd build-sys-deps
+            cmake .. -DBUILD_TEST=ON -DBUILD_DEPENDENCIES=OFF -DENABLE_SELF_CONTAINED=ON \
+                     -DENABLE_SIGNALING=OFF -DENABLE_AWS_SDK_IN_TESTS=OFF
+            make -j\$(nproc)
+            timeout 600 ./tst/webrtc_client_test --gtest_break_on_failure; test_exit=\$?
+            if [ \$test_exit -ne 0 ]; then
+              echo '--- Core dump backtrace (if available) ---'
+              for core in \$(find . -name 'core*' -type f 2>/dev/null); do
+                gdb -batch -ex 'thread apply all bt full' ./tst/webrtc_client_test \"\$core\" || true
+              done
+              exit \$test_exit
+            fi
+          "
+
+      - name: Clean system-deps build
+        if: always()
+        run: rm -rf build-sys-deps
 
       # ---------------------------------------------------------------
       # Fast checks (no build required)

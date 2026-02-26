@@ -314,15 +314,23 @@ else()
   set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${MBEDTLS_INCLUDE_DIRS})
 endif()
 
-if (OPEN_SRC_INSTALL_PREFIX)
-  find_library(SRTP_LIBRARIES srtp2 REQUIRED PATHS ${OPEN_SRC_INSTALL_PREFIX})
+if (BUILD_DEPENDENCIES)
+  if (OPEN_SRC_INSTALL_PREFIX)
+    find_library(SRTP_LIBRARIES srtp2 REQUIRED PATHS ${OPEN_SRC_INSTALL_PREFIX})
+  else()
+    find_library(SRTP_LIBRARIES srtp2 REQUIRED)
+  endif()
+else()
+  pkg_check_modules(LIBSRTP REQUIRED libsrtp2)
+  set(SRTP_LIBRARIES ${LIBSRTP_LIBRARIES})
+endif()
 
+if (OPEN_SRC_INSTALL_PREFIX)
   if (LINK_PROFILER)
     find_library(GPERFTOOLS_MALLOC_LIBRARIES tcmalloc REQUIRED PATHS ${OPEN_SRC_INSTALL_PREFIX})
     find_library(GPERFTOOLS_PROFILER_LIBRARIES profiler REQUIRED PATHS ${OPEN_SRC_INSTALL_PREFIX})
   endif()
 else()
-  find_library(SRTP_LIBRARIES srtp2 REQUIRED )
   if (LINK_PROFILER)
     find_library(GPERFTOOLS_MALLOC_LIBRARIES tcmalloc REQUIRED)
     find_library(GPERFTOOLS_PROFILER_LIBRARIES profiler REQUIRED)
@@ -337,16 +345,26 @@ else()
 endif()
 endif()
 
-# usrsctp dont support pkgconfig yet
-find_library(
-  Usrsctp
-  NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
-  PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
+if (BUILD_DEPENDENCIES)
+  find_library(
+    Usrsctp
+    NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
+    PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
+else()
+  pkg_check_modules(LIBUSRSCTP REQUIRED usrsctp)
+  set(Usrsctp ${LIBUSRSCTP_LIBRARIES})
+  # The usrsctp .pc file sets includedir to .../include/usrsctp but the header
+  # lives in .../include/usrsctp.h.  Use find_path to get the correct directory.
+  find_path(USRSCTP_INCLUDE_DIR usrsctp.h HINTS ${LIBUSRSCTP_INCLUDE_DIRS} PATH_SUFFIXES .. REQUIRED)
+  set(LIBUSRSCTP_INCLUDE_DIRS ${USRSCTP_INCLUDE_DIR})
+endif()
 
 set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS}
+                          ${LIBUSRSCTP_INCLUDE_DIRS}
                           ${CURL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS})
 
 link_directories(${LIBSRTP_LIBRARY_DIRS})
+link_directories(${LIBUSRSCTP_LIBRARY_DIRS})
 link_directories(${LIBWEBSOCKETS_LIBRARY_DIRS})
 link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
 
