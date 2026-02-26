@@ -113,6 +113,7 @@ jobs:
             export CC=gcc CXX=g++
             mkdir -p build-alpine && cd build-alpine
             cmake .. -DBUILD_STATIC_LIBS=ON -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
+                     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                      -DOPEN_SRC_INSTALL_PREFIX=\$(pwd)/deps
             make -j\$(nproc)
             timeout 600 ./tst/webrtc_client_test --gtest_break_on_failure; test_exit=\$?
