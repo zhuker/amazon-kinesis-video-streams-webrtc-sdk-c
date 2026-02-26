@@ -404,6 +404,10 @@ if(ENABLE_AWS_SDK_IN_TESTS)
   add_definitions(-DENABLE_AWS_SDK_IN_TESTS)
 endif()
 
+if (ENABLE_SIGNALING)
+  add_definitions(-DENABLE_SIGNALING)
+endif()
+
 file(
   GLOB
   WEBRTC_CLIENT_SOURCE_FILES
