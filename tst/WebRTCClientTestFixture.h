@@ -30,12 +30,14 @@ namespace kinesis {
 namespace video {
 namespace webrtcclient {
 
+#ifdef ENABLE_SIGNALING
 // This comes from Producer-C, but is not exported. We are copying it here instead of making it part of the public API.
 // It *MAY* become de-synchronized. If you hit issues after updating Producer-C confirm these two structs are in sync
 typedef struct {
     AwsCredentialProvider credentialProvider;
     PAwsCredentials pAwsCredentials;
 } StaticCredentialProvider, *PStaticCredentialProvider;
+#endif
 
 STATUS createRtpPacketWithSeqNum(UINT16 seqNum, PRtpPacket* ppRtpPacket);
 
@@ -302,7 +304,9 @@ class WebRtcClientTestBase : public ::testing::Test {
     VOID clearJitterBufferForTest();
     VOID setPayloadToFree();
 
+#ifdef ENABLE_SIGNALING
     PAwsCredentialProvider mTestCredentialProvider;
+#endif
 
     PCHAR mAccessKey;
     PCHAR mSecretKey;
@@ -314,7 +318,7 @@ class WebRtcClientTestBase : public ::testing::Test {
 
     SIZE_T stateChangeCount[RTC_PEER_CONNECTION_TOTAL_STATE_COUNT] = {0};
 
-    CHAR mDefaultRegion[MAX_REGION_NAME_LEN + 1];
+    CHAR mDefaultRegion[128 + 1];
     BOOL mAccessKeyIdSet;
     CHAR mChannelName[MAX_CHANNEL_NAME_LEN + 1];
     CHAR mChannelArn[MAX_ARN_LEN + 1];

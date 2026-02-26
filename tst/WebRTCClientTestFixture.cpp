@@ -63,7 +63,7 @@ void WebRtcClientTestBase::SetUp()
 
     mLogLevel = LOG_LEVEL_DEBUG;
 
-    PCHAR logLevelStr = GETENV(DEBUG_LOG_LEVEL_ENV_VAR);
+    PCHAR logLevelStr = GETENV("AWS_KVS_LOG_LEVEL");
     if (logLevelStr != NULL && STRLEN(logLevelStr) > 0) {
         ASSERT_EQ(STATUS_SUCCESS, STRTOUI32(logLevelStr, NULL, 10, &mLogLevel));
     }
@@ -74,6 +74,7 @@ void WebRtcClientTestBase::SetUp()
         DLOGE("Test initKvsWebRtc FAILED!!!!");
     }
 
+#ifdef ENABLE_SIGNALING
     if (NULL != (mAccessKey = getenv(ACCESS_KEY_ENV_VAR))) {
         mAccessKeyIdSet = TRUE;
     }
@@ -89,7 +90,6 @@ void WebRtcClientTestBase::SetUp()
         mCaCertPath = (PCHAR) DEFAULT_KVS_CACERT_PATH;
     }
 
-#ifdef ENABLE_SIGNALING
     if (mAccessKey) {
         ASSERT_EQ(STATUS_SUCCESS,
                   createStaticCredentialProvider(mAccessKey, 0, mSecretKey, 0, mSessionToken, 0, MAX_UINT64, &mTestCredentialProvider));
@@ -97,7 +97,12 @@ void WebRtcClientTestBase::SetUp()
         mTestCredentialProvider = nullptr;
     }
 #else
-    mTestCredentialProvider = nullptr;
+    mRegion = TEST_DEFAULT_REGION;
+#ifdef KVS_CA_CERT_PATH
+    mCaCertPath = (PCHAR) KVS_CA_CERT_PATH;
+#else
+    mCaCertPath = (PCHAR) "";
+#endif
 #endif
 
     // Prepare the test channel name by prefixing with test channel name

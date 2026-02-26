@@ -1012,6 +1012,7 @@ CleanUp:
     return retStatus;
 }
 
+#ifdef ENABLE_KVS_THREADPOOL
 PVOID resolveStunIceServerIp(PVOID args)
 {
     ENTERS();
@@ -1090,6 +1091,7 @@ PVOID resolveStunIceServerIp(PVOID args)
     LEAVES();
     return NULL;
 }
+#endif
 
 STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection* ppPeerConnection)
 {
