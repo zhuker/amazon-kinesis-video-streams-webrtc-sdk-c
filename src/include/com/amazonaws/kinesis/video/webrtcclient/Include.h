@@ -2064,6 +2064,7 @@ PUBLIC_API STATUS discoverNatBehavior(PCHAR, NAT_BEHAVIOR*, NAT_BEHAVIOR*, IceSe
  */
 PUBLIC_API PCHAR getNatBehaviorStr(NAT_BEHAVIOR natBehavior);
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Creates a Signaling client and returns a handle to it
  *
@@ -2204,6 +2205,7 @@ PUBLIC_API STATUS signalingClientDeleteSync(SIGNALING_CLIENT_HANDLE);
  * @param[in,out] PSignalingClientMetrics Signaling stats
  */
 PUBLIC_API STATUS signalingClientGetMetrics(SIGNALING_CLIENT_HANDLE, PSignalingClientMetrics);
+#endif
 
 /**
  * @brief Get peer connection related metrics

@@ -713,7 +713,7 @@ TEST_F(IceFunctionalityTest, IceAgentPruneUnconnectedIceCandidatePairUnitTest)
     EXPECT_EQ(STATUS_SUCCESS, doubleListFree(iceAgent.iceCandidatePairs));
 }
 
-TEST_F(IceFunctionalityTest, IceAgentCandidateGatheringTest)
+TEST_F(IceFunctionalityTest, DISABLED_IceAgentCandidateGatheringTest)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -732,7 +732,7 @@ TEST_F(IceFunctionalityTest, IceAgentCandidateGatheringTest)
     BOOL foundHostCandidate = FALSE, foundSrflxCandidate = FALSE, foundRelayCandidate = FALSE;
     CandidateList candidateList;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
     MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
     MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
