@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     clang \
     clang-format \
     git \
+    libcurl4-openssl-dev \
     pkg-config \
     file \
     gcc-mips-linux-gnu \

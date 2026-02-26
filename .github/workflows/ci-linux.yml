@@ -117,7 +117,6 @@ jobs:
       # ---------------------------------------------------------------
 
       - name: GCC + OpenSSL build + test
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
             export CC=gcc CXX=g++
@@ -134,7 +133,6 @@ jobs:
         run: rm -rf build-gcc-openssl
 
       - name: GCC + OpenSSL + stats-calc test
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
             export CC=gcc CXX=g++
@@ -151,7 +149,6 @@ jobs:
         run: rm -rf build-stats-calc
 
       - name: Clang + MbedTLS build + test
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
             export CC=clang CXX=clang++
@@ -168,7 +165,6 @@ jobs:
         run: rm -rf build-clang-mbedtls
 
       - name: GCC 4.4 + old MbedTLS build + test
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u20 bash -c "
             export CC=gcc-4.4
@@ -189,7 +185,6 @@ jobs:
       # ---------------------------------------------------------------
 
       - name: ASAN + UBSAN build + test
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src \
             -e ASAN_OPTIONS=detect_odr_violation=0:detect_leaks=1 \
@@ -210,7 +205,6 @@ jobs:
         run: rm -rf build-asan
 
       - name: TSAN build + test
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src \
             -e TSAN_OPTIONS=second_deadlock_stack=1:halt_on_error=1:suppressions=/src/tst/suppressions/TSAN.supp \
@@ -233,7 +227,6 @@ jobs:
       # ---------------------------------------------------------------
 
       - name: Cross-compile mips-32 (static, OpenSSL)
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
             export CC=mips-linux-gnu-gcc CXX=mips-linux-gnu-g++
@@ -254,7 +247,6 @@ jobs:
         run: rm -rf build-cross-mips
 
       - name: Cross-compile arm-32 (static, OpenSSL)
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
             export CC=arm-linux-gnueabihf-gcc CXX=arm-linux-gnueabihf-g++
@@ -275,7 +267,6 @@ jobs:
         run: rm -rf build-cross-arm32
 
       - name: Cross-compile aarch64 (static, OpenSSL)
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
             export CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
@@ -296,7 +287,6 @@ jobs:
         run: rm -rf build-cross-aarch64
 
       - name: Cross-compile aarch64 (static, MbedTLS spot-check)
-        if: success() || failure()
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
             export CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
