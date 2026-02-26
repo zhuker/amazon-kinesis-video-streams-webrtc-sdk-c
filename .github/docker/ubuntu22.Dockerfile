@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     pkg-config \
     file \
+    gdb \
     gcc-mips-linux-gnu \
     g++-mips-linux-gnu \
     gcc-arm-linux-gnueabihf \

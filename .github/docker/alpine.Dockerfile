@@ -9,4 +9,5 @@ RUN apk update && apk upgrade && apk add --no-cache \
     bash \
     openssl-dev \
     zlib-dev \
-    curl-dev
+    curl-dev \
+    gdb
