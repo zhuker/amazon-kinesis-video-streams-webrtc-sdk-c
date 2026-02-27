@@ -45,6 +45,7 @@ jobs:
 
       - name: Configure
         run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
@@ -59,7 +60,9 @@ jobs:
             -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-arm64-v8a/deps
 
       - name: Build
-        run: cmake --build build-android-arm64-v8a -j$(sysctl -n hw.ncpu)
+        run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
+          cmake --build build-android-arm64-v8a -j$(sysctl -n hw.ncpu)
 
       - name: Push and test
         run: |
@@ -94,6 +97,7 @@ jobs:
 
       - name: Configure
         run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
@@ -109,7 +113,9 @@ jobs:
             -DADDRESS_SANITIZER=ON -DUNDEFINED_BEHAVIOR_SANITIZER=ON
 
       - name: Build
-        run: cmake --build build-android-arm64-v8a-asan -j$(sysctl -n hw.ncpu)
+        run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
+          cmake --build build-android-arm64-v8a-asan -j$(sysctl -n hw.ncpu)
 
       - name: Push and test
         run: |
@@ -183,6 +189,7 @@ jobs:
 
       - name: Configure
         run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
@@ -197,7 +204,9 @@ jobs:
             -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-armeabi-v7a/deps
 
       - name: Build
-        run: cmake --build build-android-armeabi-v7a -j$(sysctl -n hw.ncpu)
+        run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
+          cmake --build build-android-armeabi-v7a -j$(sysctl -n hw.ncpu)
 
       - name: Push and test
         run: |
@@ -225,6 +234,7 @@ jobs:
 
       - name: Configure
         run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
@@ -240,7 +250,9 @@ jobs:
             -DADDRESS_SANITIZER=ON -DUNDEFINED_BEHAVIOR_SANITIZER=ON
 
       - name: Build
-        run: cmake --build build-android-armeabi-v7a-asan -j$(sysctl -n hw.ncpu)
+        run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
+          cmake --build build-android-armeabi-v7a-asan -j$(sysctl -n hw.ncpu)
 
       - name: Push and test
         run: |
