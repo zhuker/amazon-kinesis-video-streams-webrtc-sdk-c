@@ -10,3 +10,16 @@ RUN apt-get update && \
     apt-get -q update && \
     apt-get -y install gcc-4.4 && \
     rm -rf /var/lib/apt/lists/*
+
+# Copy dependency build script and CMake dependency definitions
+COPY .github/docker/build-deps.sh /tmp/src/.github/docker/build-deps.sh
+COPY CMake/Dependencies/ /tmp/src/CMake/Dependencies/
+RUN chmod +x /tmp/src/.github/docker/build-deps.sh
+
+# ── x86_64 old MbedTLS v2.28.8 (gcc-4.4) ──
+# Note: CXX defaults to system g++ (needed for gtest C++ compilation)
+RUN /tmp/src/.github/docker/build-deps.sh /opt/deps/x86_64-mbedtls-old \
+    --cc=gcc-4.4 --ssl=mbedtls --old-mbedtls
+
+# Clean up build sources
+RUN rm -rf /tmp/src
