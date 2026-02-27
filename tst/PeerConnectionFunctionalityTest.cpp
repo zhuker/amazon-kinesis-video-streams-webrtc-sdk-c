@@ -560,8 +560,10 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersThenDisconnectTest)
     RtcConfiguration configuration{};
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
     UINT32 i;
+    constexpr UINT64 disconnectionTimeout = 2 * HUNDREDS_OF_NANOS_IN_A_SECOND;
 
     initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceDisconnectionTimeout = disconnectionTimeout;
 
     EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
     EXPECT_EQ(createPeerConnection(&configuration, &answerPc), STATUS_SUCCESS);
@@ -571,7 +573,7 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersThenDisconnectTest)
     // free offerPc so it wont send anymore keep alives and answerPc will detect disconnection
     freePeerConnection(&offerPc);
 
-    THREAD_SLEEP(KVS_ICE_ENTER_STATE_DISCONNECTION_GRACE_PERIOD);
+    THREAD_SLEEP(disconnectionTimeout);
 
     for (i = 0; i < 10; ++i) {
         if (ATOMIC_LOAD(&stateChangeCount[RTC_PEER_CONNECTION_STATE_DISCONNECTED]) > 0) {
@@ -600,8 +602,14 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersExpectFailureBecauseNoCan
 
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), FALSE);
 
-    // give time for to gathering to time out.
-    THREAD_SLEEP(KVS_ICE_GATHER_REFLEXIVE_AND_RELAYED_CANDIDATE_TIMEOUT);
+    // Both peers should have already transitioned to failed state by the time connectTwoPeers returns.
+    // Poll briefly in case of scheduling delays.
+    for (UINT32 i = 0; i < 10; ++i) {
+        if (ATOMIC_LOAD(&stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]) == 2) {
+            break;
+        }
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+    }
     EXPECT_TRUE(ATOMIC_LOAD(&stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]) == 2);
 
     closePeerConnection(offerPc);
