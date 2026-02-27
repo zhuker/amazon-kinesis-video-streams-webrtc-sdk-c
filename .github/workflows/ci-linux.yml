@@ -47,11 +47,10 @@ jobs:
 
       - name: Build Docker images
         run: |
-          docker build -t webrtc-u22 -f .github/docker/ubuntu22.Dockerfile . &
-          docker build -t webrtc-u20 -f .github/docker/ubuntu20.Dockerfile . &
-          docker build -t webrtc-alpine -f .github/docker/alpine.Dockerfile . &
-          docker build -t webrtc-u24-sys-deps -f .github/docker/ubuntu24-sys-deps.Dockerfile . &
-          wait
+          docker build -t webrtc-u22 -f .github/docker/ubuntu22.Dockerfile .
+          docker build -t webrtc-u20 -f .github/docker/ubuntu20.Dockerfile .
+          docker build -t webrtc-alpine -f .github/docker/alpine.Dockerfile .
+          docker build -t webrtc-u24-sys-deps -f .github/docker/ubuntu24-sys-deps.Dockerfile .
 
       # ---------------------------------------------------------------
       # Ubuntu 24.04 system-deps build + test (no BUILD_DEPENDENCIES)
