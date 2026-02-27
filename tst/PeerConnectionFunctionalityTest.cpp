@@ -976,7 +976,7 @@ TEST_F(PeerConnectionFunctionalityTest, peerConnectionAnswerCloseConnection)
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
     closePeerConnection(answerPc);
-    EXPECT_EQ(stateChangeCount[RTC_PEER_CONNECTION_STATE_CLOSED], 2);
+    EXPECT_EQ(ATOMIC_LOAD(&stateChangeCount[RTC_PEER_CONNECTION_STATE_CLOSED]), 2);
     closePeerConnection(offerPc);
 
     freePeerConnection(&offerPc);
