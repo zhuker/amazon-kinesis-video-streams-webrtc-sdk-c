@@ -18,7 +18,12 @@ else()
 
   if (DEFINED CMAKE_OSX_SYSROOT AND NOT CMAKE_OSX_SYSROOT STREQUAL "")
       if ("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-        SET(OPENSSL_EXTRA ${OPENSSL_EXTRA} -I${CMAKE_OSX_SYSROOT}/usr/include -L${CMAKE_OSX_SYSROOT}/usr/lib)
+        # Skip macOS sysroot paths when cross-compiling for Android — the NDK
+        # toolchain sets its own sysroot; injecting MacOSX SDK headers causes
+        # "Unsupported architecture" errors from the cross-compiler.
+        if (NOT BUILD_OPENSSL_PLATFORM MATCHES "^android")
+          SET(OPENSSL_EXTRA ${OPENSSL_EXTRA} -I${CMAKE_OSX_SYSROOT}/usr/include -L${CMAKE_OSX_SYSROOT}/usr/lib)
+        endif()
       endif()
   endif()
 
