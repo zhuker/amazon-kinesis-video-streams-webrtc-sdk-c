@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
 # Copy dependency build script and CMake dependency definitions
 COPY .github/docker/build-deps.sh /tmp/src/.github/docker/build-deps.sh
 COPY CMake/Dependencies/ /tmp/src/CMake/Dependencies/
+COPY configs/ /tmp/src/configs/
 RUN chmod +x /tmp/src/.github/docker/build-deps.sh
 
 # ── x86_64 OpenSSL (shared) + signaling deps ──

@@ -118,11 +118,13 @@ if [[ "$USE_OPENSSL" == "ON" ]]; then
     -DOPENSSL_EXTRA=""
 
 elif [[ "$USE_MBEDTLS" == "ON" ]]; then
+  # Pass the same MBEDTLS_USER_CONFIG_FILE that CMakeLists.txt uses (line 163)
+  # so MbedTLS is compiled with MBEDTLS_SSL_DTLS_SRTP enabled.
   build_dep mbedtls \
     -DBUILD_STATIC_LIBS="$BUILD_STATIC" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_OLD_MBEDTLS_VERSION="$OLD_MBEDTLS" \
-    "-DCMAKE_C_FLAGS=${EXTRA_C_FLAGS} -std=c99"
+    "-DCMAKE_C_FLAGS=-I${SRC_DIR}/configs -DMBEDTLS_USER_CONFIG_FILE=\"<config_mbedtls.h>\" ${EXTRA_C_FLAGS} -std=c99"
 fi
 
 # ──────────────────────────────────────────────

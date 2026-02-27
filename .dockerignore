@@ -4,3 +4,4 @@
 *
 !.github/docker/build-deps.sh
 !CMake/Dependencies/
+!configs/
