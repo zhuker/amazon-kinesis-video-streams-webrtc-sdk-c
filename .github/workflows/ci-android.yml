@@ -154,6 +154,7 @@ jobs:
 
       - name: Build APK
         run: |
+          export PATH="/opt/homebrew/opt/openjdk/bin:${PATH}"
           cd android-test-app
           ./gradlew assembleDebug assembleDebugAndroidTest \
             -Pandroid.injected.build.abi=arm64-v8a
@@ -283,6 +284,7 @@ jobs:
 
       - name: Build APK
         run: |
+          export PATH="/opt/homebrew/opt/openjdk/bin:${PATH}"
           cd android-test-app
           ./gradlew assembleDebug assembleDebugAndroidTest \
             -Pandroid.injected.build.abi=armeabi-v7a
