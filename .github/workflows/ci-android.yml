@@ -59,7 +59,8 @@ jobs:
             -DBUILD_OPENSSL_PLATFORM=android-arm64 \
             -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-arm64-v8a/deps \
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
 
       - name: Build
         run: |
@@ -114,7 +115,8 @@ jobs:
             -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-arm64-v8a-asan/deps \
             -DADDRESS_SANITIZER=ON -DUNDEFINED_BEHAVIOR_SANITIZER=ON \
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
 
       - name: Build
         run: |
@@ -209,7 +211,8 @@ jobs:
             -DBUILD_OPENSSL_PLATFORM=android-arm \
             -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-armeabi-v7a/deps \
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
 
       - name: Build
         run: |
@@ -257,7 +260,8 @@ jobs:
             -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-armeabi-v7a-asan/deps \
             -DADDRESS_SANITIZER=ON -DUNDEFINED_BEHAVIOR_SANITIZER=ON \
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
 
       - name: Build
         run: |
