@@ -17,7 +17,7 @@ on:
       - 'doc/**'
 
 env:
-  AWS_KVS_LOG_LEVEL: 7
+  AWS_KVS_LOG_LEVEL: 3
   DEBIAN_FRONTEND: noninteractive
 
 permissions:
