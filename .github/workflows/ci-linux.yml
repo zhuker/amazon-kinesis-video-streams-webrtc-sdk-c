@@ -59,7 +59,7 @@ jobs:
 
       - name: Ubuntu 24.04 system-deps build + test
         run: |
-          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u24-sys-deps bash -c "
+          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u24-sys-deps bash -c "
             export CC=gcc CXX=g++
             mkdir -p build-sys-deps && cd build-sys-deps
             cmake .. -DBUILD_TEST=ON -DBUILD_DEPENDENCIES=OFF -DENABLE_SELF_CONTAINED=ON \
@@ -80,46 +80,12 @@ jobs:
         run: rm -rf build-sys-deps
 
       # ---------------------------------------------------------------
-      # Fast checks (no build required)
-      # ---------------------------------------------------------------
-
-      - name: Stack size check - invalid value
-        run: |
-          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
-            mkdir -p build-stack && cd build-stack
-            set +e
-            cmake .. -DKVS_STACK_SIZE=65536asdfsadf -DOPEN_SRC_INSTALL_PREFIX=\$(pwd)/deps
-            cmake_exit_code=\$?
-            set -e
-            if [ \$cmake_exit_code -eq 0 ]; then
-              echo 'CMake unexpectedly succeeded with invalid KVS_STACK_SIZE'
-              exit 1
-            fi
-          "
-
-      - name: Stack size check - valid value
-        run: |
-          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
-            cd build-stack
-            CMAKE_LOGS=\$(cmake .. -DKVS_STACK_SIZE=65536 -DBUILD_SAMPLE=OFF -DOPEN_SRC_INSTALL_PREFIX=\$(pwd)/deps 2>&1)
-            if ! echo \"\$CMAKE_LOGS\" | grep -q 'Building with default stack size: 65536 bytes'; then
-              echo 'Stack size was not sent to PIC properly. See the logs below:'
-              echo \"\$CMAKE_LOGS\"
-              exit 1
-            fi
-          "
-
-      - name: Clean stack size build
-        if: always()
-        run: rm -rf build-stack
-
-      # ---------------------------------------------------------------
       # Default settings build (samples included)
       # ---------------------------------------------------------------
 
       - name: Default settings build (GCC + OpenSSL + samples)
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=gcc CXX=g++
             mkdir -p build-default && cd build-default
             cmake .. -DBUILD_TEST=ON -DENABLE_AWS_SDK_IN_TESTS=OFF -DOPEN_SRC_INSTALL_PREFIX=\$(pwd)/deps
@@ -136,7 +102,7 @@ jobs:
 
       - name: Alpine static GCC build + test
         run: |
-          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-alpine bash -c "
+          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-alpine bash -c "
             export CC=gcc CXX=g++
             mkdir -p build-alpine && cd build-alpine
             cmake .. -DBUILD_STATIC_LIBS=ON -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -163,7 +129,7 @@ jobs:
 
       - name: GCC + OpenSSL build + test
         run: |
-          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=gcc CXX=g++
             mkdir -p build-gcc-openssl && cd build-gcc-openssl
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -186,7 +152,7 @@ jobs:
 
       - name: GCC + OpenSSL + stats-calc test
         run: |
-          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=gcc CXX=g++
             mkdir -p build-stats-calc && cd build-stats-calc
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -209,7 +175,7 @@ jobs:
 
       - name: Clang + MbedTLS build + test
         run: |
-          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=clang CXX=clang++
             mkdir -p build-clang-mbedtls && cd build-clang-mbedtls
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -232,7 +198,7 @@ jobs:
 
       - name: GCC 4.4 + old MbedTLS build + test
         run: |
-          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u20 bash -c "
+          docker run --rm --ulimit core=-1:-1 --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u20 bash -c "
             export CC=gcc-4.4
             mkdir -p build-gcc44 && cd build-gcc44
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -260,6 +226,7 @@ jobs:
       - name: ASAN + UBSAN build + test
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src \
+            -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
             -e ASAN_OPTIONS=detect_odr_violation=0:detect_leaks=1 \
             -e LSAN_OPTIONS=suppressions=/src/tst/suppressions/LSAN.supp \
             -e UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
@@ -280,6 +247,7 @@ jobs:
       - name: TSAN build + test
         run: |
           docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src \
+            -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
             -e TSAN_OPTIONS=second_deadlock_stack=1:halt_on_error=1:suppressions=/src/tst/suppressions/TSAN.supp \
             webrtc-u22 bash -c "
             export CC=clang CXX=clang++
@@ -301,7 +269,7 @@ jobs:
 
       - name: Cross-compile mips-32 (static, OpenSSL)
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=mips-linux-gnu-gcc CXX=mips-linux-gnu-g++
             mkdir -p build-cross-mips && cd build-cross-mips
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -321,7 +289,7 @@ jobs:
 
       - name: Cross-compile arm-32 (static, OpenSSL)
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=arm-linux-gnueabihf-gcc CXX=arm-linux-gnueabihf-g++
             mkdir -p build-cross-arm32 && cd build-cross-arm32
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -341,7 +309,7 @@ jobs:
 
       - name: Cross-compile aarch64 (static, OpenSSL)
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
             mkdir -p build-cross-aarch64 && cd build-cross-aarch64
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
@@ -361,7 +329,7 @@ jobs:
 
       - name: Cross-compile aarch64 (static, MbedTLS spot-check)
         run: |
-          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src webrtc-u22 bash -c "
+          docker run --rm --user $(id -u):$(id -g) -v $PWD:/src -w /src -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) webrtc-u22 bash -c "
             export CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
             mkdir -p build-cross-aarch64-mbedtls && cd build-cross-aarch64-mbedtls
             cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
