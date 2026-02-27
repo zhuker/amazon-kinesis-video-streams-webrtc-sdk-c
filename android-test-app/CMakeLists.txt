@@ -37,8 +37,11 @@ endif()
 set(OPEN_SRC_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/deps-install" CACHE PATH "" FORCE)
 
 # The NDK legacy toolchain sets FIND_ROOT_PATH_MODE to ONLY, which prevents
-# find_package(OpenSSL) from finding the self-built library at OPEN_SRC_INSTALL_PREFIX.
-# Override to BOTH so cmake searches both the NDK sysroot and absolute paths.
+# find_package(OpenSSL/GTest) from finding self-built libraries at OPEN_SRC_INSTALL_PREFIX.
+# Two-pronged fix:
+# 1. Add OPEN_SRC_INSTALL_PREFIX to CMAKE_FIND_ROOT_PATH so cmake searches it even in ONLY mode.
+# 2. Also override modes to BOTH as a belt-and-suspenders fallback.
+list(APPEND CMAKE_FIND_ROOT_PATH "${OPEN_SRC_INSTALL_PREFIX}")
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH CACHE STRING "" FORCE)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH CACHE STRING "" FORCE)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH CACHE STRING "" FORCE)
