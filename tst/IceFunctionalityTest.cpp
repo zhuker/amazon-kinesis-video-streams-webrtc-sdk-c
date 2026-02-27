@@ -205,10 +205,8 @@ TEST_F(IceFunctionalityTest, connectionListenerFunctionalityTest)
     threadId = pConnectionListener->receiveDataRoutine;
     MUTEX_UNLOCK(pConnectionListener->lock);
     EXPECT_TRUE(IS_VALID_TID_VALUE(threadId));
-    ATOMIC_STORE_BOOL(&pConnectionListener->terminate, TRUE);
 
-    THREAD_JOIN(threadId, NULL);
-
+    // freeConnectionListener handles terminate + kick + join internally
     EXPECT_EQ(STATUS_SUCCESS, freeConnectionListener(&pConnectionListener));
 
     EXPECT_EQ(STATUS_SUCCESS, freeSocketConnection(&pSocketConnection));
