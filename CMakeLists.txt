@@ -73,10 +73,12 @@ else()
   endif()
 endif()
 
+if (BUILD_DEPENDENCIES)
 if(NOT OPEN_SRC_INSTALL_PREFIX OR OPEN_SRC_INSTALL_PREFIX STREQUAL "")
   set(OPEN_SRC_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/open-source" CACHE PATH "Libraries will be downloaded and built in this directory.")
 else()
   set(OPEN_SRC_INSTALL_PREFIX ${OPEN_SRC_INSTALL_PREFIX} CACHE PATH "Libraries will be downloaded and built in this directory.")
+endif()
 endif()
 
 if(NOT WIN32)
@@ -422,6 +424,10 @@ if (ENABLE_DATA_CHANNEL)
       )
 endif()
 
+if (ENABLE_SIGNALING)
+  add_definitions(-DENABLE_SIGNALING)
+endif()
+
 if (INSTRUMENTED_ALLOCATORS)
   add_definitions(-DINSTRUMENTED_ALLOCATORS)
 endif()
@@ -444,6 +450,8 @@ file(
   "src/source/PeerConnection/PeerConnection.c"
   "src/source/PeerConnection/Retransmitter.c"
   "src/source/PeerConnection/Rtcp.c"
+  "src/source/PeerConnection/Gcc.c"
+  "src/source/PeerConnection/Pacer.c"
   "src/source/PeerConnection/Rtp.c"
   "src/source/PeerConnection/SessionDescription.c"
   "src/source/Rtcp/*.c"
@@ -516,6 +524,10 @@ target_link_libraries(
           ${GPERFTOOLS_PROFILER_LIBRARIES}
           ${EXTRA_DEPS})
 
+if(NOT WIN32)
+  target_link_libraries(kvsWebrtcClient PRIVATE m)
+endif()
+
 if(ENABLE_SIGNALING)
 add_library(kvsWebrtcSignalingClient ${LINKAGE} ${WEBRTC_SIGNALING_CLIENT_SOURCE_FILES})
 
@@ -545,7 +557,9 @@ endif()
 
 if(COMPILER_WARNINGS)
   target_compile_options(kvsWebrtcClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
-  target_compile_options(kvsWebrtcSignalingClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
+  if(ENABLE_SIGNALING)
+    target_compile_options(kvsWebrtcSignalingClient PUBLIC -Wall -Werror -pedantic -Wextra -Wno-unknown-warning-option)
+  endif()
 endif()
 
 if(ENABLE_KVS_THREADPOOL)

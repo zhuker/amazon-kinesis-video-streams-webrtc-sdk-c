@@ -68,6 +68,9 @@ typedef struct {
     UINT64 onFrameCustomData;
     RtcOnFrame onFrame;
 
+    UINT64 onPartialFrameCustomData;
+    RtcOnFrame onPartialFrame;
+
     UINT64 onBandwidthEstimationCustomData;
     RtcOnBandwidthEstimation onBandwidthEstimation;
     UINT64 onPictureLossCustomData;
@@ -82,6 +85,8 @@ typedef struct {
     RtcOutboundRtpStreamStats outboundStats;
     RtcRemoteInboundRtpStreamStats remoteInboundStats;
     RtcInboundRtpStreamStats inboundStats;
+
+    UINT8 firSequenceNumber;
 } KvsRtpTransceiver, *PKvsRtpTransceiver;
 
 STATUS createKvsRtpTransceiver(RTC_RTP_TRANSCEIVER_DIRECTION, PKvsPeerConnection, UINT32, UINT32, PRtcMediaStreamTrack, PJitterBuffer, RTC_CODEC,
@@ -90,7 +95,13 @@ STATUS freeKvsRtpTransceiver(PKvsRtpTransceiver*);
 
 STATUS kvsRtpTransceiverSetJitterBuffer(PKvsRtpTransceiver, PJitterBuffer);
 
-#define CONVERT_TIMESTAMP_TO_RTP(clockRate, pts) ((UINT64) ((DOUBLE) (pts) * ((DOUBLE) (clockRate) / HUNDREDS_OF_NANOS_IN_A_SECOND)))
+// handles very large timestamp values, old style
+#define CONVERT_TIMESTAMP_TO_RTP_LARGE(clockRate, pts) ((UINT64) ((DOUBLE) (pts) * ((DOUBLE) (clockRate) / HUNDREDS_OF_NANOS_IN_A_SECOND)))
+
+// for timestamps that do not overflow UINT64 (pts * clockRate) this function converts to kinesis timescale accurately
+#define CONVERT_TIMESTAMP_TO_RTP_PRECISE(clockRate, pts) ((UINT64) ((UINT64) (pts) * (UINT64) (clockRate) / HUNDREDS_OF_NANOS_IN_A_SECOND))
+
+#define CONVERT_TIMESTAMP_TO_RTP CONVERT_TIMESTAMP_TO_RTP_PRECISE
 
 STATUS writeRtpPacket(PKvsPeerConnection pKvsPeerConnection, PRtpPacket pRtpPacket);
 

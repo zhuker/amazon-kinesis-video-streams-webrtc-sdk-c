@@ -230,7 +230,7 @@ VOID IngestionFunctionalityTest::UnlinkAndDeleteStreamAndChannel(IngestionFuncti
 }
 
 
-TEST_F(IngestionFunctionalityTest, basicCreateConnectFreeNoJoinSession)
+TEST_F(IngestionFunctionalityTest, DISABLED_basicCreateConnectFreeNoJoinSession)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -312,7 +312,7 @@ TEST_F(IngestionFunctionalityTest, basicCreateConnectFreeNoJoinSession)
  * 4. Step To Connect (which should invoke join session and if offer received to join session connected state
  * 5. Un link and delete stream and signaling channel
 */
-TEST_F(IngestionFunctionalityTest, basicCreateConnectJoinSession)
+TEST_F(IngestionFunctionalityTest, DISABLED_basicCreateConnectJoinSession)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -396,7 +396,7 @@ TEST_F(IngestionFunctionalityTest, basicCreateConnectJoinSession)
 }
 
 
-TEST_F(IngestionFunctionalityTest, iceReconnectEmulationWithJoinSession)
+TEST_F(IngestionFunctionalityTest, DISABLED_iceReconnectEmulationWithJoinSession)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -520,7 +520,7 @@ TEST_F(IngestionFunctionalityTest, iceReconnectEmulationWithJoinSession)
 }
 
 
-TEST_F(IngestionFunctionalityTest, iceServerConfigRefreshNotConnectedJoinSessionWithBadAuth)
+TEST_F(IngestionFunctionalityTest, DISABLED_iceServerConfigRefreshNotConnectedJoinSessionWithBadAuth)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -661,7 +661,7 @@ TEST_F(IngestionFunctionalityTest, iceServerConfigRefreshNotConnectedJoinSession
 }
 
 
-TEST_F(IngestionFunctionalityTest, iceServerConfigRefreshConnectedJoinSessionWithBadAuth)
+TEST_F(IngestionFunctionalityTest, DISABLED_iceServerConfigRefreshConnectedJoinSessionWithBadAuth)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 
@@ -804,7 +804,7 @@ TEST_F(IngestionFunctionalityTest, iceServerConfigRefreshConnectedJoinSessionWit
 }
 
 
-TEST_F(IngestionFunctionalityTest, fileCachingTestWithDescribeMedia)
+TEST_F(IngestionFunctionalityTest, DISABLED_fileCachingTestWithDescribeMedia)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
 

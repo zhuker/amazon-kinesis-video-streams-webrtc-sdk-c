@@ -796,6 +796,7 @@ extern "C" {
  */
 #define CREATE_SIGNALING_CLIENT_RETRY_ATTEMPTS_SENTINEL_VALUE -1
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Definition of the signaling client handle
  */
@@ -815,6 +816,7 @@ typedef SIGNALING_CLIENT_HANDLE* PSIGNALING_CLIENT_HANDLE;
 #ifndef IS_VALID_SIGNALING_CLIENT_HANDLE
 #define IS_VALID_SIGNALING_CLIENT_HANDLE(h) ((h) != INVALID_SIGNALING_CLIENT_HANDLE_VALUE)
 #endif
+#endif /* ENABLE_SIGNALING */
 
 ////////////////////////////////////////////////
 /// Public Enums
@@ -895,6 +897,7 @@ typedef enum {
     RTC_RTP_TRANSCEIVER_DIRECTION_INACTIVE = 4, //!< This indicates that the peer can not send or receive data
 } RTC_RTP_TRANSCEIVER_DIRECTION;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Defines channel status as reported by the service
  */
@@ -965,6 +968,7 @@ typedef enum {
     SIGNALING_CHANNEL_ROLE_TYPE_MASTER,  //!< Channel role is master
     SIGNALING_CHANNEL_ROLE_TYPE_VIEWER,  //!< Channel role is viewer
 } SIGNALING_CHANNEL_ROLE_TYPE;
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief Detected network environment
@@ -978,6 +982,7 @@ typedef enum {
     NAT_BEHAVIOR_PORT_DEPENDENT,       //!< Nat behavior changes when external address or port is changed.
 } NAT_BEHAVIOR;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Type of caching implementation to use with the signaling client
  */
@@ -1000,6 +1005,7 @@ typedef enum {
                                                         //!< information will be cached into file
                                                         //!< which will allow the cache to persist next time the signaling client is created.
 } SIGNALING_API_CALL_CACHE_TYPE;
+#endif /* ENABLE_SIGNALING */
 
 /*!@} */
 
@@ -1044,6 +1050,49 @@ typedef VOID (*RtcOnBandwidthEstimation)(UINT64, DOUBLE);
  *
  */
 typedef VOID (*RtcOnSenderBandwidthEstimation)(UINT64, UINT32, UINT32, UINT32, UINT32, UINT64);
+
+/**
+ * @brief Per-packet report from TWCC feedback for congestion control algorithms.
+ *
+ * This structure provides detailed information about individual packets from
+ * TWCC (Transport-Wide Congestion Control) feedback. Applications can use this
+ * to implement congestion control algorithms like GCC (Google Congestion Control).
+ */
+typedef struct {
+    UINT16 seqNum;         //!< Transport-wide sequence number
+    UINT64 sendTimeKvs;    //!< Time packet was sent (100ns units from GETTIME())
+    UINT64 arrivalTimeKvs; //!< Time remote peer received packet (0 = lost/not received)
+    UINT32 packetSize;     //!< Packet size in bytes
+    BOOL received;         //!< TRUE if packet was received, FALSE if lost
+} TwccPacketReport, *PTwccPacketReport;
+
+/**
+ * @brief RtcOnTwccPacketReport is fired when TWCC feedback is received, providing
+ * per-packet arrival time and loss information for congestion control.
+ *
+ * Applications can implement GCC or other congestion control algorithms using
+ * this callback. The SDK also provides GccController as a reference implementation.
+ *
+ * @param[in] UINT64 User customData passed during registration
+ * @param[in] PTwccPacketReport Array of TwccPacketReport structures
+ * @param[in] UINT32 Number of reports in the array
+ * @param[in] UINT64 Estimated round-trip time in 100ns units (0 if unknown)
+ */
+typedef VOID (*RtcOnTwccPacketReport)(UINT64, PTwccPacketReport, UINT32, UINT64);
+
+/**
+ * @brief Configuration for the packet pacer.
+ *
+ * The pacer smooths packet transmission to avoid bursts that can cause
+ * network congestion. This is recommended when using GCC congestion control.
+ */
+typedef struct {
+    UINT64 initialBitrateBps; //!< Initial target bitrate (default: 300 kbps)
+    UINT32 maxQueueSize;      //!< Maximum packets in queue (default: 500)
+    UINT32 maxQueueBytes;     //!< Maximum bytes in queue (default: 2MB)
+    DOUBLE pacingFactor;      //!< Pacing factor multiplier (default: 2.5, like libwebrtc)
+    UINT64 maxQueueTimeKvs;   //!< Max time packet can wait in queue in 100ns units (0=disabled)
+} RtcPacerConfig, *PRtcPacerConfig;
 
 /**
  * @brief RtcOnPictureLoss is fired everytime a Picture Loss Indication (PLI)
@@ -1301,6 +1350,7 @@ typedef struct {
                                                               //!<
 } RtcIceCandidateInit, *PRtcIceCandidateInit;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief Structure defining the basic signaling message
  */
@@ -1522,6 +1572,7 @@ typedef struct {
                                                     //!< The values are in the range of 5 and 120 seconds
     UINT64 creationTime;                            //!< Timestamp of when the channel gets created
 } SignalingChannelDescription, *PSignalingChannelDescription;
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief RtcRtpTransceiverInit is used to configure a transceiver when creating it
@@ -1586,6 +1637,7 @@ typedef struct {
     RtcTransportStats rtcTransportStats;            //!< Transport stats. Reference in Stats.h
 } RtcStreamMetrics, *PRtcStreamMetrics;
 
+#ifdef ENABLE_SIGNALING
 /**
  * @brief SignalingStats Collection of signaling related stats. Can be expanded in the future
  */
@@ -1596,6 +1648,7 @@ typedef struct {
     UINT64 signalingCallTime;
     SignalingClientStats signalingClientStats; //!< Signaling client metrics stats. Reference in Stats.h
 } SignalingClientMetrics, *PSignalingClientMetrics;
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief KVS ICE Agent Collection of ICE agent related stats. Can be expanded in the future
@@ -1706,6 +1759,87 @@ PUBLIC_API STATUS peerConnectionOnIceCandidate(PRtcPeerConnection, UINT64, RtcOn
  * @return STATUS code of the execution. STATUS_SUCCESS on success
  */
 PUBLIC_API STATUS peerConnectionOnSenderBandwidthEstimation(PRtcPeerConnection, UINT64, RtcOnSenderBandwidthEstimation);
+
+/**
+ * @brief Set a callback for per-packet TWCC feedback data.
+ *
+ * This callback provides detailed per-packet arrival time and loss information
+ * from TWCC feedback. Applications can use this to implement congestion control
+ * algorithms like GCC (Google Congestion Control), SCReAM, or custom algorithms.
+ *
+ * The SDK provides GccController as a reference implementation that can be
+ * hooked to this callback.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ * @param[in] UINT64 User customData that will be passed to the callback
+ * @param[in] RtcOnTwccPacketReport User callback for TWCC packet reports
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS peerConnectionOnTwccPacketReport(PRtcPeerConnection, UINT64, RtcOnTwccPacketReport);
+
+/**
+ * Enable packet pacing for smooth transmission.
+ *
+ * Pacing spreads packet transmission over time to avoid bursts that can cause
+ * network congestion. This is recommended when using GCC congestion control
+ * as it provides accurate delay measurements for the delay-based controller.
+ *
+ * NOTE: Once enabled, pacing remains active until the peer connection is freed.
+ * The pacer automatically starts when the peer connection reaches CONNECTED state.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ * @param[in] PRtcPacerConfig Optional configuration (NULL for defaults)
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS peerConnectionEnablePacing(PRtcPeerConnection, PRtcPacerConfig);
+
+/**
+ * Set the target bitrate for the pacer.
+ *
+ * This should be called when your congestion control algorithm (e.g., GCC)
+ * determines a new target bitrate. The pacer will adjust its send rate accordingly.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ * @param[in] UINT64 Target bitrate in bits per second
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS peerConnectionSetPacerBitrate(PRtcPeerConnection, UINT64);
+
+/**
+ * Get current pacer target bitrate.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ *
+ * @return Current target bitrate in bps, or 0 if pacing is not enabled
+ */
+PUBLIC_API UINT64 peerConnectionGetPacerBitrate(PRtcPeerConnection);
+
+/**
+ * Set the maximum queue time for frame-rate pacing.
+ *
+ * When set to a non-zero value, the pacer will ensure all packets in the queue
+ * are sent within this time limit, even if that requires exceeding the normal
+ * bitrate-based pacing rate. This is useful for real-time video where frames
+ * must be delivered before the next frame arrives.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ * @param[in] UINT64 Maximum queue time in 100ns units (0 to disable)
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS peerConnectionSetPacerMaxQueueTime(PRtcPeerConnection, UINT64);
+
+/**
+ * Get current pacer maximum queue time.
+ *
+ * @param[in] PRtcPeerConnection Initialized RtcPeerConnection
+ *
+ * @return Current max queue time in 100ns units, or 0 if disabled or pacing not enabled
+ */
+PUBLIC_API UINT64 peerConnectionGetPacerMaxQueueTime(PRtcPeerConnection);
 
 /**
  * Set a callback for data channel
@@ -1894,6 +2028,17 @@ PUBLIC_API STATUS addTransceiver(PRtcPeerConnection, PRtcMediaStreamTrack, PRtcR
  * @return STATUS code of the execution. STATUS_SUCCESS on success
  */
 PUBLIC_API STATUS transceiverOnFrame(PRtcRtpTransceiver, UINT64, RtcOnFrame);
+
+/**
+ * @brief Set a callback for partially delivered frames (when some packets are lost/dropped)
+ *
+ * @param[in] PRtcRtpTransceiver Populated RtcRtpTransceiver struct
+ * @param[in] UINT64 User customData that will be passed along when RtcOnFrame is called
+ * @param[in] RtcOnFrame User RtcOnFrame callback for partial frames
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS transceiverOnPartialFrame(PRtcRtpTransceiver, UINT64, RtcOnFrame);
 
 /**
  * @brief Set a callback for bandwidth estimation results
@@ -2208,7 +2353,7 @@ PUBLIC_API STATUS signalingClientDeleteSync(SIGNALING_CLIENT_HANDLE);
  * @param[in,out] PSignalingClientMetrics Signaling stats
  */
 PUBLIC_API STATUS signalingClientGetMetrics(SIGNALING_CLIENT_HANDLE, PSignalingClientMetrics);
-#endif
+#endif /* ENABLE_SIGNALING */
 
 /**
  * @brief Get peer connection related metrics
@@ -2262,6 +2407,37 @@ PUBLIC_API STATUS createRtcCertificate(PRtcCertificate*);
  * @return STATUS code of the execution. STATUS_SUCCESS on success
  */
 PUBLIC_API STATUS freeRtcCertificate(PRtcCertificate);
+
+/**
+ * @brief Requests a key frame from the remote peer.
+ *
+ * This function sends a Picture Loss Indication (PLI) packet to the remote peer,
+ * requesting a key frame. This is useful when the decoder detects packet loss
+ * or corruption and needs a fresh key frame to recover.
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS requestKeyFrame(PRtcRtpTransceiver);
+
+/**
+ * @brief Sends a Picture Loss Indication (PLI) packet to the remote peer.
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverSendPli(PRtcRtpTransceiver);
+
+/**
+ * @brief Sends a Full Intra Request (FIR) packet to the remote peer.
+ *
+ * @param[in] PRtcRtpTransceiver The transceiver associated with the media stream.
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success.
+ */
+PUBLIC_API STATUS transceiverSendFir(PRtcRtpTransceiver);
 
 /*!@} */
 #ifdef __cplusplus

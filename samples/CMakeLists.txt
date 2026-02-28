@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.6.3)
 
-project(KinesisVideoWebRTCClientSamples LANGUAGES C)
+project(KinesisVideoWebRTCClientSamples LANGUAGES C CXX)
 
 #set(OPEN_SRC_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/open-source" CACHE PATH "Libraries will be downloaded and build in this directory.")
 
@@ -54,6 +54,8 @@ else()
   message("gstreamer not found. Will not build gstreamer samples")
 endif()
 
+find_package(Threads REQUIRED)
+
 include_directories(${OPEN_SRC_INSTALL_PREFIX}/include)
 include_directories(${OPEN_SRC_INCLUDE_DIRS})
 link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
@@ -61,7 +63,19 @@ link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
 # copy sample frames to this subproject build folder, in case developer runs sample program with command `kvsWebrtcClientMaster` from `build/samples` dir.
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/opusSampleFrames" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h264SampleFrames" DESTINATION .)
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/bbbH264" DESTINATION .)
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/girH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h265SampleFrames" DESTINATION .)
+
+
+# H264 Jitter Buffer Simulator (standalone, no signaling deps)
+add_executable(
+        h264JitterBufferSim
+        h264JitterBufferSim.cpp)
+target_include_directories(h264JitterBufferSim PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/source)
+target_link_libraries(h264JitterBufferSim kvsWebrtcClient kvspicUtils)
+set_target_properties(h264JitterBufferSim PROPERTIES CXX_STANDARD 17)
 
 if (ENABLE_SIGNALING)
 add_executable(
@@ -72,6 +86,46 @@ target_link_libraries(kvsWebrtcClientMaster kvsWebrtcClient kvsWebrtcSignalingCl
 endif ()
 
 if (ENABLE_SIGNALING)
+add_executable(
+        discoverNatBehavior
+        discoverNatBehavior.c)
+target_link_libraries(discoverNatBehavior kvsWebrtcClient ${EXTRA_DEPS})
+
+# WHEP Server (C++ HTTP-based WebRTC playback, no signaling deps)
+add_executable(
+        whepServer
+        SamplesCommon.c
+        whepServer.cpp)
+target_link_libraries(whepServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils Threads::Threads)
+set_target_properties(whepServer PROPERTIES CXX_STANDARD 17)
+
+# WHIP Server (C++ HTTP-based WebRTC ingestion per RFC 9725, no signaling deps)
+add_executable(
+        whipServer
+        SamplesCommon.c
+        whipServer.cpp)
+target_link_libraries(whipServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils Threads::Threads)
+set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
+
+# Copy examples directory for WHEP/WHIP server static files
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/examples" DESTINATION .)
+
+# Custom signaling sample (copy-paste SDP, no AWS signaling deps)
+add_executable(
+        customSignaling
+        SamplesCommon.c
+        customSignaling.c)
+target_link_libraries(customSignaling kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
+
+# --- Samples that require signaling (they compile Common.c which uses signaling API) ---
+if(ENABLE_SIGNALING)
+
+add_executable(
+  kvsWebrtcClientMaster
+  Common.c
+  kvsWebRTCClientMaster.c)
+target_link_libraries(kvsWebrtcClientMaster kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
+
 add_executable(
   kvsWebrtcClientViewer
   Common.c
@@ -111,7 +165,7 @@ if(GST_FOUND AND ENABLE_SIGNALING)
 endif()
 
 if (ENABLE_SIGNALING)
-install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior
+install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior whepServer whipServer h264JitterBufferSim
   RUNTIME DESTINATION bin
 )
 else ()
@@ -119,4 +173,3 @@ install(TARGETS discoverNatBehavior
         RUNTIME DESTINATION bin
 )
 endif ()
-

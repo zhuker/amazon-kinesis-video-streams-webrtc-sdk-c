@@ -165,33 +165,45 @@ CleanUp:
     return retStatus;
 }
 
+static VOID handleSctpTimers(PSctpSession pSctpSession)
+{
+    UINT64 now = GETTIME();
+    UINT32 elapsedMs = 0;
+    UINT64 lastTime = (UINT64) ATOMIC_EXCHANGE(&pSctpSession->lastTimerTime, (SIZE_T) now);
+    if (lastTime != 0) {
+        elapsedMs = (UINT32) ((now - lastTime) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
+    usrsctp_handle_timers(elapsedMs);
+}
+
 STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL isBinary, PBYTE pMessage, UINT32 pMessageLen)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
+    struct sctp_sendv_spa spa;
 
     CHK(pSctpSession != NULL && pMessage != NULL, STATUS_NULL_ARG);
 
-    MEMSET(&pSctpSession->spa, 0x00, SIZEOF(struct sctp_sendv_spa));
+    MEMSET(&spa, 0x00, SIZEOF(struct sctp_sendv_spa));
 
-    pSctpSession->spa.sendv_flags |= SCTP_SEND_SNDINFO_VALID;
-    pSctpSession->spa.sendv_sndinfo.snd_sid = streamId;
+    spa.sendv_flags |= SCTP_SEND_SNDINFO_VALID;
+    spa.sendv_sndinfo.snd_sid = streamId;
 
     if ((pSctpSession->packet[1] & DCEP_DATA_CHANNEL_RELIABLE_UNORDERED) != 0) {
-        pSctpSession->spa.sendv_sndinfo.snd_flags |= SCTP_UNORDERED;
+        spa.sendv_sndinfo.snd_flags |= SCTP_UNORDERED;
     }
     if ((pSctpSession->packet[1] & DCEP_DATA_CHANNEL_REXMIT) != 0) {
-        pSctpSession->spa.sendv_prinfo.pr_policy = SCTP_PR_SCTP_RTX;
-        pSctpSession->spa.sendv_prinfo.pr_value = getUnalignedInt32BigEndian((PINT32) (pSctpSession->packet + SIZEOF(UINT32)));
+        spa.sendv_prinfo.pr_policy = SCTP_PR_SCTP_RTX;
+        spa.sendv_prinfo.pr_value = getUnalignedInt32BigEndian((PINT32) (pSctpSession->packet + SIZEOF(UINT32)));
     }
     if ((pSctpSession->packet[1] & DCEP_DATA_CHANNEL_TIMED) != 0) {
-        pSctpSession->spa.sendv_prinfo.pr_policy = SCTP_PR_SCTP_TTL;
-        pSctpSession->spa.sendv_prinfo.pr_value = getUnalignedInt32BigEndian((PINT32) (pSctpSession->packet + SIZEOF(UINT32)));
+        spa.sendv_prinfo.pr_policy = SCTP_PR_SCTP_TTL;
+        spa.sendv_prinfo.pr_value = getUnalignedInt32BigEndian((PINT32) (pSctpSession->packet + SIZEOF(UINT32)));
     }
 
-    putInt32((PINT32) &pSctpSession->spa.sendv_sndinfo.snd_ppid, isBinary ? SCTP_PPID_BINARY : SCTP_PPID_STRING);
-    CHK(usrsctp_sendv(pSctpSession->socket, pMessage, pMessageLen, NULL, 0, &pSctpSession->spa, SIZEOF(pSctpSession->spa), SCTP_SENDV_SPA, 0) > 0,
-        STATUS_INTERNAL_ERROR);
+    putInt32((PINT32) &spa.sendv_sndinfo.snd_ppid, isBinary ? SCTP_PPID_BINARY : SCTP_PPID_STRING);
+    CHK(usrsctp_sendv(pSctpSession->socket, pMessage, pMessageLen, NULL, 0, &spa, SIZEOF(spa), SCTP_SENDV_SPA, 0) > 0, STATUS_INTERNAL_ERROR);
+    handleSctpTimers(pSctpSession);
 
 CleanUp:
     LEAVES();
@@ -295,6 +307,7 @@ STATUS putSctpPacket(PSctpSession pSctpSession, PBYTE buf, UINT32 bufLen)
     STATUS retStatus = STATUS_SUCCESS;
 
     usrsctp_conninput(pSctpSession, buf, bufLen, 0);
+    handleSctpTimers(pSctpSession);
 
     LEAVES();
     return retStatus;

@@ -245,8 +245,45 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
     CHK(pKvsPeerConnection != NULL && pBuffer != NULL, STATUS_NULL_ARG);
     CHK(bufferLen >= MIN_HEADER_LENGTH, STATUS_INVALID_ARG);
 
-    ssrc = getInt32(*(PUINT32) (pBuffer + SSRC_OFFSET));
+    now = GETTIME();
 
+    // IMPORTANT: Track TWCC BEFORE decryption!
+    // RTP header and extensions are NOT encrypted by SRTP (only payload is)
+    // This ensures we track TWCC even for packets that fail SRTP replay check
+    if (pKvsPeerConnection->twccExtId != 0) {
+        // Parse RTP header from raw (still encrypted) packet to get TWCC extension
+        PRtpPacket pTwccPacket = NULL;
+        PBYTE pTwccBuffer = (PBYTE) MEMALLOC(bufferLen);
+        if (pTwccBuffer != NULL) {
+            MEMCPY(pTwccBuffer, pBuffer, bufferLen);
+            if (STATUS_SUCCEEDED(createRtpPacketFromBytes(pTwccBuffer, bufferLen, &pTwccPacket))) {
+                pTwccPacket->receivedTime = now;
+                if (pTwccPacket->header.extension && pTwccPacket->header.extensionProfile == TWCC_EXT_PROFILE) {
+                    twccReceiverOnPacketReceived(pKvsPeerConnection, pTwccPacket);
+                }
+                freeRtpPacket(&pTwccPacket);
+            } else {
+                MEMFREE(pTwccBuffer);
+            }
+        }
+    }
+
+    // Now decrypt
+    if (STATUS_FAILED(retStatus = decryptSrtpPacket(pKvsPeerConnection->pSrtpSession, pBuffer, (PINT32) &bufferLen))) {
+        DLOGW("decryptSrtpPacket failed with 0x%08x", retStatus);
+        packetsFailedDecryption++;
+        CHK(FALSE, STATUS_SUCCESS);
+    }
+
+    CHK(NULL != (pPayload = (PBYTE) MEMALLOC(bufferLen)), STATUS_NOT_ENOUGH_MEMORY);
+    MEMCPY(pPayload, pBuffer, bufferLen);
+    CHK_STATUS(createRtpPacketFromBytes(pPayload, bufferLen, &pRtpPacket));
+    pPayload = NULL; // pRtpPacket now owns the buffer
+    pRtpPacket->receivedTime = now;
+
+    ssrc = pRtpPacket->header.ssrc;
+
+    // Find matching transceiver for this SSRC
     CHK_STATUS(doubleListGetHeadNode(pKvsPeerConnection->pTransceivers, &pCurNode));
     while (pCurNode != NULL) {
         CHK_STATUS(doubleListGetNodeData(pCurNode, &item));
@@ -254,19 +291,6 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
 
         if (pTransceiver->jitterBufferSsrc == ssrc) {
             packetsReceived++;
-            if (STATUS_FAILED(retStatus = decryptSrtpPacket(pKvsPeerConnection->pSrtpSession, pBuffer, (PINT32) &bufferLen))) {
-                DLOGW("decryptSrtpPacket failed with 0x%08x", retStatus);
-                packetsFailedDecryption++;
-                CHK(FALSE, STATUS_SUCCESS);
-            }
-            now = GETTIME();
-            CHK(NULL != (pPayload = (PBYTE) MEMALLOC(bufferLen)), STATUS_NOT_ENOUGH_MEMORY);
-            MEMCPY(pPayload, pBuffer, bufferLen);
-            CHK_STATUS(createRtpPacketFromBytes(pPayload, bufferLen, &pRtpPacket));
-            // pRtpPacket took ownership of pPayload. Set pPayload to NULL to
-            // avoid possible double-free.
-            pPayload = NULL;
-            pRtpPacket->receivedTime = now;
 
             // https://tools.ietf.org/html/rfc3550#section-6.4.1
             // https://tools.ietf.org/html/rfc3550#appendix-A.8
@@ -414,7 +438,7 @@ STATUS onFrameReadyFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex, U
     CHK(frameSize == filledSize, STATUS_INVALID_ARG_LEN);
 
     frame.version = FRAME_CURRENT_VERSION;
-    frame.decodingTs = pPacket->header.timestamp * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    frame.decodingTs = KVS_CONVERT_TIMESCALE(pPacket->header.timestamp, pTransceiver->pJitterBuffer->clockRate, HUNDREDS_OF_NANOS_IN_A_SECOND);
     frame.presentationTs = frame.decodingTs;
     frame.frameData = pTransceiver->peerFrameBuffer;
     frame.size = frameSize;
@@ -435,28 +459,116 @@ CleanUp:
 STATUS onFrameDroppedFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex, UINT32 timestamp)
 {
     ENTERS();
-    UNUSED_PARAM(endIndex);
     STATUS retStatus = STATUS_SUCCESS;
     UINT64 hashValue = 0;
     PRtpPacket pPacket = NULL;
+    PRtpPacket pFirstPacket = NULL;
     PKvsRtpTransceiver pTransceiver = (PKvsRtpTransceiver) customData;
-    DLOGW("Frame with timestamp %ld is dropped!", timestamp);
+    UINT16 index;
+    UINT32 partialFrameSize = 0;
+    UINT32 totalPartialSize = 0;
+    UINT32 filledSize = 0;
+    PBYTE pCurPtrInFrame = NULL;
+    Frame frame;
+    BOOL hasEntry = FALSE;
+
+    DLOGW("Frame with timestamp %u is dropped!", timestamp);
     CHK(pTransceiver != NULL, STATUS_NULL_ARG);
+
+    // Get first available packet for stats and timestamp
     retStatus = hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, startIndex, &hashValue);
-    pPacket = (PRtpPacket) hashValue;
+    pFirstPacket = (PRtpPacket) hashValue;
     if (retStatus == STATUS_SUCCESS || retStatus == STATUS_HASH_KEY_NOT_PRESENT) {
         retStatus = STATUS_SUCCESS;
     } else {
         CHK(FALSE, retStatus);
     }
-    CHK(pPacket != NULL, STATUS_NULL_ARG);
+    CHK(pFirstPacket != NULL, STATUS_NULL_ARG);
+
     MUTEX_LOCK(pTransceiver->statsLock);
     // https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-jitterbufferdelay
-    pTransceiver->inboundStats.jitterBufferDelay += (DOUBLE) (GETTIME() - pPacket->receivedTime) / HUNDREDS_OF_NANOS_IN_A_SECOND;
+    pTransceiver->inboundStats.jitterBufferDelay += (DOUBLE) (GETTIME() - pFirstPacket->receivedTime) / HUNDREDS_OF_NANOS_IN_A_SECOND;
     pTransceiver->inboundStats.jitterBufferEmittedCount++;
     pTransceiver->inboundStats.received.framesDropped++;
     pTransceiver->inboundStats.received.fullFramesLost++;
     MUTEX_UNLOCK(pTransceiver->statsLock);
+
+    // If no partial frame callback registered, skip partial frame extraction
+    CHK(pTransceiver->onPartialFrame != NULL, retStatus);
+
+    // Calculate total size of available packets
+    // NOTE: use local status instead of CHK_STATUS to avoid aborting the entire
+    // frame when a single packet's depay fails (e.g. truncated FU-A fragment).
+    BOOL isFirstInFrame = TRUE;
+    for (index = startIndex; UINT16_DEC(index) != endIndex; index++) {
+        if (STATUS_FAILED(hashTableContains(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hasEntry))) {
+            continue;
+        }
+        if (hasEntry) {
+            if (STATUS_FAILED(hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hashValue))) {
+                continue;
+            }
+            pPacket = (PRtpPacket) hashValue;
+            partialFrameSize = 0;
+            BOOL depayIsFirst = isFirstInFrame;
+            if (STATUS_FAILED(
+                    pTransceiver->pJitterBuffer->depayPayloadFn(pPacket->payload, pPacket->payloadLength, NULL, &partialFrameSize, &depayIsFirst))) {
+                DLOGW("depayPayloadFn size query failed for packet index %u, skipping", index);
+                continue;
+            }
+            totalPartialSize += partialFrameSize;
+            isFirstInFrame = FALSE;
+        }
+    }
+
+    // If no data available, skip callback
+    CHK(totalPartialSize > 0, retStatus);
+
+    // Ensure buffer is large enough
+    if (totalPartialSize > pTransceiver->peerFrameBufferSize) {
+        MEMFREE(pTransceiver->peerFrameBuffer);
+        pTransceiver->peerFrameBufferSize = (UINT32) (totalPartialSize * PEER_FRAME_BUFFER_SIZE_INCREMENT_FACTOR);
+        pTransceiver->peerFrameBuffer = (PBYTE) MEMALLOC(pTransceiver->peerFrameBufferSize);
+        CHK(pTransceiver->peerFrameBuffer != NULL, STATUS_NOT_ENOUGH_MEMORY);
+    }
+
+    // Fill partial frame data (skipping missing packets)
+    // NOTE: continue on failure — same rationale as the size calculation loop.
+    isFirstInFrame = TRUE;
+    pCurPtrInFrame = pTransceiver->peerFrameBuffer;
+    for (index = startIndex; UINT16_DEC(index) != endIndex; index++) {
+        if (STATUS_FAILED(hashTableContains(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hasEntry))) {
+            continue;
+        }
+        if (hasEntry) {
+            if (STATUS_FAILED(hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hashValue))) {
+                continue;
+            }
+            pPacket = (PRtpPacket) hashValue;
+            partialFrameSize = totalPartialSize - filledSize;
+            BOOL depayIsFirst = isFirstInFrame;
+            if (STATUS_FAILED(pTransceiver->pJitterBuffer->depayPayloadFn(pPacket->payload, pPacket->payloadLength, pCurPtrInFrame, &partialFrameSize,
+                                                                          &depayIsFirst))) {
+                DLOGW("depayPayloadFn fill failed for packet index %u, skipping", index);
+                continue;
+            }
+            pCurPtrInFrame += partialFrameSize;
+            filledSize += partialFrameSize;
+            isFirstInFrame = FALSE;
+        }
+    }
+
+    // Build frame struct and invoke callback
+    frame.version = FRAME_CURRENT_VERSION;
+    frame.decodingTs = pFirstPacket->header.timestamp * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    frame.presentationTs = frame.decodingTs;
+    frame.frameData = pTransceiver->peerFrameBuffer;
+    frame.size = filledSize;
+    frame.duration = 0;
+    frame.index = pTransceiver->inboundStats.jitterBufferEmittedCount - 1;
+    frame.flags = FRAME_FLAG_NONE;
+
+    pTransceiver->onPartialFrame(pTransceiver->onPartialFrameCustomData, &frame);
 
 CleanUp:
     CHK_LOG_ERR(retStatus);
@@ -625,8 +737,8 @@ VOID onSctpSessionDataChannelMessage(UINT64 customData, UINT32 channelId, BOOL i
         CHK(FALSE, retStatus);
     }
     CHK(pKvsDataChannel != NULL && pKvsDataChannel->onMessage != NULL, STATUS_INTERNAL_ERROR);
-    pKvsDataChannel->rtcDataChannelDiagnostics.messagesReceived++;
-    pKvsDataChannel->rtcDataChannelDiagnostics.bytesReceived += pMessageLen;
+    ATOMIC_INCREMENT(&pKvsDataChannel->atomicMessagesReceived);
+    ATOMIC_ADD(&pKvsDataChannel->atomicBytesReceived, (SIZE_T) pMessageLen);
     if (STATUS_FAILED(hashTableUpsert(pKvsPeerConnection->pDataChannels, channelId, (UINT64) pKvsDataChannel))) {
         DLOGW("Failed to update entry in hash table with recent changes to data channel");
     }
@@ -1057,6 +1169,11 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
                                              &pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable));
     }
 
+    // TWCC feedback generation (receiver side)
+    pKvsPeerConnection->twccReceiverLock = MUTEX_CREATE(TRUE);
+    CHK_STATUS(createTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
+    pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32; // Invalid timer ID
+
     *ppPeerConnection = (PRtcPeerConnection) pKvsPeerConnection;
 
 CleanUp:
@@ -1095,7 +1212,6 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     PDoubleListNode pCurNode = NULL;
     UINT64 item = 0;
     UINT64 startTime;
-    UINT32 twccHashTableCount = 0;
     BOOL twccLocked = FALSE;
 
     CHK(ppPeerConnection != NULL, STATUS_NULL_ARG);
@@ -1109,8 +1225,23 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
      * SCTP to be allocated again after SCTP is freed. */
     CHK_LOG_ERR(iceAgentShutdown(pKvsPeerConnection->pIceAgent));
 
-    // free timer queue first to remove liveness provided by timer
+    // Cancel self-rescheduling timers before shutting down the timer queue.
+    // On Android THREAD_CANCEL is a no-op so the executor thread cannot be
+    // forcefully stopped; cancelling timers lets it exit cleanly.
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
+        if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccLock)) {
+            UINT32 twccTimerId;
+            MUTEX_LOCK(pKvsPeerConnection->twccLock);
+            twccTimerId = pKvsPeerConnection->twccFeedbackTimerId;
+            pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32;
+            MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+            if (twccTimerId != MAX_UINT32) {
+                timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle, twccTimerId, (UINT64) pKvsPeerConnection);
+            }
+        }
+        if (pKvsPeerConnection->pPacer != NULL) {
+            pacerStop(pKvsPeerConnection->pPacer);
+        }
         timerQueueShutdown(pKvsPeerConnection->timerQueueHandle);
     }
 
@@ -1142,7 +1273,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->pDataChannels));
 
     // free rest of structs
-    CHK_LOG_ERR(freeSrtpSession(&pKvsPeerConnection->pSrtpSession));
+    if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->pSrtpSessionLock)) {
+        MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
+        CHK_LOG_ERR(freeSrtpSession(&pKvsPeerConnection->pSrtpSession));
+        MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
+    }
     CHK_LOG_ERR(freeDtlsSession(&pKvsPeerConnection->pDtlsSession));
     // Since ICE agent has a callback invoked from DTLS during handshake,
     // it is safer to free the ICE agent after DTLS session
@@ -1164,13 +1299,14 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
         timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
     }
 
+    // Free pacer (after timer queue since pacer uses timers)
+    if (pKvsPeerConnection->pPacer != NULL) {
+        CHK_LOG_ERR(freePacer(&pKvsPeerConnection->pPacer));
+    }
+
     if (pKvsPeerConnection->pTwccManager != NULL) {
         MUTEX_LOCK(pKvsPeerConnection->twccLock);
         twccLocked = TRUE;
-
-        if (STATUS_SUCCEEDED(hashTableGetCount(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, &twccHashTableCount))) {
-            DLOGI("Number of TWCC info packets in memory: %d", twccHashTableCount);
-        }
 
         CHK_LOG_ERR(hashTableIterateEntries(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, 0, freeHashEntry));
         CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable));
@@ -1188,6 +1324,16 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
         }
         MUTEX_FREE(pKvsPeerConnection->twccLock);
         pKvsPeerConnection->twccLock = INVALID_MUTEX_VALUE;
+    }
+
+    // Free TWCC receiver manager
+    if (pKvsPeerConnection->pTwccReceiverManager != NULL) {
+        CHK_LOG_ERR(freeTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
+    }
+
+    if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccReceiverLock)) {
+        MUTEX_FREE(pKvsPeerConnection->twccReceiverLock);
+        pKvsPeerConnection->twccReceiverLock = INVALID_MUTEX_VALUE;
     }
 
     PROFILE_WITH_START_TIME_OBJ(startTime, pKvsPeerConnection->peerConnectionDiagnostics.freePeerConnectionTime, "Free peer connection");
@@ -1301,6 +1447,139 @@ CleanUp:
     return retStatus;
 }
 
+STATUS peerConnectionOnTwccPacketReport(PRtcPeerConnection pRtcPeerConnection, UINT64 customData, RtcOnTwccPacketReport rtcOnTwccPacketReport)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+    BOOL locked = FALSE;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+
+    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = TRUE;
+
+    pKvsPeerConnection->onTwccPacketReport = rtcOnTwccPacketReport;
+    pKvsPeerConnection->onTwccPacketReportCustomData = customData;
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
+STATUS peerConnectionEnablePacing(PRtcPeerConnection pRtcPeerConnection, PRtcPacerConfig pConfig)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+    BOOL locked = FALSE;
+    PacerConfig pacerConfig;
+    PPacer pPacer = NULL;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+
+    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = TRUE;
+
+    // Don't create if already exists
+    CHK(pKvsPeerConnection->pPacer == NULL, retStatus);
+
+    // Convert public config to internal config
+    MEMSET(&pacerConfig, 0, SIZEOF(PacerConfig));
+    if (pConfig != NULL) {
+        pacerConfig.initialBitrateBps = pConfig->initialBitrateBps;
+        pacerConfig.maxQueueSize = pConfig->maxQueueSize;
+        pacerConfig.maxQueueBytes = pConfig->maxQueueBytes;
+        pacerConfig.pacingFactor = pConfig->pacingFactor;
+        pacerConfig.maxQueueTimeKvs = pConfig->maxQueueTimeKvs;
+    }
+    pacerConfig.enabled = TRUE;
+
+    // Create the pacer
+    CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &pacerConfig));
+    pPacer = pKvsPeerConnection->pPacer;
+
+    // Drop the peer connection lock before starting the pacer timer to avoid
+    // lock-order-inversion: this path acquires peerConnectionObjLock then
+    // timer queue lock, while timer callbacks (e.g. onNewIceLocalCandidate)
+    // acquire timer queue lock then peerConnectionObjLock.
+    MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    locked = FALSE;
+
+    // Start the pacer without holding peerConnectionObjLock
+    CHK_STATUS(pacerStart(pPacer, pKvsPeerConnection));
+
+    DLOGI("Pacing enabled for peer connection");
+
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
+    }
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
+STATUS peerConnectionSetPacerBitrate(PRtcPeerConnection pRtcPeerConnection, UINT64 bitrateBps)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection->pPacer != NULL, STATUS_INVALID_OPERATION);
+
+    CHK_STATUS(pacerSetTargetBitrate(pKvsPeerConnection->pPacer, bitrateBps));
+
+CleanUp:
+    LEAVES();
+    return retStatus;
+}
+
+UINT64 peerConnectionGetPacerBitrate(PRtcPeerConnection pRtcPeerConnection)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    if (pKvsPeerConnection == NULL || pKvsPeerConnection->pPacer == NULL) {
+        return 0;
+    }
+
+    return pacerGetTargetBitrate(pKvsPeerConnection->pPacer);
+}
+
+STATUS peerConnectionSetPacerMaxQueueTime(PRtcPeerConnection pRtcPeerConnection, UINT64 maxQueueTimeKvs)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection->pPacer != NULL, STATUS_INVALID_OPERATION);
+
+    CHK_STATUS(pacerSetMaxQueueTime(pKvsPeerConnection->pPacer, maxQueueTimeKvs));
+
+CleanUp:
+    LEAVES();
+    return retStatus;
+}
+
+UINT64 peerConnectionGetPacerMaxQueueTime(PRtcPeerConnection pRtcPeerConnection)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+
+    if (pKvsPeerConnection == NULL || pKvsPeerConnection->pPacer == NULL) {
+        return 0;
+    }
+
+    return pacerGetMaxQueueTime(pKvsPeerConnection->pPacer);
+}
+
 STATUS peerConnectionGetLocalDescription(PRtcPeerConnection pRtcPeerConnection, PRtcSessionDescriptionInit pRtcSessionDescriptionInit)
 {
     ENTERS();
@@ -1372,7 +1651,7 @@ UINT32 parseExtId(PCHAR extmapValue)
 {
     ENTERS();
     UINT32 extid = 0;
-    if (extmapValue == NULL && STRCHR(extmapValue, ' ') == NULL) {
+    if (extmapValue == NULL || STRCHR(extmapValue, ' ') == NULL) {
         LEAVES();
         return 0;
     }
@@ -1487,6 +1766,13 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
 
     if (NULL != GETENV(DEBUG_LOG_SDP)) {
         DLOGD("REMOTE_SDP:%s\n", pSessionDescriptionInit->sdp);
+    }
+
+    // Start TWCC feedback timer when remote offers TWCC
+    if (pKvsPeerConnection->twccExtId != 0 && pKvsPeerConnection->twccFeedbackTimerId == MAX_UINT32) {
+        CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, TWCC_FEEDBACK_INITIAL_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
+                                      twccFeedbackCallback, (UINT64) pKvsPeerConnection, &pKvsPeerConnection->twccFeedbackTimerId));
+        DLOGI("Started TWCC feedback timer with extension ID %u", pKvsPeerConnection->twccExtId);
     }
 
 CleanUp:
@@ -1775,6 +2061,29 @@ STATUS closePeerConnection(PRtcPeerConnection pPeerConnection)
     CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
     CHK_LOG_ERR(dtlsSessionShutdown(pKvsPeerConnection->pDtlsSession));
     CHK_LOG_ERR(iceAgentShutdown(pKvsPeerConnection->pIceAgent));
+
+    // Cancel TWCC feedback timer so it stops re-scheduling itself.
+    // This is needed because on Android THREAD_CANCEL is a no-op, so
+    // timerQueueShutdown cannot forcefully stop the executor thread.
+    // Cancelling timers first lets the executor exit cleanly.
+    // Snapshot and reset twccFeedbackTimerId under twccLock to avoid
+    // racing with twccFeedbackCallback which writes it on the timer thread.
+    if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle) && IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccLock)) {
+        UINT32 twccTimerId;
+        MUTEX_LOCK(pKvsPeerConnection->twccLock);
+        twccTimerId = pKvsPeerConnection->twccFeedbackTimerId;
+        pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32;
+        MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+        if (twccTimerId != MAX_UINT32) {
+            timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle, twccTimerId, (UINT64) pKvsPeerConnection);
+        }
+    }
+
+    // Stop pacer timer
+    if (pKvsPeerConnection->pPacer != NULL) {
+        pacerStop(pKvsPeerConnection->pPacer);
+    }
+
     PROFILE_WITH_START_TIME_OBJ(startTime, pKvsPeerConnection->peerConnectionDiagnostics.closePeerConnectionTime, "Close peer connection");
 
 CleanUp:
@@ -1994,6 +2303,41 @@ STATUS twccManagerOnPacketSent(PKvsPeerConnection pKvsPeerConnection, PRtpPacket
 
     // Ensure twccRollingWindowDeletion is run in a guarded section
     CHK_STATUS(twccRollingWindowDeletion(pKvsPeerConnection, pRtpPacket, seqNum));
+CleanUp:
+    if (locked) {
+        MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+    }
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
+STATUS twccManagerOnPacedPacketSent(PKvsPeerConnection pKvsPeerConnection, UINT16 twccSeqNum, UINT32 packetSize, UINT64 sentTimeKvs)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    BOOL locked = FALSE;
+    PTwccRtpPacketInfo pTwccRtpPktInfo = NULL;
+
+    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK((pKvsPeerConnection->onSenderBandwidthEstimation != NULL || pKvsPeerConnection->onTwccPacketReport != NULL) &&
+            pKvsPeerConnection->pTwccManager != NULL,
+        STATUS_SUCCESS);
+
+    MUTEX_LOCK(pKvsPeerConnection->twccLock);
+    locked = TRUE;
+
+    CHK((pTwccRtpPktInfo = MEMCALLOC(1, SIZEOF(TwccRtpPacketInfo))) != NULL, STATUS_NOT_ENOUGH_MEMORY);
+
+    pTwccRtpPktInfo->packetSize = packetSize;
+    pTwccRtpPktInfo->localTimeKvs = sentTimeKvs;
+    pTwccRtpPktInfo->remoteTimeKvs = TWCC_PACKET_LOST_TIME;
+    CHK_STATUS(hashTableUpsert(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, twccSeqNum, (UINT64) pTwccRtpPktInfo));
+
+    // Note: We skip twccRollingWindowDeletion here since we don't have the full RtpPacket
+    // The rolling window will be cleaned up during normal TWCC feedback processing
+
 CleanUp:
     if (locked) {
         MUTEX_UNLOCK(pKvsPeerConnection->twccLock);

@@ -205,8 +205,12 @@ TEST_F(IceFunctionalityTest, connectionListenerFunctionalityTest)
     threadId = pConnectionListener->receiveDataRoutine;
     MUTEX_UNLOCK(pConnectionListener->lock);
     EXPECT_TRUE(IS_VALID_TID_VALUE(threadId));
+    ATOMIC_STORE_BOOL(&pConnectionListener->terminate, TRUE);
 
-    // freeConnectionListener handles terminate + kick + join internally
+    THREAD_JOIN(threadId, NULL);
+    // Clear TID so freeConnectionListener won't double-join (Android bionic aborts on that)
+    pConnectionListener->receiveDataRoutine = INVALID_TID_VALUE;
+
     EXPECT_EQ(STATUS_SUCCESS, freeConnectionListener(&pConnectionListener));
 
     EXPECT_EQ(STATUS_SUCCESS, freeSocketConnection(&pSocketConnection));
@@ -711,6 +715,132 @@ TEST_F(IceFunctionalityTest, IceAgentPruneUnconnectedIceCandidatePairUnitTest)
     EXPECT_EQ(STATUS_SUCCESS, doubleListFree(iceAgent.iceCandidatePairs));
 }
 
+///////////////////////////////////////////////
+// getLocalhostIpAddresses Test
+///////////////////////////////////////////////
+
+static BOOL rejectAllInterfacesFilter(UINT64 customData, PCHAR interfaceName)
+{
+    UNUSED_PARAM(interfaceName);
+    UNUSED_PARAM(customData);
+    return FALSE;
+}
+
+static BOOL acceptAllInterfacesFilter(UINT64 customData, PCHAR interfaceName)
+{
+    UNUSED_PARAM(interfaceName);
+    UNUSED_PARAM(customData);
+    return TRUE;
+}
+
+static BOOL countingFilter(UINT64 customData, PCHAR interfaceName)
+{
+    UNUSED_PARAM(interfaceName);
+    PUINT32 pCount = (PUINT32) customData;
+    (*pCount)++;
+    return TRUE;
+}
+
+TEST_F(IceFunctionalityTest, getLocalhostIpAddressesNullArgTest)
+{
+    KvsIpAddress ipAddresses[MAX_LOCAL_NETWORK_INTERFACE_COUNT];
+    UINT32 ipCount = MAX_LOCAL_NETWORK_INTERFACE_COUNT;
+
+    EXPECT_EQ(STATUS_NULL_ARG, getLocalhostIpAddresses(NULL, &ipCount, NULL, 0));
+    EXPECT_EQ(STATUS_NULL_ARG, getLocalhostIpAddresses(ipAddresses, NULL, NULL, 0));
+    EXPECT_EQ(STATUS_NULL_ARG, getLocalhostIpAddresses(NULL, NULL, NULL, 0));
+}
+
+TEST_F(IceFunctionalityTest, getLocalhostIpAddressesZeroLenTest)
+{
+    KvsIpAddress ipAddresses[MAX_LOCAL_NETWORK_INTERFACE_COUNT];
+    UINT32 ipCount = 0;
+
+    EXPECT_EQ(STATUS_INVALID_ARG, getLocalhostIpAddresses(ipAddresses, &ipCount, NULL, 0));
+}
+
+TEST_F(IceFunctionalityTest, getLocalhostIpAddressesBasicTest)
+{
+    KvsIpAddress ipAddresses[MAX_LOCAL_NETWORK_INTERFACE_COUNT];
+    UINT32 ipCount = MAX_LOCAL_NETWORK_INTERFACE_COUNT;
+
+    MEMSET(ipAddresses, 0x00, SIZEOF(ipAddresses));
+    EXPECT_EQ(STATUS_SUCCESS, getLocalhostIpAddresses(ipAddresses, &ipCount, NULL, 0));
+
+    // Any machine running tests should have at least one non-loopback interface
+    EXPECT_GT(ipCount, (UINT32) 0);
+
+    // Verify returned addresses have valid family types and port is 0
+    CHAR ipAddrStr[KVS_IP_ADDRESS_STRING_BUFFER_LEN];
+    for (UINT32 i = 0; i < ipCount; i++) {
+        EXPECT_TRUE(ipAddresses[i].family == KVS_IP_FAMILY_TYPE_IPV4 || ipAddresses[i].family == KVS_IP_FAMILY_TYPE_IPV6);
+        EXPECT_EQ((UINT16) 0, ipAddresses[i].port);
+        EXPECT_EQ(STATUS_SUCCESS, getIpAddrStr(&ipAddresses[i], ipAddrStr, SIZEOF(ipAddrStr)));
+        DLOGD("Found interface %u: %s (%s)", i, ipAddrStr,
+              ipAddresses[i].family == KVS_IP_FAMILY_TYPE_IPV4 ? "IPv4" : "IPv6");
+    }
+}
+
+TEST_F(IceFunctionalityTest, getLocalhostIpAddressesFilterRejectAllTest)
+{
+    KvsIpAddress ipAddresses[MAX_LOCAL_NETWORK_INTERFACE_COUNT];
+    UINT32 ipCount = MAX_LOCAL_NETWORK_INTERFACE_COUNT;
+
+    MEMSET(ipAddresses, 0x00, SIZEOF(ipAddresses));
+    EXPECT_EQ(STATUS_SUCCESS, getLocalhostIpAddresses(ipAddresses, &ipCount, rejectAllInterfacesFilter, 0));
+
+    // Filter rejects everything, so no IPs should be returned
+    EXPECT_EQ((UINT32) 0, ipCount);
+}
+
+TEST_F(IceFunctionalityTest, getLocalhostIpAddressesFilterAcceptAllTest)
+{
+    KvsIpAddress ipAddresses[MAX_LOCAL_NETWORK_INTERFACE_COUNT];
+    UINT32 ipCountNoFilter = MAX_LOCAL_NETWORK_INTERFACE_COUNT;
+    UINT32 ipCountWithFilter = MAX_LOCAL_NETWORK_INTERFACE_COUNT;
+
+    MEMSET(ipAddresses, 0x00, SIZEOF(ipAddresses));
+    EXPECT_EQ(STATUS_SUCCESS, getLocalhostIpAddresses(ipAddresses, &ipCountNoFilter, NULL, 0));
+
+    MEMSET(ipAddresses, 0x00, SIZEOF(ipAddresses));
+    EXPECT_EQ(STATUS_SUCCESS, getLocalhostIpAddresses(ipAddresses, &ipCountWithFilter, acceptAllInterfacesFilter, 0));
+
+    // Accept-all filter should yield the same count as no filter
+    EXPECT_EQ(ipCountNoFilter, ipCountWithFilter);
+}
+
+TEST_F(IceFunctionalityTest, getLocalhostIpAddressesSmallBufferTest)
+{
+    KvsIpAddress ipAddresses[1];
+    UINT32 ipCount = 1;
+
+    MEMSET(ipAddresses, 0x00, SIZEOF(ipAddresses));
+    EXPECT_EQ(STATUS_SUCCESS, getLocalhostIpAddresses(ipAddresses, &ipCount, NULL, 0));
+
+    // With buffer size 1, should return at most 1
+    EXPECT_TRUE(ipCount <= 1);
+    if (ipCount == 1) {
+        EXPECT_TRUE(ipAddresses[0].family == KVS_IP_FAMILY_TYPE_IPV4 || ipAddresses[0].family == KVS_IP_FAMILY_TYPE_IPV6);
+    }
+}
+
+TEST_F(IceFunctionalityTest, getLocalhostIpAddressesFilterCustomDataTest)
+{
+    KvsIpAddress ipAddresses[MAX_LOCAL_NETWORK_INTERFACE_COUNT];
+    UINT32 ipCount = MAX_LOCAL_NETWORK_INTERFACE_COUNT;
+    UINT32 filterCallCount = 0;
+
+    MEMSET(ipAddresses, 0x00, SIZEOF(ipAddresses));
+    EXPECT_EQ(STATUS_SUCCESS, getLocalhostIpAddresses(ipAddresses, &ipCount, countingFilter, (UINT64) &filterCallCount));
+
+    // The filter should have been called at least once (once per candidate interface)
+    EXPECT_GT(filterCallCount, (UINT32) 0);
+    // filterCallCount >= ipCount because some IPv6 link-local/site-local addresses
+    // are skipped after the filter runs
+    EXPECT_GE(filterCallCount, ipCount);
+}
+
+#ifdef ENABLE_SIGNALING
 TEST_F(IceFunctionalityTest, DISABLED_IceAgentCandidateGatheringTest)
 {
     ASSERT_EQ(TRUE, mAccessKeyIdSet);
@@ -787,6 +917,7 @@ TEST_F(IceFunctionalityTest, DISABLED_IceAgentCandidateGatheringTest)
 
     deinitializeSignalingClient();
 }
+#endif /* ENABLE_SIGNALING */
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

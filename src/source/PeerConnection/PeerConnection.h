@@ -61,6 +61,21 @@ typedef struct {
     UINT16 prevReportedBaseSeqNum;        // To monitor the base seqNum in the TWCC response
 } TwccManager, *PTwccManager;
 
+// Receiver-side TWCC tracking for feedback generation
+typedef struct {
+    UINT64 arrivalTimeKvs; // Local arrival time in 100ns units
+} TwccReceivedPacketInfo, *PTwccReceivedPacketInfo;
+
+typedef struct {
+    PHashTable pReceivedPktsHashTable; // Hash table of [seqNum -> PTwccReceivedPacketInfo]
+    UINT16 firstSeqNum;                // First seq in current feedback window
+    UINT16 lastSeqNum;                 // Last seq received
+    BOOL firstPacketReceived;          // Any packet received yet?
+    UINT8 feedbackPacketCount;         // Counter for fb pkt. count field
+    UINT32 mediaSourceSsrc;            // SSRC we're providing feedback for
+    UINT64 baseTimeKvs;                // Base time for relative arrival timestamps
+} TwccReceiverManager, *PTwccReceiverManager;
+
 typedef struct {
     UINT64 peerConnectionCreationTime;
     UINT64 dtlsSessionSetupTime;
@@ -138,13 +153,23 @@ typedef struct {
 
     NullableBool canTrickleIce;
 
-    // congestion control
+    // congestion control (sender side)
     // https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
     UINT16 twccExtId;
     MUTEX twccLock;
     PTwccManager pTwccManager;
     RtcOnSenderBandwidthEstimation onSenderBandwidthEstimation;
     UINT64 onSenderBandwidthEstimationCustomData;
+    RtcOnTwccPacketReport onTwccPacketReport;
+    UINT64 onTwccPacketReportCustomData;
+
+    // Pacing for smooth packet transmission
+    PPacer pPacer;
+
+    // TWCC feedback generation (receiver side)
+    MUTEX twccReceiverLock;
+    PTwccReceiverManager pTwccReceiverManager;
+    UINT32 twccFeedbackTimerId;
 
     UINT64 iceConnectingStartTime;
     KvsPeerConnectionDiagnostics peerConnectionDiagnostics;
@@ -184,6 +209,7 @@ VOID onSctpSessionDataChannelOpen(UINT64, UINT32, PBYTE, UINT32);
 STATUS sendPacketToRtpReceiver(PKvsPeerConnection, PBYTE, UINT32);
 STATUS changePeerConnectionState(PKvsPeerConnection, RTC_PEER_CONNECTION_STATE);
 STATUS twccManagerOnPacketSent(PKvsPeerConnection, PRtpPacket);
+STATUS twccManagerOnPacedPacketSent(PKvsPeerConnection, UINT16 twccSeqNum, UINT32 packetSize, UINT64 sentTimeKvs);
 UINT32 parseExtId(PCHAR);
 
 // visible for testing only

@@ -1,4 +1,5 @@
 #include "WebRTCClientTestFixture.h"
+#include <stdio.h>
 
 namespace com {
 namespace amazonaws {
@@ -63,7 +64,7 @@ void WebRtcClientTestBase::SetUp()
     mLogLevel = LOG_LEVEL_DEBUG;
 
     PCHAR logLevelStr = GETENV(DEBUG_LOG_LEVEL_ENV_VAR);
-    if (logLevelStr != NULL) {
+    if (logLevelStr != NULL && STRLEN(logLevelStr) > 0) {
         ASSERT_EQ(STATUS_SUCCESS, STRTOUI32(logLevelStr, NULL, 10, &mLogLevel));
     }
 
@@ -89,12 +90,16 @@ void WebRtcClientTestBase::SetUp()
         mCaCertPath = (PCHAR) DEFAULT_KVS_CACERT_PATH;
     }
 
+#ifdef ENABLE_SIGNALING
     if (mAccessKey) {
         ASSERT_EQ(STATUS_SUCCESS,
                   createStaticCredentialProvider(mAccessKey, 0, mSecretKey, 0, mSessionToken, 0, MAX_UINT64, &mTestCredentialProvider));
     } else {
         mTestCredentialProvider = nullptr;
     }
+#else
+    mTestCredentialProvider = nullptr;
+#endif
 
     // Prepare the test channel name by prefixing with test channel name
     // and generating random chars replacing a potentially bad characters with '.'
@@ -289,6 +294,7 @@ void WebRtcClientTestBase::addTrackToPeerConnection(PRtcPeerConnection pRtcPeerC
     EXPECT_EQ(STATUS_SUCCESS, addTransceiver(pRtcPeerConnection, track, NULL, transceiver));
 }
 
+#ifdef ENABLE_SIGNALING
 void WebRtcClientTestBase::getIceServers(PRtcConfiguration pRtcConfiguration)
 {
 #ifdef ENABLE_SIGNALING
@@ -320,6 +326,18 @@ void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfigurat
     pRtcConfiguration->kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
     pRtcConfiguration->kvsRtcConfiguration.iceConnectionCheckTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
     pRtcConfiguration->kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(2000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+}
+#endif /* ENABLE_SIGNALING */
+
+void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfiguration)
+{
+    MEMSET(pRtcConfiguration, 0x00, SIZEOF(RtcConfiguration));
+    pRtcConfiguration->kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceConnectionCheckTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    pRtcConfiguration->kvsRtcConfiguration.iceSetInterfaceFilterFunc = [](UINT64, PCHAR name) -> BOOL {
+        return STRNCMP(name, "utun", 4) != 0;
+    };
 }
 
 PCHAR WebRtcClientTestBase::GetTestName()
