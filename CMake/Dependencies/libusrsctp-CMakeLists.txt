@@ -4,34 +4,15 @@ project(libusrsctp-download NONE)
 
 include(ExternalProject)
 
-set(LIBUSRSCTP_CMAKE_ARGS
-    -DCMAKE_INSTALL_PREFIX=${OPEN_SRC_INSTALL_PREFIX}
-    -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-    -Dsctp_werror=0)
-
-if(ANDROID_ABI)
-  # When cross-compiling for Android the ExternalProject cmake must use the
-  # NDK toolchain so that it uses the right cross-compiler and flags.
-  # Passing raw CMAKE_C_FLAGS here would mix Android flags with macOS SDK
-  # flags that cmake injects on Darwin hosts, causing build failures.
-  list(APPEND LIBUSRSCTP_CMAKE_ARGS
-      -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-      -DANDROID_ABI=${ANDROID_ABI}
-      -DANDROID_PLATFORM=${ANDROID_PLATFORM}
-      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
-      -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH)
-else()
-  # For non-Android builds forward the C flags (including fPIC).
-  list(APPEND LIBUSRSCTP_CMAKE_ARGS
-      "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} -fPIC")
-endif()
-
 ExternalProject_Add(project_libusrsctp
     GIT_REPOSITORY    https://github.com/sctplab/usrsctp.git
     GIT_TAG           1ade45cbadfd19298d2c47dc538962d4425ad2dd
     GIT_PROGRESS      TRUE
     PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
-    CMAKE_ARGS        ${LIBUSRSCTP_CMAKE_ARGS}
+    CMAKE_ARGS        -DCMAKE_INSTALL_PREFIX=${OPEN_SRC_INSTALL_PREFIX}
+                      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+                      "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} -fPIC"
+                      -Dsctp_werror=0
     BUILD_ALWAYS      TRUE
     TEST_COMMAND      ""
 )

@@ -4,37 +4,29 @@ project(libsrtp-download LANGUAGES C)
 
 SET(CONFIGURE_COMMAND "")
 
-# There is a known bug in libsrtp where cross-compiling using autoconf on ARM
-# fails.  When ANDROID_ABI is set we use cmake instead of autoconf.
-# See https://github.com/cisco/libsrtp/pull/496
+if(UNIX OR APPLE)
 
-if(NOT ANDROID_ABI)
+  SET(CONFIGURE_COMMAND ${CMAKE_CURRENT_BINARY_DIR}/build/src/project_libsrtp/configure CC=${CMAKE_C_COMPILER})
 
-  if(UNIX OR APPLE)
-
-    SET(CONFIGURE_COMMAND ${CMAKE_CURRENT_BINARY_DIR}/build/src/project_libsrtp/configure CC=${CMAKE_C_COMPILER})
-
-    if (DEFINED CMAKE_OSX_SYSROOT AND NOT CMAKE_OSX_SYSROOT STREQUAL "")
-      if ("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-        SET(KVS_CFLAGS "-I${CMAKE_OSX_SYSROOT}/usr/include -Wno-error=implicit-function-declaration")
-        SET(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} CFLAGS=${KVS_CFLAGS} LDFLAGS=-L${CMAKE_OSX_SYSROOT}/usr/lib)
-      endif()
+  if (DEFINED CMAKE_OSX_SYSROOT AND NOT CMAKE_OSX_SYSROOT STREQUAL "")
+    if ("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+      SET(KVS_CFLAGS "-I${CMAKE_OSX_SYSROOT}/usr/include -Wno-error=implicit-function-declaration")
+      SET(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} CFLAGS=${KVS_CFLAGS} LDFLAGS=-L${CMAKE_OSX_SYSROOT}/usr/lib)
     endif()
+  endif()
 
-    if (USE_OPENSSL)
-      SET(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --prefix=${OPEN_SRC_INSTALL_PREFIX} --enable-openssl --with-openssl-dir=${OPENSSL_DIR})
-    else()
-      SET(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --prefix=${OPEN_SRC_INSTALL_PREFIX})
-    endif()
+  if (USE_OPENSSL)
+    SET(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --prefix=${OPEN_SRC_INSTALL_PREFIX} --enable-openssl --with-openssl-dir=${OPENSSL_DIR})
+  else()
+    SET(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --prefix=${OPEN_SRC_INSTALL_PREFIX})
+  endif()
 
-    if (DEFINED BUILD_LIBSRTP_DESTINATION_PLATFORM AND NOT BUILD_LIBSRTP_DESTINATION_PLATFORM STREQUAL OFF)
-      set(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --host=${BUILD_LIBSRTP_DESTINATION_PLATFORM})
-    endif()
+  if (DEFINED BUILD_LIBSRTP_DESTINATION_PLATFORM AND NOT BUILD_LIBSRTP_DESTINATION_PLATFORM STREQUAL OFF)
+    set(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --host=${BUILD_LIBSRTP_DESTINATION_PLATFORM})
+  endif()
 
-    if (DEFINED BUILD_LIBSRTP_HOST_PLATFORM AND NOT BUILD_LIBSRTP_HOST_PLATFORM STREQUAL OFF)
-      set(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --build=${BUILD_LIBSRTP_HOST_PLATFORM})
-    endif()
-
+  if (DEFINED BUILD_LIBSRTP_HOST_PLATFORM AND NOT BUILD_LIBSRTP_HOST_PLATFORM STREQUAL OFF)
+    set(CONFIGURE_COMMAND ${CONFIGURE_COMMAND} --build=${BUILD_LIBSRTP_HOST_PLATFORM})
   endif()
 
 endif()
@@ -53,44 +45,18 @@ endif()
 
 message(STATUS "CONFIGURE_COMMAND is ${CONFIGURE_COMMAND}")
 
-set(LIBSRTP_CMAKE_ARGS
-    -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
-    -DCMAKE_INSTALL_PREFIX:STRING=${OPEN_SRC_INSTALL_PREFIX}
-    -DENABLE_OPENSSL=${LIBSRTP_ENABLE_OPENSSL}
-    -DBUILD_SHARED_LIBS=${LIBSRTP_SHARED_LIBS}
-    -DOPENSSL_ROOT_DIR=${OPEN_SRC_INSTALL_PREFIX})
-
-if(ANDROID_ABI)
-  # For Android cross-compilation pass the NDK toolchain so libsrtp's own
-  # cmake configure uses the correct cross-compiler.  Also relax the
-  # FIND_ROOT_PATH_MODE so FindOpenSSL can locate the self-built libraries
-  # (the NDK legacy toolchain defaults to ONLY, which would miss them).
-  list(APPEND LIBSRTP_CMAKE_ARGS
-      -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-      -DANDROID_ABI=${ANDROID_ABI}
-      -DANDROID_PLATFORM=${ANDROID_PLATFORM}
-      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
-      -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH)
-endif()
 
 include(ExternalProject)
-
-if(ANDROID_ABI)
-  # Use cmake-based configure for Android (no autoconf CONFIGURE_COMMAND)
-  ExternalProject_Add(project_libsrtp
-      GIT_REPOSITORY    https://github.com/cisco/libsrtp.git
-      GIT_TAG           bd0f27ec0e299ad101a396dde3f7c90d48efc8fc
-      PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
-      GIT_PROGRESS      TRUE
-      CMAKE_ARGS        ${LIBSRTP_CMAKE_ARGS}
-      TEST_COMMAND      "")
-else()
-  ExternalProject_Add(project_libsrtp
-      GIT_REPOSITORY    https://github.com/cisco/libsrtp.git
-      GIT_TAG           bd0f27ec0e299ad101a396dde3f7c90d48efc8fc
-      PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
-      GIT_PROGRESS      TRUE
-      CMAKE_ARGS        ${LIBSRTP_CMAKE_ARGS}
-      CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
-      TEST_COMMAND      "")
-endif()
+ExternalProject_Add(project_libsrtp
+    GIT_REPOSITORY    https://github.com/cisco/libsrtp.git
+    GIT_TAG           bd0f27ec0e299ad101a396dde3f7c90d48efc8fc
+    PREFIX            ${CMAKE_CURRENT_BINARY_DIR}/build
+    GIT_PROGRESS      TRUE
+    CMAKE_ARGS        -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
+                      -DCMAKE_INSTALL_PREFIX:STRING=${OPEN_SRC_INSTALL_PREFIX}
+                      -DENABLE_OPENSSL=${LIBSRTP_ENABLE_OPENSSL}
+                      -DBUILD_SHARED_LIBS=${LIBSRTP_SHARED_LIBS}
+                      -DOPENSSL_ROOT_DIR=${OPEN_SRC_INSTALL_PREFIX}
+    CONFIGURE_COMMAND ${CONFIGURE_COMMAND}
+    TEST_COMMAND      ""
+)

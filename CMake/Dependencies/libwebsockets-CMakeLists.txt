@@ -26,19 +26,6 @@ if (WIN32)
   set(LWS_OPENSSL_LIBRARIES ${LWS_OPENSSL_LIBRARIES})
 endif()
 
-set(LIBWEBSOCKETS_EXTRA_ARGS)
-if(ANDROID_ABI)
-  # For Android cross-compilation pass the NDK toolchain so cmake uses the
-  # right cross-compiler.  Avoid forwarding CMAKE_C_FLAGS directly, as it
-  # may contain macOS SDK flags (mixed in by cmake on Darwin hosts).
-  list(APPEND LIBWEBSOCKETS_EXTRA_ARGS
-      -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-      -DANDROID_ABI=${ANDROID_ABI}
-      -DANDROID_PLATFORM=${ANDROID_PLATFORM})
-else()
-  list(APPEND LIBWEBSOCKETS_EXTRA_ARGS -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
-endif()
-
 ExternalProject_Add(project_libwebsockets
     GIT_REPOSITORY    https://github.com/warmcat/libwebsockets.git
     GIT_TAG           v4.3.5
@@ -48,7 +35,7 @@ ExternalProject_Add(project_libwebsockets
     LIST_SEPARATOR    |
     CMAKE_ARGS
         -DCMAKE_INSTALL_PREFIX=${OPEN_SRC_INSTALL_PREFIX}
-        ${LIBWEBSOCKETS_EXTRA_ARGS}
+        -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DDISABLE_WERROR=ON
         -DLWS_WITH_HTTP2=1
