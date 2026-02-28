@@ -825,7 +825,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&frameCtx.seenVideo) < 2; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
-    DLOGI("framesReceived %zu", ATOMIC_LOAD(&seenVideo));
+    DLOGI("framesReceived %zu", ATOMIC_LOAD(&frameCtx.seenVideo));
 
     MEMFREE(videoFrame.frameData);
     RtcOutboundRtpStreamStats stats{};
@@ -843,7 +843,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     RtcInboundRtpStreamStats answerStats{};
     EXPECT_EQ(STATUS_SUCCESS, getRtpInboundStats(answerPc, answerVideoTransceiver, &answerStats));
 
-    EXPECT_LE(1, ATOMIC_LOAD(&seenVideo));
+    EXPECT_LE(1, ATOMIC_LOAD(&frameCtx.seenVideo));
     EXPECT_LE(1, answerStats.framesReceived);
     EXPECT_LT(103, answerStats.received.packetsReceived);
     EXPECT_LT(120000, answerStats.bytesReceived);
