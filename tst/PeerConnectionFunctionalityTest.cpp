@@ -38,6 +38,8 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithDelay)
     PeerContainer answer;
 
     initRtcConfiguration(&configuration);
+    //solves occassional failure in this test where the peers fail to connect because of the delay in ICE candidate nomination
+    configuration.kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(2000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
 
     EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
     EXPECT_EQ(createPeerConnection(&configuration, &answerPc), STATUS_SUCCESS);
