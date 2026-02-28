@@ -152,6 +152,7 @@ jobs:
 
       - name: Build APK
         run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
           export JAVA_HOME="${HOME}/.sdkman/candidates/java/current"
           export PATH="${JAVA_HOME}/bin:${PATH}"
           cd android-test-app
@@ -285,6 +286,7 @@ jobs:
 
       - name: Build APK
         run: |
+          export PATH="/opt/homebrew/bin:${PATH}"
           export JAVA_HOME="${HOME}/.sdkman/candidates/java/current"
           export PATH="${JAVA_HOME}/bin:${PATH}"
           cd android-test-app
