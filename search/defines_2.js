@@ -13,11 +13,13 @@ var searchData=
   ['connection_5flistener_5fkick_5fsocket_5fwrite_10',['CONNECTION_LISTENER_KICK_SOCKET_WRITE',['../ConnectionListener_8h.html#a383df893eaeda67eb466665a1ac0ba06',1,'ConnectionListener.h']]],
   ['connection_5flistener_5fshutdown_5ftimeout_11',['CONNECTION_LISTENER_SHUTDOWN_TIMEOUT',['../ConnectionListener_8h.html#a5dd03244bebe143ff20363fd75799a9c',1,'ConnectionListener.h']]],
   ['connection_5flistener_5fsocket_5fwait_5ffor_5fdata_5ftimeout_12',['CONNECTION_LISTENER_SOCKET_WAIT_FOR_DATA_TIMEOUT',['../ConnectionListener_8h.html#a2899474a732dab5b403a1a8ed6edae1e',1,'ConnectionListener.h']]],
-  ['convert_5ftimestamp_5fto_5frtp_13',['CONVERT_TIMESTAMP_TO_RTP',['../Rtp_8h.html#a0d105a0689d40474f586dedbd85eaff0',1,'Rtp.h']]],
-  ['create_5fchannel_5fparam_5fjson_5ftemplate_14',['CREATE_CHANNEL_PARAM_JSON_TEMPLATE',['../LwsApiCalls_8h.html#af5356fd453251c8b99410c6ca6ff529b',1,'LwsApiCalls.h']]],
-  ['create_5fsignaling_5fchannel_5fapi_5fpostfix_15',['CREATE_SIGNALING_CHANNEL_API_POSTFIX',['../LwsApiCalls_8h.html#ae92c106c6a32d0826bfddbd2cd14783b',1,'LwsApiCalls.h']]],
-  ['csrc_5fcount_5fmask_16',['CSRC_COUNT_MASK',['../RtpPacket_8h.html#a49cfbf224a45977a66ca08edb54c39d3',1,'RtpPacket.h']]],
-  ['csrc_5flength_17',['CSRC_LENGTH',['../RtpPacket_8h.html#ac24aae0cb1fdbedb45cc01c8e8c1fb75',1,'RtpPacket.h']]],
-  ['csrc_5foffset_18',['CSRC_OFFSET',['../RtpPacket_8h.html#a5d46810e72777d8a019a184d4288a44a',1,'RtpPacket.h']]],
-  ['custom_5fdata_5ffrom_5fsignaling_5fclient_19',['CUSTOM_DATA_FROM_SIGNALING_CLIENT',['../Signaling_8h.html#ac2706b5d21634baf8e129d5548d18043',1,'Signaling.h']]]
+  ['convert_5ftimestamp_5fto_5frtp_13',['CONVERT_TIMESTAMP_TO_RTP',['../Rtp_8h.html#a3b7f287c9dc523d1f3a1ac1ef9c17ff3',1,'Rtp.h']]],
+  ['convert_5ftimestamp_5fto_5frtp_5flarge_14',['CONVERT_TIMESTAMP_TO_RTP_LARGE',['../Rtp_8h.html#ad109ef6278803ef4ac0808a96062a738',1,'Rtp.h']]],
+  ['convert_5ftimestamp_5fto_5frtp_5fprecise_15',['CONVERT_TIMESTAMP_TO_RTP_PRECISE',['../Rtp_8h.html#aa3049a990352620ed72b0b6e04ee3aa9',1,'Rtp.h']]],
+  ['create_5fchannel_5fparam_5fjson_5ftemplate_16',['CREATE_CHANNEL_PARAM_JSON_TEMPLATE',['../LwsApiCalls_8h.html#af5356fd453251c8b99410c6ca6ff529b',1,'LwsApiCalls.h']]],
+  ['create_5fsignaling_5fchannel_5fapi_5fpostfix_17',['CREATE_SIGNALING_CHANNEL_API_POSTFIX',['../LwsApiCalls_8h.html#ae92c106c6a32d0826bfddbd2cd14783b',1,'LwsApiCalls.h']]],
+  ['csrc_5fcount_5fmask_18',['CSRC_COUNT_MASK',['../RtpPacket_8h.html#a49cfbf224a45977a66ca08edb54c39d3',1,'RtpPacket.h']]],
+  ['csrc_5flength_19',['CSRC_LENGTH',['../RtpPacket_8h.html#ac24aae0cb1fdbedb45cc01c8e8c1fb75',1,'RtpPacket.h']]],
+  ['csrc_5foffset_20',['CSRC_OFFSET',['../RtpPacket_8h.html#a5d46810e72777d8a019a184d4288a44a',1,'RtpPacket.h']]],
+  ['custom_5fdata_5ffrom_5fsignaling_5fclient_21',['CUSTOM_DATA_FROM_SIGNALING_CLIENT',['../Signaling_8h.html#ac2706b5d21634baf8e129d5548d18043',1,'Signaling.h']]]
 ];
