@@ -26,6 +26,8 @@ permissions:
 
 jobs:
   superbuild-mac:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:

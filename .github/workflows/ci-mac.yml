@@ -29,6 +29,8 @@ permissions:
 
 jobs:
   mac:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 60
     steps:

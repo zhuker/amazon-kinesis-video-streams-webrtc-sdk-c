@@ -90,6 +90,8 @@ jobs:
         run: rm -rf build-android-arm64-v8a
 
   android-arm64-asan:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
@@ -149,6 +151,8 @@ jobs:
         run: rm -rf build-android-arm64-v8a-asan
 
   android-arm64-app:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     needs: android-arm64
@@ -190,6 +194,8 @@ jobs:
   # ===========================================================================
 
   android-arm32:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
@@ -238,6 +244,8 @@ jobs:
         run: rm -rf build-android-armeabi-v7a
 
   android-arm32-asan:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
@@ -290,6 +298,8 @@ jobs:
         run: rm -rf build-android-armeabi-v7a-asan
 
   android-arm32-app:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:

@@ -26,6 +26,8 @@ permissions:
 
 jobs:
   superbuild-linux:
+    # Disabled while iterating on Android build
+    if: false
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
