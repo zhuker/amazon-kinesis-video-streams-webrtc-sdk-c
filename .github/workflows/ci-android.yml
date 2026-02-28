@@ -85,12 +85,12 @@ jobs:
         run: rm -rf build-android-arm64-v8a
 
   android-arm64-asan:
-    # Disabled while iterating on Android build
-    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Start emulator
         run: bash scripts/emulator.sh start --avd "test-android26-arm64" -f
@@ -101,19 +101,12 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
-          cmake -S . -B build-android-arm64-v8a-asan \
+          cmake -S superbuild -B build-android-arm64-v8a-asan \
             -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK}/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
-            -DBUILD_SAMPLE=OFF -DBUILD_STATIC_LIBS=ON \
-            -DBUILD_TEST=ON -DENABLE_SELF_CONTAINED=ON \
-            -DENABLE_AWS_SDK_IN_TESTS=OFF \
-            -DBUILD_OPENSSL_PLATFORM=android-arm64 \
-            -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-arm64-v8a-asan/deps \
-            -DADDRESS_SANITIZER=ON -DUNDEFINED_BEHAVIOR_SANITIZER=ON \
-            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
+            -DBUILD_STATIC_LIBS=ON \
+            -DADDRESS_SANITIZER=ON -DUNDEFINED_BEHAVIOR_SANITIZER=ON
 
       - name: Build
         run: |
@@ -127,7 +120,7 @@ jobs:
           ASAN_RT=$(find "${ANDROID_NDK}/toolchains/llvm/prebuilt" -name "libclang_rt.asan-aarch64-android.so" | head -1)
           "${ADB}" -s "${SERIAL}" push "${ASAN_RT}" /data/local/tmp/
           "${ADB}" -s "${SERIAL}" shell mkdir -p /data/local/tmp/tst /data/local/tmp/samples
-          "${ADB}" -s "${SERIAL}" push build-android-arm64-v8a-asan/tst/webrtc_client_test /data/local/tmp/tst/
+          "${ADB}" -s "${SERIAL}" push build-android-arm64-v8a-asan/sdk/tst/webrtc_client_test /data/local/tmp/tst/
           "${ADB}" -s "${SERIAL}" shell chmod +x /data/local/tmp/tst/webrtc_client_test
           for d in h264SampleFrames h265SampleFrames opusSampleFrames girH264 bbbH264; do
             [ -d "samples/$d" ] && "${ADB}" -s "${SERIAL}" push --sync "samples/$d" /data/local/tmp/samples/
