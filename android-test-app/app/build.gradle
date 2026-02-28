@@ -20,14 +20,7 @@ android {
             abiFilters "armeabi-v7a", "arm64-v8a"
         }
 
-        externalNativeBuild {
-            cmake {
-                arguments "-DBUILD_SAMPLE=OFF",
-                          "-DBUILD_STATIC_LIBS=ON",
-                          "-DBUILD_TEST=ON",
-                          "-DENABLE_SELF_CONTAINED=ON"
-            }
-        }
+        // cmake arguments handled by superbuild/CMakeLists.txt
     }
 
     externalNativeBuild {

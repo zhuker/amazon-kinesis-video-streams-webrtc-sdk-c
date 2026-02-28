@@ -139,13 +139,13 @@ jobs:
         run: rm -rf build-android-arm64-v8a-asan
 
   android-arm64-app:
-    # Disabled while iterating on Android build
-    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     needs: android-arm64
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Start emulator
         run: bash scripts/emulator.sh start --avd "test-android26-arm64" -f
@@ -162,10 +162,12 @@ jobs:
         run: |
           ADB="${ANDROID_HOME}/platform-tools/adb"
           SERIAL=$("${ADB}" devices | awk '/emulator.*device/{print $1;exit}')
-          "${ADB}" -s "${SERIAL}" install -r \
-            android-test-app/app/build/outputs/apk/debug/app-debug.apk
-          "${ADB}" -s "${SERIAL}" install -r \
-            android-test-app/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          APK_DEBUG=$(find android-test-app/app/build -name "app-debug.apk" -not -name "*androidTest*" | head -1)
+          APK_TEST=$(find android-test-app/app/build -name "app-debug-androidTest.apk" | head -1)
+          "${ADB}" -s "${SERIAL}" uninstall com.kvs.webrtctest || true
+          "${ADB}" -s "${SERIAL}" uninstall com.kvs.webrtctest.test || true
+          "${ADB}" -s "${SERIAL}" install -r -t "${APK_DEBUG}"
+          "${ADB}" -s "${SERIAL}" install -r -t "${APK_TEST}"
           "${ADB}" -s "${SERIAL}" shell am instrument -w -r \
             com.kvs.webrtctest.test/androidx.test.runner.AndroidJUnitRunner
 
@@ -274,12 +276,12 @@ jobs:
         run: rm -rf build-android-armeabi-v7a-asan
 
   android-arm32-app:
-    # Disabled while iterating on Android build
-    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Build APK
         run: |
@@ -293,10 +295,12 @@ jobs:
         run: |
           ADB="${ANDROID_HOME}/platform-tools/adb"
           SERIAL=$("${ADB}" devices | grep -v "^List" | grep "device$" | grep -v "emulator" | awk '{print $1}' | head -1)
-          "${ADB}" -s "${SERIAL}" install -r \
-            android-test-app/app/build/outputs/apk/debug/app-debug.apk
-          "${ADB}" -s "${SERIAL}" install -r \
-            android-test-app/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          APK_DEBUG=$(find android-test-app/app/build -name "app-debug.apk" -not -name "*androidTest*" | head -1)
+          APK_TEST=$(find android-test-app/app/build -name "app-debug-androidTest.apk" | head -1)
+          "${ADB}" -s "${SERIAL}" uninstall com.kvs.webrtctest || true
+          "${ADB}" -s "${SERIAL}" uninstall com.kvs.webrtctest.test || true
+          "${ADB}" -s "${SERIAL}" install -r -t "${APK_DEBUG}"
+          "${ADB}" -s "${SERIAL}" install -r -t "${APK_TEST}"
           "${ADB}" -s "${SERIAL}" shell am instrument -w -r \
             com.kvs.webrtctest.test/androidx.test.runner.AndroidJUnitRunner
 
