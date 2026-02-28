@@ -842,6 +842,8 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 
     RtcInboundRtpStreamStats answerStats{};
     EXPECT_EQ(STATUS_SUCCESS, getRtpInboundStats(answerPc, answerVideoTransceiver, &answerStats));
+
+    EXPECT_LE(1, ATOMIC_LOAD(&seenVideo));
     EXPECT_LE(1, answerStats.framesReceived);
     EXPECT_LT(103, answerStats.received.packetsReceived);
     EXPECT_LT(120000, answerStats.bytesReceived);
@@ -853,8 +855,6 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
-
-    EXPECT_EQ(ATOMIC_LOAD(&frameCtx.seenVideo), 1);
 
     // Verify timestamp conversion: received timestamps should be in the correct range
     // Sent timestamps start at HUNDREDS_OF_NANOS_IN_A_SECOND (1s) with 25fps increments
