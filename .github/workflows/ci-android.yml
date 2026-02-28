@@ -182,12 +182,12 @@ jobs:
   # ===========================================================================
 
   android-arm32:
-    # Disabled while iterating on Android build
-    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Configure
         run: |
@@ -195,18 +195,11 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
-          cmake -S . -B build-android-armeabi-v7a \
+          cmake -S superbuild -B build-android-armeabi-v7a \
             -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK}/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=armeabi-v7a \
             -DANDROID_PLATFORM=android-26 \
-            -DBUILD_SAMPLE=OFF -DBUILD_STATIC_LIBS=ON \
-            -DBUILD_TEST=ON -DENABLE_SELF_CONTAINED=ON \
-            -DENABLE_AWS_SDK_IN_TESTS=OFF \
-            -DBUILD_OPENSSL_PLATFORM=android-arm \
-            -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/build-android-armeabi-v7a/deps \
-            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
+            -DBUILD_STATIC_LIBS=ON
 
       - name: Build
         run: |
@@ -218,7 +211,7 @@ jobs:
           ADB="${ANDROID_HOME}/platform-tools/adb"
           SERIAL=$("${ADB}" devices | grep -v "^List" | grep "device$" | grep -v "emulator" | awk '{print $1}' | head -1)
           "${ADB}" -s "${SERIAL}" shell mkdir -p /data/local/tmp/tst /data/local/tmp/samples
-          "${ADB}" -s "${SERIAL}" push build-android-armeabi-v7a/tst/webrtc_client_test /data/local/tmp/tst/
+          "${ADB}" -s "${SERIAL}" push build-android-armeabi-v7a/sdk/tst/webrtc_client_test /data/local/tmp/tst/
           "${ADB}" -s "${SERIAL}" shell chmod +x /data/local/tmp/tst/webrtc_client_test
           for d in h264SampleFrames h265SampleFrames opusSampleFrames girH264 bbbH264; do
             [ -d "samples/$d" ] && "${ADB}" -s "${SERIAL}" push --sync "samples/$d" /data/local/tmp/samples/
