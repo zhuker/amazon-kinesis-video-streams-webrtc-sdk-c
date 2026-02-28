@@ -1,0 +1,7 @@
+<map id="requestKeyFrame" name="requestKeyFrame">
+<area shape="rect" id="Node000001" title="Requests a key frame from the remote peer." alt="" coords="5,5,141,31"/>
+<area shape="rect" id="Node000002" href="$group__PublicMemberFunctions.html#gaa6941c3243ed83c8f1860d970b0cdd81" title="Sends a Picture Loss Indication (PLI) packet to the remote peer." alt="" coords="189,5,332,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="141,15,176,15,176,21,141,21"/>
+<area shape="rect" id="Node000003" href="$Rtcp_8c.html#afd7e64bc0ac44cf67c6c643d57d61447" title=" " alt="" coords="380,5,481,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="332,15,366,15,366,21,332,21"/>
+</map>

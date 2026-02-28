@@ -1,0 +1,5 @@
+<map id="transceiverSendPli" name="transceiverSendPli">
+<area shape="rect" id="Node000001" title="Sends a Picture Loss Indication (PLI) packet to the remote peer." alt="" coords="189,5,332,31"/>
+<area shape="rect" id="Node000002" href="$group__PublicMemberFunctions.html#gae4be35447b80b7a555791b6eb2ea561f" title="Requests a key frame from the remote peer." alt="" coords="5,5,141,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="175,21,142,21,142,15,175,15"/>
+</map>

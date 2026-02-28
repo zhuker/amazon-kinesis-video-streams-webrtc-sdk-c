@@ -234,6 +234,15 @@ Functions</h2></td></tr>
 <tr class="memitem:gac847bd3f95ca79c90788f0948c4ee093" id="r_gac847bd3f95ca79c90788f0948c4ee093"><td class="memItemLeft" align="right" valign="top">PUBLIC_API STATUS&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__PublicMemberFunctions.html#gac847bd3f95ca79c90788f0948c4ee093">freeRtcCertificate</a> (<a class="el" href="group__PublicStructures.html#ga7f1a9ea27f23f9d24beb8f271c0482b8">PRtcCertificate</a>)</td></tr>
 <tr class="memdesc:gac847bd3f95ca79c90788f0948c4ee093"><td class="mdescLeft">&#160;</td><td class="mdescRight">Frees previously generated <a class="el" href="structRtcCertificate.html" title="Specifies the certificate and the private key used by the certificate. The Certificates are in the fo...">RtcCertificate</a> object.  <br /></td></tr>
 <tr class="separator:gac847bd3f95ca79c90788f0948c4ee093"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:gae4be35447b80b7a555791b6eb2ea561f" id="r_gae4be35447b80b7a555791b6eb2ea561f"><td class="memItemLeft" align="right" valign="top">PUBLIC_API STATUS&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__PublicMemberFunctions.html#gae4be35447b80b7a555791b6eb2ea561f">requestKeyFrame</a> (<a class="el" href="group__PublicStructures.html#ga575b38a26ceae3044dd16d8d72667ebf">PRtcRtpTransceiver</a>)</td></tr>
+<tr class="memdesc:gae4be35447b80b7a555791b6eb2ea561f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Requests a key frame from the remote peer.  <br /></td></tr>
+<tr class="separator:gae4be35447b80b7a555791b6eb2ea561f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:gaa6941c3243ed83c8f1860d970b0cdd81" id="r_gaa6941c3243ed83c8f1860d970b0cdd81"><td class="memItemLeft" align="right" valign="top">PUBLIC_API STATUS&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__PublicMemberFunctions.html#gaa6941c3243ed83c8f1860d970b0cdd81">transceiverSendPli</a> (<a class="el" href="group__PublicStructures.html#ga575b38a26ceae3044dd16d8d72667ebf">PRtcRtpTransceiver</a>)</td></tr>
+<tr class="memdesc:gaa6941c3243ed83c8f1860d970b0cdd81"><td class="mdescLeft">&#160;</td><td class="mdescRight">Sends a Picture Loss Indication (PLI) packet to the remote peer.  <br /></td></tr>
+<tr class="separator:gaa6941c3243ed83c8f1860d970b0cdd81"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:gaad4bac46a36642202b9ccc9367442692" id="r_gaad4bac46a36642202b9ccc9367442692"><td class="memItemLeft" align="right" valign="top">PUBLIC_API STATUS&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__PublicMemberFunctions.html#gaad4bac46a36642202b9ccc9367442692">transceiverSendFir</a> (<a class="el" href="group__PublicStructures.html#ga575b38a26ceae3044dd16d8d72667ebf">PRtcRtpTransceiver</a>)</td></tr>
+<tr class="memdesc:gaad4bac46a36642202b9ccc9367442692"><td class="mdescLeft">&#160;</td><td class="mdescRight">Sends a Full Intra Request (FIR) packet to the remote peer.  <br /></td></tr>
+<tr class="separator:gaad4bac46a36642202b9ccc9367442692"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <p>Public functions. </p>
@@ -2448,6 +2457,46 @@ Here is the call graph for this function:</div>
 
 </div>
 </div>
+<a id="gae4be35447b80b7a555791b6eb2ea561f" name="gae4be35447b80b7a555791b6eb2ea561f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#gae4be35447b80b7a555791b6eb2ea561f">&#9670;&#160;</a></span>requestKeyFrame()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">PUBLIC_API STATUS requestKeyFrame </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="group__PublicStructures.html#ga575b38a26ceae3044dd16d8d72667ebf">PRtcRtpTransceiver</a>&#160;</td>
+          <td class="paramname"><em>pRtcRtpTransceiver</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Requests a key frame from the remote peer. </p>
+<p>This function sends a Picture Loss Indication (PLI) packet to the remote peer, requesting a key frame. This is useful when the decoder detects packet loss or corruption and needs a fresh key frame to recover.</p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramdir">[in]</td><td class="paramname">PRtcRtpTransceiver</td><td>The transceiver associated with the media stream.</td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>STATUS code of the execution. STATUS_SUCCESS on success. </dd></dl>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="group__PublicMemberFunctions_gae4be35447b80b7a555791b6eb2ea561f_cgraph.png" border="0" usemap="#agroup__PublicMemberFunctions_gae4be35447b80b7a555791b6eb2ea561f_cgraph" alt=""/></div>
+<map name="agroup__PublicMemberFunctions_gae4be35447b80b7a555791b6eb2ea561f_cgraph" id="agroup__PublicMemberFunctions_gae4be35447b80b7a555791b6eb2ea561f_cgraph">
+<area shape="rect" title="Requests a key frame from the remote peer." alt="" coords="5,5,141,31"/>
+<area shape="rect" href="group__PublicMemberFunctions.html#gaa6941c3243ed83c8f1860d970b0cdd81" title="Sends a Picture Loss Indication (PLI) packet to the remote peer." alt="" coords="189,5,332,31"/>
+<area shape="poly" title=" " alt="" coords="141,15,176,15,176,21,141,21"/>
+<area shape="rect" href="Rtcp_8c.html#afd7e64bc0ac44cf67c6c643d57d61447" title=" " alt="" coords="380,5,481,31"/>
+<area shape="poly" title=" " alt="" coords="332,15,366,15,366,21,332,21"/>
+</map>
+</div>
+
+</div>
+</div>
 <a id="gade9fcbb056cb321f33890c1cf1222e64" name="gade9fcbb056cb321f33890c1cf1222e64"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#gade9fcbb056cb321f33890c1cf1222e64">&#9670;&#160;</a></span>restartIce()</h2>
 
@@ -3127,6 +3176,90 @@ Here is the call graph for this function:</div>
 
 </div>
 </div>
+<a id="gaad4bac46a36642202b9ccc9367442692" name="gaad4bac46a36642202b9ccc9367442692"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#gaad4bac46a36642202b9ccc9367442692">&#9670;&#160;</a></span>transceiverSendFir()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">PUBLIC_API STATUS transceiverSendFir </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="group__PublicStructures.html#ga575b38a26ceae3044dd16d8d72667ebf">PRtcRtpTransceiver</a>&#160;</td>
+          <td class="paramname"><em>pRtcRtpTransceiver</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Sends a Full Intra Request (FIR) packet to the remote peer. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramdir">[in]</td><td class="paramname">PRtcRtpTransceiver</td><td>The transceiver associated with the media stream.</td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>STATUS code of the execution. STATUS_SUCCESS on success. </dd></dl>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="group__PublicMemberFunctions_gaad4bac46a36642202b9ccc9367442692_cgraph.png" border="0" usemap="#agroup__PublicMemberFunctions_gaad4bac46a36642202b9ccc9367442692_cgraph" alt=""/></div>
+<map name="agroup__PublicMemberFunctions_gaad4bac46a36642202b9ccc9367442692_cgraph" id="agroup__PublicMemberFunctions_gaad4bac46a36642202b9ccc9367442692_cgraph">
+<area shape="rect" title="Sends a Full Intra Request (FIR) packet to the remote peer." alt="" coords="5,5,148,31"/>
+<area shape="rect" href="Rtcp_8c.html#a01e6b919c1e1ed4d710df317d81d061d" title=" " alt="" coords="196,5,299,31"/>
+<area shape="poly" title=" " alt="" coords="148,15,183,15,183,21,148,21"/>
+</map>
+</div>
+
+</div>
+</div>
+<a id="gaa6941c3243ed83c8f1860d970b0cdd81" name="gaa6941c3243ed83c8f1860d970b0cdd81"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#gaa6941c3243ed83c8f1860d970b0cdd81">&#9670;&#160;</a></span>transceiverSendPli()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">PUBLIC_API STATUS transceiverSendPli </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="group__PublicStructures.html#ga575b38a26ceae3044dd16d8d72667ebf">PRtcRtpTransceiver</a>&#160;</td>
+          <td class="paramname"><em>pRtcRtpTransceiver</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Sends a Picture Loss Indication (PLI) packet to the remote peer. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramdir">[in]</td><td class="paramname">PRtcRtpTransceiver</td><td>The transceiver associated with the media stream.</td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>STATUS code of the execution. STATUS_SUCCESS on success. </dd></dl>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="group__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_cgraph.png" border="0" usemap="#agroup__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_cgraph" alt=""/></div>
+<map name="agroup__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_cgraph" id="agroup__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_cgraph">
+<area shape="rect" title="Sends a Picture Loss Indication (PLI) packet to the remote peer." alt="" coords="5,5,148,31"/>
+<area shape="rect" href="Rtcp_8c.html#afd7e64bc0ac44cf67c6c643d57d61447" title=" " alt="" coords="196,5,297,31"/>
+<area shape="poly" title=" " alt="" coords="148,15,182,15,182,21,148,21"/>
+</map>
+</div>
+<div class="dynheader">
+Here is the caller graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="group__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_icgraph.png" border="0" usemap="#agroup__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_icgraph" alt=""/></div>
+<map name="agroup__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_icgraph" id="agroup__PublicMemberFunctions_gaa6941c3243ed83c8f1860d970b0cdd81_icgraph">
+<area shape="rect" title="Sends a Picture Loss Indication (PLI) packet to the remote peer." alt="" coords="189,5,332,31"/>
+<area shape="rect" href="group__PublicMemberFunctions.html#gae4be35447b80b7a555791b6eb2ea561f" title="Requests a key frame from the remote peer." alt="" coords="5,5,141,31"/>
+<area shape="poly" title=" " alt="" coords="175,21,142,21,142,15,175,15"/>
+</map>
+</div>
+
+</div>
+</div>
 <a id="gaba8d6226887ac3b7c24ec3a5f686e5c5" name="gaba8d6226887ac3b7c24ec3a5f686e5c5"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#gaba8d6226887ac3b7c24ec3a5f686e5c5">&#9670;&#160;</a></span>updateEncoderStats()</h2>
 
@@ -3284,7 +3417,7 @@ Here is the call graph for this function:</div>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="footer">Generated on Sat Feb 28 2026 21:25:38 for Amazon Kinesis Webrtc C SDK by <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.9.8 </li>
+    <li class="footer">Generated on Sat Feb 28 2026 23:16:38 for Amazon Kinesis Webrtc C SDK by <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.9.8 </li>
   </ul>
 </div>
 </body>
