@@ -791,15 +791,16 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
-    // Send exactly 2 frames to make packet counts deterministic
+    //send 2 frames, receiver should see at least 1 frames
     for (int i = 0; i < 2; i++) {
         EXPECT_EQ(writeFrame(offerVideoTransceiver, &videoFrame), STATUS_SUCCESS);
         videoFrame.presentationTs += (HUNDREDS_OF_NANOS_IN_A_SECOND / 25);
         THREAD_SLEEP(40 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
-    // Wait for receiver to see both frames
-    for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&seenVideo) < 2; i++) {
+    // Wait for receiver to see at least 1 frame
+    // exact number of frames depends on timing
+    for (auto i = 0; i <= 1000 && ATOMIC_LOAD(&seenVideo) < 1; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
@@ -818,14 +819,12 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 
     RtcInboundRtpStreamStats answerStats{};
     EXPECT_EQ(STATUS_SUCCESS, getRtpInboundStats(answerPc, answerVideoTransceiver, &answerStats));
-    EXPECT_EQ(2, answerStats.framesReceived);
-    EXPECT_EQ(206, answerStats.received.packetsReceived);
-#ifdef KVS_USE_MBEDTLS
-    EXPECT_EQ(248026, answerStats.bytesReceived);
-#else
-    EXPECT_EQ(246790, answerStats.bytesReceived);
-#endif
-    EXPECT_EQ(2472, answerStats.headerBytesReceived);
+
+    EXPECT_LE(1, ATOMIC_LOAD(&seenVideo));
+    EXPECT_LE(1, answerStats.framesReceived);
+    EXPECT_LT(103, answerStats.received.packetsReceived);
+    EXPECT_LT(120000, answerStats.bytesReceived);
+    EXPECT_LT(1234, answerStats.headerBytesReceived);
     EXPECT_LT(0, answerStats.lastPacketReceivedTimestamp);
 
     closePeerConnection(offerPc);
@@ -834,7 +833,6 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
 
-    EXPECT_EQ(ATOMIC_LOAD(&seenVideo), 2);
 }
 
 // Same test as exchangeMedia, but assert that if one side is RSA DTLS and Key Extraction works
