@@ -29,8 +29,6 @@ permissions:
 
 jobs:
   linux:
-    # Disabled while iterating on Android build
-    if: false
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 90
     steps:
