@@ -130,6 +130,8 @@ var searchData=
   ['pturnpeer_127',['PTurnPeer',['../TurnConnection_8h.html#abd1a7e402d82840884d14a1e0922b8c9',1,'TurnConnection.h']]],
   ['pturnprofilediagnostics_128',['PTurnProfileDiagnostics',['../TurnConnection_8h.html#a8e5f0e5c2c93cf9c2414006f33dbcffe',1,'TurnConnection.h']]],
   ['ptwccmanager_129',['PTwccManager',['../PeerConnection_8h.html#abca4158d793225a7c54cacf383d9567e',1,'PeerConnection.h']]],
-  ['ptwccrtppacketinfo_130',['PTwccRtpPacketInfo',['../PeerConnection_8h.html#a1331e20744da17716d0fbe8cdd44209e',1,'PeerConnection.h']]],
-  ['pwebrtcclientcontext_131',['PWebRtcClientContext',['../PeerConnection_8h.html#ac1c5b4aa09898534cdd430b10f547b3f',1,'PeerConnection.h']]]
+  ['ptwccreceivedpacketinfo_130',['PTwccReceivedPacketInfo',['../PeerConnection_8h.html#aa6fc7cdd7ceba36ecb5dfeac034bc05e',1,'PeerConnection.h']]],
+  ['ptwccreceivermanager_131',['PTwccReceiverManager',['../PeerConnection_8h.html#aef8d0422d829e7c4913f0aac8977d91f',1,'PeerConnection.h']]],
+  ['ptwccrtppacketinfo_132',['PTwccRtpPacketInfo',['../PeerConnection_8h.html#a1331e20744da17716d0fbe8cdd44209e',1,'PeerConnection.h']]],
+  ['pwebrtcclientcontext_133',['PWebRtcClientContext',['../PeerConnection_8h.html#ac1c5b4aa09898534cdd430b10f547b3f',1,'PeerConnection.h']]]
 ];

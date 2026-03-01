@@ -9,5 +9,7 @@ var searchData=
   ['turnpeer_6',['TurnPeer',['../structTurnPeer.html',1,'']]],
   ['turnprofilediagnostics_7',['TurnProfileDiagnostics',['../structTurnProfileDiagnostics.html',1,'']]],
   ['twccmanager_8',['TwccManager',['../structTwccManager.html',1,'']]],
-  ['twccrtppacketinfo_9',['TwccRtpPacketInfo',['../structTwccRtpPacketInfo.html',1,'']]]
+  ['twccreceivedpacketinfo_9',['TwccReceivedPacketInfo',['../structTwccReceivedPacketInfo.html',1,'']]],
+  ['twccreceivermanager_10',['TwccReceiverManager',['../structTwccReceiverManager.html',1,'']]],
+  ['twccrtppacketinfo_11',['TwccRtpPacketInfo',['../structTwccRtpPacketInfo.html',1,'']]]
 ];
