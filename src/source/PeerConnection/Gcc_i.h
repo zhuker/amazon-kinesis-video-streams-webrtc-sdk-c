@@ -39,7 +39,7 @@ extern "C" {
 #define GCC_DEFAULT_INITIAL_BITRATE 300000  // 300 kbps
 
 // Convert ms to 100ns units (KVS time format)
-#define GCC_MS_TO_KVS(ms)  ((UINT64) (ms) *HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
+#define GCC_MS_TO_KVS(ms)  ((UINT64) (ms) * HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
 #define GCC_KVS_TO_MS(kvs) ((DOUBLE) (kvs) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
 
 /**
