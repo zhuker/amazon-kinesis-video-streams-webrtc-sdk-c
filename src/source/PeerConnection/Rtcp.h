@@ -63,11 +63,11 @@ typedef enum {
 
 // TWCC chunk encoding macros for feedback generation
 // Run-length chunk: bit 15 = 0, bits 14-13 = status symbol, bits 12-0 = run length
-#define TWCC_MAKE_RUNLEN(status, count) ((UINT16) (((status) << 13) | ((count) &0x1FFF)))
+#define TWCC_MAKE_RUNLEN(status, count) ((UINT16) (((status) << 13) | ((count) & 0x1FFF)))
 // Status vector chunk (2-bit): bit 15 = 1, bit 14 = 1, bits 13-0 = 7 status symbols (2 bits each)
-#define TWCC_MAKE_STATUS_VECTOR_2BIT(symbols) ((UINT16) (0xC000 | ((symbols) &0x3FFF)))
+#define TWCC_MAKE_STATUS_VECTOR_2BIT(symbols) ((UINT16) (0xC000 | ((symbols) & 0x3FFF)))
 // Status vector chunk (1-bit): bit 15 = 1, bit 14 = 0, bits 13-0 = 14 status symbols (1 bit each)
-#define TWCC_MAKE_STATUS_VECTOR_1BIT(symbols) ((UINT16) (0x8000 | ((symbols) &0x3FFF)))
+#define TWCC_MAKE_STATUS_VECTOR_1BIT(symbols) ((UINT16) (0x8000 | ((symbols) & 0x3FFF)))
 
 // TWCC feedback packet type
 #define RTCP_PACKET_TYPE_GENERIC_RTP_FEEDBACK 205
