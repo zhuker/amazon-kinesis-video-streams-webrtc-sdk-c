@@ -261,6 +261,21 @@ Typedefs</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="var-members" name="var-members"></a>
 Variables</h2></td></tr>
+<tr class="memitem:ga42fb1da90d27e5d490f0d230a927f92e" id="r_ga42fb1da90d27e5d490f0d230a927f92e"><td class="memItemLeft" align="right" valign="top">UINT16&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__StatusCodes.html#ga42fb1da90d27e5d490f0d230a927f92e">TwccPacketReport::seqNum</a></td></tr>
+<tr class="memdesc:ga42fb1da90d27e5d490f0d230a927f92e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Transport-wide sequence number.  <br /></td></tr>
+<tr class="separator:ga42fb1da90d27e5d490f0d230a927f92e"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ga63dc46f5ee8854fdffeb77e7f597f16a" id="r_ga63dc46f5ee8854fdffeb77e7f597f16a"><td class="memItemLeft" align="right" valign="top">UINT64&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__StatusCodes.html#ga63dc46f5ee8854fdffeb77e7f597f16a">TwccPacketReport::sendTimeKvs</a></td></tr>
+<tr class="memdesc:ga63dc46f5ee8854fdffeb77e7f597f16a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Time packet was sent (100ns units from GETTIME())  <br /></td></tr>
+<tr class="separator:ga63dc46f5ee8854fdffeb77e7f597f16a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ga8b8fd47e7298464c37ae606451ecb8d5" id="r_ga8b8fd47e7298464c37ae606451ecb8d5"><td class="memItemLeft" align="right" valign="top">UINT64&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__StatusCodes.html#ga8b8fd47e7298464c37ae606451ecb8d5">TwccPacketReport::arrivalTimeKvs</a></td></tr>
+<tr class="memdesc:ga8b8fd47e7298464c37ae606451ecb8d5"><td class="mdescLeft">&#160;</td><td class="mdescRight">Time remote peer received packet (0 = lost/not received)  <br /></td></tr>
+<tr class="separator:ga8b8fd47e7298464c37ae606451ecb8d5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ga8a26ea0337f68c49e909efab18980a52" id="r_ga8a26ea0337f68c49e909efab18980a52"><td class="memItemLeft" align="right" valign="top">UINT32&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__StatusCodes.html#ga8a26ea0337f68c49e909efab18980a52">TwccPacketReport::packetSize</a></td></tr>
+<tr class="memdesc:ga8a26ea0337f68c49e909efab18980a52"><td class="mdescLeft">&#160;</td><td class="mdescRight">Packet size in bytes.  <br /></td></tr>
+<tr class="separator:ga8a26ea0337f68c49e909efab18980a52"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ga70b853c0bdf85a129e5482c7f77911fd" id="r_ga70b853c0bdf85a129e5482c7f77911fd"><td class="memItemLeft" align="right" valign="top">BOOL&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__StatusCodes.html#ga70b853c0bdf85a129e5482c7f77911fd">TwccPacketReport::received</a></td></tr>
+<tr class="memdesc:ga70b853c0bdf85a129e5482c7f77911fd"><td class="mdescLeft">&#160;</td><td class="mdescRight">TRUE if packet was received, FALSE if lost.  <br /></td></tr>
+<tr class="separator:ga70b853c0bdf85a129e5482c7f77911fd"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:gadd53434650fa42653e4002365f2382c9" id="r_gadd53434650fa42653e4002365f2382c9"><td class="memItemLeft" align="right" valign="top">CHAR&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__StatusCodes.html#gadd53434650fa42653e4002365f2382c9">__RtcDataChannel::name</a> [255+1]</td></tr>
 <tr class="memdesc:gadd53434650fa42653e4002365f2382c9"><td class="mdescLeft">&#160;</td><td class="mdescRight">Define name of data channel. Max length is 256 characters.  <br /></td></tr>
 <tr class="separator:gadd53434650fa42653e4002365f2382c9"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -984,6 +999,22 @@ Variables</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Variable Documentation</h2>
+<a id="ga8b8fd47e7298464c37ae606451ecb8d5" name="ga8b8fd47e7298464c37ae606451ecb8d5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ga8b8fd47e7298464c37ae606451ecb8d5">&#9670;&#160;</a></span>arrivalTimeKvs</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">UINT64 TwccPacketReport::arrivalTimeKvs</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Time remote peer received packet (0 = lost/not received) </p>
+
+</div>
+</div>
 <a id="gaa9746b411ce24f571591c2402fc2eaf9" name="gaa9746b411ce24f571591c2402fc2eaf9"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#gaa9746b411ce24f571591c2402fc2eaf9">&#9670;&#160;</a></span>asyncIceServerConfig</h2>
 
@@ -1880,6 +1911,22 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ga8a26ea0337f68c49e909efab18980a52" name="ga8a26ea0337f68c49e909efab18980a52"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ga8a26ea0337f68c49e909efab18980a52">&#9670;&#160;</a></span>packetSize</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">UINT32 TwccPacketReport::packetSize</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Packet size in bytes. </p>
+
+</div>
+</div>
 <a id="ga42415e35ac7e5ce89bf83e7292b6e161" name="ga42415e35ac7e5ce89bf83e7292b6e161"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ga42415e35ac7e5ce89bf83e7292b6e161">&#9670;&#160;</a></span>password</h2>
 
@@ -2195,6 +2242,22 @@ Variables</h2></td></tr>
 
 </div>
 </div>
+<a id="ga70b853c0bdf85a129e5482c7f77911fd" name="ga70b853c0bdf85a129e5482c7f77911fd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ga70b853c0bdf85a129e5482c7f77911fd">&#9670;&#160;</a></span>received</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">BOOL TwccPacketReport::received</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>TRUE if packet was received, FALSE if lost. </p>
+
+</div>
+</div>
 <a id="ga9da0bde056ac3a5dc58eba5039c24a63" name="ga9da0bde056ac3a5dc58eba5039c24a63"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ga9da0bde056ac3a5dc58eba5039c24a63">&#9670;&#160;</a></span>receiver</h2>
 
@@ -2415,6 +2478,38 @@ Variables</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Socket send buffer length. Item larger then this size will get dropped. Use system default if 0. </p>
+
+</div>
+</div>
+<a id="ga63dc46f5ee8854fdffeb77e7f597f16a" name="ga63dc46f5ee8854fdffeb77e7f597f16a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ga63dc46f5ee8854fdffeb77e7f597f16a">&#9670;&#160;</a></span>sendTimeKvs</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">UINT64 TwccPacketReport::sendTimeKvs</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Time packet was sent (100ns units from GETTIME()) </p>
+
+</div>
+</div>
+<a id="ga42fb1da90d27e5d490f0d230a927f92e" name="ga42fb1da90d27e5d490f0d230a927f92e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ga42fb1da90d27e5d490f0d230a927f92e">&#9670;&#160;</a></span>seqNum</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">UINT16 TwccPacketReport::seqNum</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Transport-wide sequence number. </p>
 
 </div>
 </div>
@@ -3117,7 +3212,7 @@ Variables</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="footer">Generated on Sun Mar 1 2026 09:41:48 for Amazon Kinesis Webrtc C SDK by <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.9.8 </li>
+    <li class="footer">Generated on Sun Mar 1 2026 14:55:04 for Amazon Kinesis Webrtc C SDK by <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.9.8 </li>
   </ul>
 </div>
 </body>

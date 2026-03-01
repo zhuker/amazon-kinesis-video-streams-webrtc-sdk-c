@@ -1,13 +1,18 @@
 var searchData=
 [
-  ['sctpsessiondatachannelmessagefunc_0',['SctpSessionDataChannelMessageFunc',['../Sctp_8h.html#a2a84eb6cead2b69ad0f126be8089bb8d',1,'Sctp.h']]],
-  ['sctpsessiondatachannelopenfunc_1',['SctpSessionDataChannelOpenFunc',['../Sctp_8h.html#aae17c3adf351ea2d300ba15f61026665',1,'Sctp.h']]],
-  ['sctpsessionoutboundpacketfunc_2',['SctpSessionOutboundPacketFunc',['../Sctp_8h.html#a3efccba1f0638eb34da93bf431101e84',1,'Sctp.h']]],
-  ['signaling_5fclient_5fhandle_3',['SIGNALING_CLIENT_HANDLE',['../group__StatusCodes.html#ga1a31b45408a80e1064d39d578bd3b751',1,'Include.h']]],
-  ['signalingapicallhookfunc_4',['SignalingApiCallHookFunc',['../Signaling_8h.html#a9c220065335d693bf8cafd3e4ea5bc05',1,'Signaling.h']]],
-  ['signalingclienterrorreportfunc_5',['SignalingClientErrorReportFunc',['../group__Callbacks.html#ga0d69d0e35a1bddfa483f288ec208546c',1,'Include.h']]],
-  ['signalingclientmessagereceivedfunc_6',['SignalingClientMessageReceivedFunc',['../group__Callbacks.html#ga1fc095ba30b81713c3fed9a275355b2c',1,'Include.h']]],
-  ['signalingclientstatechangedfunc_7',['SignalingClientStateChangedFunc',['../group__Callbacks.html#gaa5fb7b1ff5dcfe5208a314eef9f3045a',1,'Include.h']]],
-  ['socketconnection_8',['SocketConnection',['../SocketConnection_8h.html#a61d238037c92b97d0ed1cfae2c6440d6',1,'SocketConnection.h']]],
-  ['srtpsession_9',['SrtpSession',['../SrtpSession_8h.html#af24eaa8b6b9a2b48bf8c70c784d94ba0',1,'SrtpSession.h']]]
+  ['relayaddressavailablefunc_0',['RelayAddressAvailableFunc',['../TurnConnection_8h.html#a1b7f8d53e3580eb885fcc3cc33bffba7',1,'TurnConnection.h']]],
+  ['rtcdatachannel_1',['RtcDataChannel',['../group__Callbacks.html#gaa6f47a9f98e9103afc97434dd3a5cd8c',1,'Include.h']]],
+  ['rtconbandwidthestimation_2',['RtcOnBandwidthEstimation',['../group__Callbacks.html#gaf77d88f0ced976d3628f86b79ba0b868',1,'Include.h']]],
+  ['rtconconnectionstatechange_3',['RtcOnConnectionStateChange',['../group__Callbacks.html#gad3f715dac4dd4d756e1728a37fb46eb9',1,'Include.h']]],
+  ['rtcondatachannel_4',['RtcOnDataChannel',['../group__Callbacks.html#ga264cd66b2d9905c3085cab6f3faf650b',1,'Include.h']]],
+  ['rtconframe_5',['RtcOnFrame',['../group__Callbacks.html#ga6269176a5be7e2e91fec6b067f7b9c5b',1,'Include.h']]],
+  ['rtconicecandidate_6',['RtcOnIceCandidate',['../group__Callbacks.html#gabad4874074cecf3de44c82498437355a',1,'Include.h']]],
+  ['rtconmessage_7',['RtcOnMessage',['../group__Callbacks.html#ga19016a711a2550a8544e6c86c7f45d0f',1,'Include.h']]],
+  ['rtconopen_8',['RtcOnOpen',['../group__Callbacks.html#ga0c9cbf4449a44e9a3847be0ef53b22a8',1,'Include.h']]],
+  ['rtconpictureloss_9',['RtcOnPictureLoss',['../group__Callbacks.html#gac7f4225ac2545664aabdc88d0b58e329',1,'Include.h']]],
+  ['rtconsenderbandwidthestimation_10',['RtcOnSenderBandwidthEstimation',['../group__Callbacks.html#ga31935aba346c035df91b7771e62ad3bc',1,'Include.h']]],
+  ['rtcontwccpacketreport_11',['RtcOnTwccPacketReport',['../group__Callbacks.html#gab71677e4239847363e27d9c996632e39',1,'Include.h']]],
+  ['rtppacket_12',['RtpPacket',['../RtpPacket_8h.html#a4ec22aca782131c15a7f24cfb8cfa3b3',1,'RtpPacket.h']]],
+  ['rtppacketheader_13',['RtpPacketHeader',['../RtpPacket_8h.html#ac1c3d28c59386b8722021a4cd33ca0bd',1,'RtpPacket.h']]],
+  ['rtppayloadfunc_14',['RtpPayloadFunc',['../Rtp_8c.html#ae3dd961ccc97a1b31ed9c74179fe69ed',1,'Rtp.c']]]
 ];

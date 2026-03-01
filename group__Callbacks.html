@@ -116,6 +116,9 @@ Collaboration diagram for Callbacks:</div>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structTwccPacketReport.html">TwccPacketReport</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Per-packet report from TWCC feedback for congestion control algorithms.  <a href="structTwccPacketReport.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct____RtcDataChannel.html">__RtcDataChannel</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">RtcDataChannel represents a bi-directional data channel between two peers.  <a href="struct____RtcDataChannel.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -131,6 +134,11 @@ Typedefs</h2></td></tr>
 <tr class="memitem:ga31935aba346c035df91b7771e62ad3bc" id="r_ga31935aba346c035df91b7771e62ad3bc"><td class="memItemLeft" align="right" valign="top">typedef VOID(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__Callbacks.html#ga31935aba346c035df91b7771e62ad3bc">RtcOnSenderBandwidthEstimation</a>) (UINT64, UINT32, UINT32, UINT32, UINT32, UINT64)</td></tr>
 <tr class="memdesc:ga31935aba346c035df91b7771e62ad3bc"><td class="mdescLeft">&#160;</td><td class="mdescRight">RtcOnSenderBandwidthEstimation is fired everytime a bandwidth estimation value is computed by sender. This is an estimate of ALL packets sent across all transceivers. See <a href="https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01">https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01</a> for more details.  <br /></td></tr>
 <tr class="separator:ga31935aba346c035df91b7771e62ad3bc"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ga32101de23304bc93ea7763f12f894abd" id="r_ga32101de23304bc93ea7763f12f894abd"><td class="memItemLeft" align="right" valign="top">typedef struct <a class="el" href="structTwccPacketReport.html">TwccPacketReport</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__Callbacks.html#ga32101de23304bc93ea7763f12f894abd">PTwccPacketReport</a></td></tr>
+<tr class="separator:ga32101de23304bc93ea7763f12f894abd"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:gab71677e4239847363e27d9c996632e39" id="r_gab71677e4239847363e27d9c996632e39"><td class="memItemLeft" align="right" valign="top">typedef VOID(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__Callbacks.html#gab71677e4239847363e27d9c996632e39">RtcOnTwccPacketReport</a>) (UINT64, <a class="el" href="group__Callbacks.html#ga32101de23304bc93ea7763f12f894abd">PTwccPacketReport</a>, UINT32, UINT64)</td></tr>
+<tr class="memdesc:gab71677e4239847363e27d9c996632e39"><td class="mdescLeft">&#160;</td><td class="mdescRight">RtcOnTwccPacketReport is fired when TWCC feedback is received, providing per-packet arrival time and loss information for congestion control.  <br /></td></tr>
+<tr class="separator:gab71677e4239847363e27d9c996632e39"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:gac7f4225ac2545664aabdc88d0b58e329" id="r_gac7f4225ac2545664aabdc88d0b58e329"><td class="memItemLeft" align="right" valign="top">typedef VOID(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="group__Callbacks.html#gac7f4225ac2545664aabdc88d0b58e329">RtcOnPictureLoss</a>) (UINT64)</td></tr>
 <tr class="memdesc:gac7f4225ac2545664aabdc88d0b58e329"><td class="mdescLeft">&#160;</td><td class="mdescRight">RtcOnPictureLoss is fired everytime a Picture Loss Indication (PLI) feedback message is received. Receiving such message normally indicates that you sent a video frame which receiver could not decode. It may happen either because of packet loss or for any other reason. Generating an intra frame (aka keyframe, aka I-frame) in response to such message is considered a good strategy.  <br /></td></tr>
 <tr class="separator:gac7f4225ac2545664aabdc88d0b58e329"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -190,6 +198,20 @@ Typedefs</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">typedef struct <a class="el" href="struct____RtcDataChannel.html">__RtcDataChannel</a> * <a class="el" href="group__Callbacks.html#ga2be6b5f6da1b3a0471ad7b4443b90779">PRtcDataChannel</a></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ga32101de23304bc93ea7763f12f894abd" name="ga32101de23304bc93ea7763f12f894abd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ga32101de23304bc93ea7763f12f894abd">&#9670;&#160;</a></span>PTwccPacketReport</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">typedef  struct <a class="el" href="structTwccPacketReport.html">TwccPacketReport</a> * <a class="el" href="group__Callbacks.html#ga32101de23304bc93ea7763f12f894abd">PTwccPacketReport</a></td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -376,6 +398,32 @@ Typedefs</h2></td></tr>
 
 </div>
 </div>
+<a id="gab71677e4239847363e27d9c996632e39" name="gab71677e4239847363e27d9c996632e39"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#gab71677e4239847363e27d9c996632e39">&#9670;&#160;</a></span>RtcOnTwccPacketReport</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">typedef VOID(* RtcOnTwccPacketReport) (UINT64, <a class="el" href="group__Callbacks.html#ga32101de23304bc93ea7763f12f894abd">PTwccPacketReport</a>, UINT32, UINT64)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>RtcOnTwccPacketReport is fired when TWCC feedback is received, providing per-packet arrival time and loss information for congestion control. </p>
+<p>Applications can implement GCC or other congestion control algorithms using this callback. The SDK also provides GccController as a reference implementation.</p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramdir">[in]</td><td class="paramname">UINT64</td><td>User customData passed during registration </td></tr>
+    <tr><td class="paramdir">[in]</td><td class="paramname">PTwccPacketReport</td><td>Array of <a class="el" href="structTwccPacketReport.html" title="Per-packet report from TWCC feedback for congestion control algorithms.">TwccPacketReport</a> structures </td></tr>
+    <tr><td class="paramdir">[in]</td><td class="paramname">UINT32</td><td>Number of reports in the array </td></tr>
+    <tr><td class="paramdir">[in]</td><td class="paramname">UINT64</td><td>Estimated round-trip time in 100ns units (0 if unknown) </td></tr>
+  </table>
+  </dd>
+</dl>
+
+</div>
+</div>
 <a id="ga0d69d0e35a1bddfa483f288ec208546c" name="ga0d69d0e35a1bddfa483f288ec208546c"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ga0d69d0e35a1bddfa483f288ec208546c">&#9670;&#160;</a></span>SignalingClientErrorReportFunc</h2>
 
@@ -457,7 +505,7 @@ Typedefs</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="footer">Generated on Sun Mar 1 2026 09:41:48 for Amazon Kinesis Webrtc C SDK by <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.9.8 </li>
+    <li class="footer">Generated on Sun Mar 1 2026 14:55:04 for Amazon Kinesis Webrtc C SDK by <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.9.8 </li>
   </ul>
 </div>
 </body>

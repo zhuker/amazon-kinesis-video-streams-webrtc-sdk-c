@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['nat_5fbehavior_0',['NAT_BEHAVIOR',['../group__PublicEnums.html#gad42c829d5095ba5e3ab0b6fff6ff8678',1,'Include.h']]]
+  ['media_5fstream_5ftrack_5fkind_0',['MEDIA_STREAM_TRACK_KIND',['../group__PublicEnums.html#ga95e09412d389145d792d2f61ef558537',1,'Include.h']]]
 ];
