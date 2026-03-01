@@ -177,7 +177,6 @@ STATUS generateJSONSafeString(PCHAR, UINT32);
 #include "PeerConnection/Rtp.h"
 #include "PeerConnection/Rtcp.h"
 #include "PeerConnection/Gcc_i.h"
-#include "PeerConnection/Pacer.h"
 #include "PeerConnection/DataChannel.h"
 #include "Rtp/Codecs/RtpVP8Payloader.h"
 #include "Rtp/Codecs/RtpH264Payloader.h"
