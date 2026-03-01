@@ -22,8 +22,6 @@ on:
       - '.github/workflows/doxygen-gh-pages.yml'
 
 env:
-  ANDROID_HOME: /Users/firefly/Library/Android/sdk
-  ANDROID_NDK: /Users/firefly/Library/Android/sdk/ndk/28.2.13676358
   AWS_KVS_LOG_LEVEL: 3
 
 permissions:
