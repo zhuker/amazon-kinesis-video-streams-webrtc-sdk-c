@@ -1445,7 +1445,7 @@ UINT32 parseExtId(PCHAR extmapValue)
 {
     ENTERS();
     UINT32 extid = 0;
-    if (extmapValue == NULL && STRCHR(extmapValue, ' ') == NULL) {
+    if (extmapValue == NULL || STRCHR(extmapValue, ' ') == NULL) {
         LEAVES();
         return 0;
     }
