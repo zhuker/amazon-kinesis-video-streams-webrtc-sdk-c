@@ -1202,13 +1202,13 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
         MUTEX_FREE(pKvsPeerConnection->peerConnectionObjLock);
     }
 
-    if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
-        timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
-    }
-
-    // Free pacer (after timer queue since pacer uses timers)
+    // Free pacer before timer queue since pacerStop cancels its timer
     if (pKvsPeerConnection->pPacer != NULL) {
         CHK_LOG_ERR(freePacer(&pKvsPeerConnection->pPacer));
+    }
+
+    if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
+        timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
     }
 
     if (pKvsPeerConnection->pTwccManager != NULL) {
