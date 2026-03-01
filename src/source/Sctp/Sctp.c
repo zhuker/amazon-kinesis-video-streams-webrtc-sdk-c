@@ -165,11 +165,16 @@ CleanUp:
     return retStatus;
 }
 
+// Drive usrsctp timers on every send/receive rather than using a separate timer thread.
+// lastTimerTime is SIZE_T (32-bit on arm32, 64-bit on arm64/x86_64). We truncate GETTIME()
+// to SIZE_T intentionally — both operands in (now - lastTime) are the same width, so unsigned
+// wraparound arithmetic gives the correct elapsed delta on 32-bit platforms (valid for
+// intervals up to ~429 seconds, far exceeding the frequency of send/receive calls).
 static VOID handleSctpTimers(PSctpSession pSctpSession)
 {
-    UINT64 now = GETTIME();
+    SIZE_T now = (SIZE_T) GETTIME();
     UINT32 elapsedMs = 0;
-    UINT64 lastTime = (UINT64) ATOMIC_EXCHANGE(&pSctpSession->lastTimerTime, (SIZE_T) now);
+    SIZE_T lastTime = ATOMIC_EXCHANGE(&pSctpSession->lastTimerTime, now);
     if (lastTime != 0) {
         elapsedMs = (UINT32) ((now - lastTime) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
