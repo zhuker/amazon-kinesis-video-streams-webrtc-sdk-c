@@ -185,7 +185,7 @@ jobs:
   # ===========================================================================
 
   android-arm32:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -194,7 +194,6 @@ jobs:
 
       - name: Configure
         run: |
-          export PATH="/opt/homebrew/bin:${PATH}"
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
@@ -205,9 +204,7 @@ jobs:
             -DBUILD_STATIC_LIBS=ON
 
       - name: Build
-        run: |
-          export PATH="/opt/homebrew/bin:${PATH}"
-          cmake --build build-android-armeabi-v7a -j$(sysctl -n hw.ncpu)
+        run: cmake --build build-android-armeabi-v7a -j$(nproc)
 
       - name: Push and test
         run: |
@@ -228,7 +225,7 @@ jobs:
         run: rm -rf build-android-armeabi-v7a
 
   android-arm32-asan:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -237,7 +234,6 @@ jobs:
 
       - name: Configure
         run: |
-          export PATH="/opt/homebrew/bin:${PATH}"
           export ANDROID_NDK_HOME="${ANDROID_NDK}"
           NDK_BIN=$(ls -d "${ANDROID_NDK}/toolchains/llvm/prebuilt"/*/bin | head -1)
           export PATH="${NDK_BIN}:${PATH}"
@@ -251,9 +247,7 @@ jobs:
             -DADDRESS_SANITIZER=ON
 
       - name: Build
-        run: |
-          export PATH="/opt/homebrew/bin:${PATH}"
-          cmake --build build-android-armeabi-v7a-asan -j$(sysctl -n hw.ncpu)
+        run: cmake --build build-android-armeabi-v7a-asan -j$(nproc)
 
       - name: Push and test
         run: |
@@ -277,7 +271,7 @@ jobs:
         run: rm -rf build-android-armeabi-v7a-asan
 
   android-arm32-app:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -286,9 +280,6 @@ jobs:
 
       - name: Build APK
         run: |
-          export PATH="/opt/homebrew/bin:${PATH}"
-          export JAVA_HOME="${HOME}/.sdkman/candidates/java/current"
-          export PATH="${JAVA_HOME}/bin:${PATH}"
           cd android-test-app
           ./gradlew assembleDebug assembleDebugAndroidTest \
             -Pandroid.injected.build.abi=armeabi-v7a
