@@ -163,6 +163,11 @@ typedef struct {
     RtcOnTwccPacketReport onTwccPacketReport;
     UINT64 onTwccPacketReportCustomData;
 
+    // TWCC feedback generation (receiver side)
+    MUTEX twccReceiverLock;
+    PTwccReceiverManager pTwccReceiverManager;
+    UINT32 twccFeedbackTimerId;
+
     // Pacing for smooth packet transmission
     PPacer pPacer;
 
