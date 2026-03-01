@@ -168,11 +168,6 @@ typedef struct {
     PTwccReceiverManager pTwccReceiverManager;
     UINT32 twccFeedbackTimerId;
 
-    // TWCC feedback generation (receiver side)
-    MUTEX twccReceiverLock;
-    PTwccReceiverManager pTwccReceiverManager;
-    UINT32 twccFeedbackTimerId;
-
     UINT64 iceConnectingStartTime;
     KvsPeerConnectionDiagnostics peerConnectionDiagnostics;
 } KvsPeerConnection, *PKvsPeerConnection;
