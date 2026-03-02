@@ -40,7 +40,7 @@ jobs:
         run: |
           git submodule update --init \
             superbuild/openssl superbuild/libsrtp \
-            superbuild/usrsctp superbuild/googletest
+            superbuild/googletest
         shell: bash
 
       - name: Configure (builds OpenSSL at configure time)
@@ -48,7 +48,7 @@ jobs:
           export PATH="/opt/homebrew/bin:$PATH"
           export CC=clang CXX=clang++
           cd superbuild
-          cmake --preset mac-arm64
+          cmake --preset mac-arm64 -DENABLE_NATIVE_SCTP=ON
         shell: bash
 
       - name: Build

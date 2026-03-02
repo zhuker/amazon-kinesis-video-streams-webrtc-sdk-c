@@ -18,7 +18,7 @@ option(BUILD_LIBSRTP_HOST_PLATFORM "If buildng LibSRTP what is the current platf
 option(BUILD_LIBSRTP_DESTINATION_PLATFORM "If buildng LibSRTP what is the destination platform" OFF)
 option(BUILD_SAMPLE "Build available samples" ON)
 option(ENABLE_DATA_CHANNEL "Enable support for data channel" ON)
-option(ENABLE_NATIVE_SCTP "Use native SCTP implementation instead of usrsctp" ON)
+option(ENABLE_NATIVE_SCTP "Use native SCTP implementation instead of usrsctp" OFF)
 option(ENABLE_KVS_THREADPOOL "Enable support for KVS thread pool in signaling" OFF)
 option(ENABLE_SELF_CONTAINED "Use vendored PIC/producer-c sources instead of external dependencies" OFF)
 option(ENABLE_SIGNALING "Enable AWS signaling client (requires libwebsockets)" ON)

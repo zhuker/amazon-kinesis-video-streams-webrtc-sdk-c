@@ -40,7 +40,7 @@ jobs:
         run: |
           git submodule update --init \
             superbuild/openssl superbuild/libsrtp \
-            superbuild/usrsctp superbuild/googletest
+            superbuild/googletest
 
       - name: Build Docker image
         run: docker build -t webrtc-u24 -f .github/docker/ubuntu24.Dockerfile .
@@ -53,8 +53,17 @@ jobs:
             webrtc-u24 bash -c "
               export CC=clang CXX=clang++
               cd superbuild
-              cmake --preset linux-x64
+              cmake --preset linux-x64 -DENABLE_NATIVE_SCTP=ON
               cmake --build build-linux-x64 --parallel \$(nproc)
+            "
+
+      - name: Test
+        run: |
+          docker run --rm --user $(id -u):$(id -g) \
+            -v $PWD:/src -w /src \
+            webrtc-u24 bash -c "
+              cd superbuild/build-linux-x64/sdk/tst
+              timeout 600 ./webrtc_client_test --gtest_break_on_failure
             "
 
       - name: Cleanup
