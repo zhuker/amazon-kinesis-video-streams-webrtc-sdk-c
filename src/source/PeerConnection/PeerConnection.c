@@ -1149,6 +1149,9 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
                 timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle, twccTimerId, (UINT64) pKvsPeerConnection);
             }
         }
+        if (pKvsPeerConnection->pPacer != NULL) {
+            pacerStop(pKvsPeerConnection->pPacer);
+        }
         timerQueueShutdown(pKvsPeerConnection->timerQueueHandle);
     }
 
@@ -1209,6 +1212,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
 
     if (IS_VALID_TIMER_QUEUE_HANDLE(pKvsPeerConnection->timerQueueHandle)) {
         timerQueueFree(&pKvsPeerConnection->timerQueueHandle);
+    }
+
+    // Free pacer (after timer queue since pacer uses timers)
+    if (pKvsPeerConnection->pPacer != NULL) {
+        CHK_LOG_ERR(freePacer(&pKvsPeerConnection->pPacer));
     }
 
     if (pKvsPeerConnection->pTwccManager != NULL) {
@@ -1984,6 +1992,11 @@ STATUS closePeerConnection(PRtcPeerConnection pPeerConnection)
         if (twccTimerId != MAX_UINT32) {
             timerQueueCancelTimer(pKvsPeerConnection->timerQueueHandle, twccTimerId, (UINT64) pKvsPeerConnection);
         }
+    }
+
+    // Stop pacer timer
+    if (pKvsPeerConnection->pPacer != NULL) {
+        pacerStop(pKvsPeerConnection->pPacer);
     }
 
     PROFILE_WITH_START_TIME_OBJ(startTime, pKvsPeerConnection->peerConnectionDiagnostics.closePeerConnectionTime, "Close peer connection");
