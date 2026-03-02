@@ -576,12 +576,14 @@ install(DIRECTORY ${KINESIS_VIDEO_WEBRTC_CLIENT_SRC}/src/include/
   DESTINATION include
 )
 
-if (BUILD_SAMPLE)
-  # copy sample frames to build folder, in case developer runs sample program with command `samples/kvsWebrtcClientMaster` from `build` dir.
+if (BUILD_SAMPLE OR BUILD_TEST)
+  # copy sample frames to build folder; tests reference them via ../samples/ relative path
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/opusSampleFrames" DESTINATION .)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h264SampleFrames" DESTINATION .)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h265SampleFrames" DESTINATION .)
+endif()
 
+if (BUILD_SAMPLE)
   add_subdirectory(samples)
 endif()
 
