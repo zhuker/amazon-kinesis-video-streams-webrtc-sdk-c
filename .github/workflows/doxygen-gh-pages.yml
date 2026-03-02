@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   generate-and-deploy-doxygen:
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

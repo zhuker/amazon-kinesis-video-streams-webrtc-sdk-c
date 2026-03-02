@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   linux-gcc-codecov:
-    if: ${{ github.repository == 'awslabs/amazon-kinesis-video-streams-webrtc-sdk-c' }}
+    if: false
     runs-on: ubuntu-latest
     container: public.ecr.aws/ubuntu/ubuntu:20.04_stable
     timeout-minutes: 60

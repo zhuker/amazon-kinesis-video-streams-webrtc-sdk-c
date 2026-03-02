@@ -26,7 +26,6 @@ permissions:
 
 jobs:
   superbuild-mac:
-    if: false
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
