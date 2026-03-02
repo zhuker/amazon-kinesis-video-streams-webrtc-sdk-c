@@ -445,6 +445,7 @@ file(
   "src/source/PeerConnection/Retransmitter.c"
   "src/source/PeerConnection/Rtcp.c"
   "src/source/PeerConnection/Gcc.c"
+  "src/source/PeerConnection/Pacer.c"
   "src/source/PeerConnection/Rtp.c"
   "src/source/PeerConnection/SessionDescription.c"
   "src/source/Rtcp/*.c"
@@ -581,6 +582,7 @@ if (BUILD_SAMPLE OR BUILD_TEST)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/opusSampleFrames" DESTINATION samples)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h264SampleFrames" DESTINATION samples)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h265SampleFrames" DESTINATION samples)
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/bbbH264" DESTINATION samples)
 endif()
 
 if (BUILD_SAMPLE)

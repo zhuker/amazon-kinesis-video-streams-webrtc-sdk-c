@@ -286,6 +286,11 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
     UINT32 extpayload;
     STATUS sendStatus;
 
+    // Batch pacing: collect packets for atomic frame enqueue
+    PPacerPacketInfo pPacerPackets = NULL;
+    UINT32 pacerPacketCount = 0;
+    BOOL useBatchPacing = FALSE;
+
     CHK(pKvsRtpTransceiver != NULL && pFrame != NULL, STATUS_NULL_ARG);
     pKvsPeerConnection = pKvsRtpTransceiver->pKvsPeerConnection;
     pPayloadArray = &(pKvsRtpTransceiver->sender.payloadArray);
@@ -361,6 +366,15 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
     pKvsRtpTransceiver->sender.sequenceNumber = GET_UINT16_SEQ_NUM(pKvsRtpTransceiver->sender.sequenceNumber + pPayloadArray->payloadSubLenSize);
 
     bufferAfterEncrypt = (pKvsRtpTransceiver->sender.payloadType == pKvsRtpTransceiver->sender.rtxPayloadType);
+
+    // Check if batch pacing should be used (video only, pacing enabled)
+    useBatchPacing = (pKvsPeerConnection->pPacer != NULL && pacerIsEnabled(pKvsPeerConnection->pPacer) &&
+                      pKvsRtpTransceiver->sender.track.kind == MEDIA_STREAM_TRACK_KIND_VIDEO);
+    if (useBatchPacing) {
+        pPacerPackets = (PPacerPacketInfo) MEMALLOC(pPayloadArray->payloadSubLenSize * SIZEOF(PacerPacketInfo));
+        CHK(pPacerPackets != NULL, STATUS_NOT_ENOUGH_MEMORY);
+    }
+
     for (i = 0; i < pPayloadArray->payloadSubLenSize; i++) {
         pRtpPacket = pPacketList + i;
         if (pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {
@@ -386,34 +400,73 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
         }
 
         CHK_STATUS(encryptRtpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
-        sendStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen);
-        if (sendStatus == STATUS_SEND_DATA_FAILED) {
-            packetsDiscardedOnSend++;
-            bytesDiscardedOnSend += packetLen - headerLen;
-            // TODO is frame considered discarded when at least one of its packets is discarded or all of its packets discarded?
-            framesDiscardedOnSend = 1;
+
+        // Check if pacing is enabled (only for video - audio bypasses pacer to avoid latency)
+        if (useBatchPacing) {
+            // Collect packet for batch enqueue after loop completes.
+            // This ensures the pacer sees the full frame atomically, so
+            // deadline-based budget calculation uses the correct queue size.
+            pPacerPackets[pacerPacketCount].pData = rawPacket;
+            pPacerPackets[pacerPacketCount].size = packetLen;
+            pPacerPackets[pacerPacketCount].twccSeqNum = twsn;
+            pacerPacketCount++;
+            rawPacket = NULL; // Will be owned by pacer after batch enqueue
+
+            // Update stats (packet will be sent by pacer)
+            headerLen = RTP_HEADER_LEN(pRtpPacket);
+            bytesSent += packetLen - headerLen;
+            packetsSent++;
+            lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+            headerBytesSent += headerLen;
+        } else {
+            // No pacing - send immediately
+            sendStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen);
+            if (sendStatus == STATUS_SEND_DATA_FAILED) {
+                packetsDiscardedOnSend++;
+                bytesDiscardedOnSend += packetLen - headerLen;
+                // TODO is frame considered discarded when at least one of its packets is discarded or all of its packets discarded?
+                framesDiscardedOnSend = 1;
+                SAFE_MEMFREE(rawPacket);
+                continue;
+            } else if (sendStatus == STATUS_SUCCESS && pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {
+                pRtpPacket->sentTime = GETTIME();
+                twccManagerOnPacketSent(pKvsPeerConnection, pRtpPacket);
+            }
+            CHK_STATUS(sendStatus);
+
+            // https://tools.ietf.org/html/rfc3550#section-6.4.1
+            // The total number of payload octets (i.e., not including header or padding) transmitted in RTP data packets by the sender
+            headerLen = RTP_HEADER_LEN(pRtpPacket);
+            bytesSent += packetLen - headerLen;
+            packetsSent++;
+            lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+            headerBytesSent += headerLen;
+
             SAFE_MEMFREE(rawPacket);
-            continue;
-        } else if (sendStatus == STATUS_SUCCESS && pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {
-            pRtpPacket->sentTime = GETTIME();
-            twccManagerOnPacketSent(pKvsPeerConnection, pRtpPacket);
         }
-        CHK_STATUS(sendStatus);
+
         if (bufferAfterEncrypt) {
-            pRtpPacket->pRawPacket = rawPacket;
-            pRtpPacket->rawPacketLength = packetLen;
-            CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
+            // Note: when pacing, rawPacket is NULL here, but the rolling buffer
+            // was already populated before encryption if !bufferAfterEncrypt
+            if (rawPacket != NULL) {
+                pRtpPacket->pRawPacket = rawPacket;
+                pRtpPacket->rawPacketLength = packetLen;
+                CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
+            }
         }
+    }
 
-        // https://tools.ietf.org/html/rfc3550#section-6.4.1
-        // The total number of payload octets (i.e., not including header or padding) transmitted in RTP data packets by the sender
-        headerLen = RTP_HEADER_LEN(pRtpPacket);
-        bytesSent += packetLen - headerLen;
-        packetsSent++;
-        lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
-        headerBytesSent += headerLen;
-
-        SAFE_MEMFREE(rawPacket);
+    // Batch enqueue collected packets to pacer (ensures frame-deadline pacing sees full frame)
+    if (useBatchPacing && pacerPacketCount > 0) {
+        sendStatus = pacerEnqueueFrame(pKvsPeerConnection->pPacer, pPacerPackets, pacerPacketCount);
+        if (STATUS_SUCCEEDED(sendStatus)) {
+            pacerPacketCount = 0; // Pacer owns all packet data now
+        } else {
+            // pacerEnqueueFrame already freed all packet data on failure
+            packetsDiscardedOnSend += pacerPacketCount;
+            framesDiscardedOnSend = 1;
+            pacerPacketCount = 0;
+        }
     }
 
     if (MEDIA_STREAM_TRACK_KIND_VIDEO == pKvsRtpTransceiver->sender.track.kind) {
@@ -459,6 +512,13 @@ CleanUp:
     pKvsRtpTransceiver->outboundStats.bytesDiscardedOnSend += bytesDiscardedOnSend;
     MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
 
+    // Free un-enqueued pacer packets (if we jumped to CleanUp before batch enqueue)
+    if (pPacerPackets != NULL) {
+        for (i = 0; i < pacerPacketCount; i++) {
+            SAFE_MEMFREE(pPacerPackets[i].pData);
+        }
+    }
+    SAFE_MEMFREE(pPacerPackets);
     SAFE_MEMFREE(rawPacket);
     SAFE_MEMFREE(pPacketList);
     if (retStatus != STATUS_SRTP_NOT_READY_YET) {
