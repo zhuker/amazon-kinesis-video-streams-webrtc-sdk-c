@@ -48,24 +48,7 @@ jobs:
           bash scripts/check-clang.sh
         shell: bash
 
-      - name: OpenSSL shared build + test
-        run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          export CC=clang CXX=clang++
-          export CMAKE_BUILD_PARALLEL_LEVEL=$(sysctl -n hw.ncpu)
-          mkdir -p build-openssl && cd build-openssl
-          cmake .. -DBUILD_TEST=ON -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
-                   -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/deps
-          make -j$(sysctl -n hw.ncpu)
-          timeout 600 ./tst/webrtc_client_test --gtest_break_on_failure
-        shell: bash
-
-      - name: Clean OpenSSL build
-        if: always()
-        run: rm -rf build-openssl
-
       - name: MbedTLS static build + test
-        if: success() || failure()
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
           export CC=clang CXX=clang++

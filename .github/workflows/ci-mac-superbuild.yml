@@ -53,6 +53,12 @@ jobs:
           cmake --build superbuild/build-mac-arm64 --parallel $(sysctl -n hw.ncpu)
         shell: bash
 
+      - name: Test
+        run: |
+          cd superbuild/build-mac-arm64/sdk/tst
+          timeout 600 ./webrtc_client_test --gtest_break_on_failure
+        shell: bash
+
       - name: Cleanup
         if: always()
         run: rm -rf superbuild/build-mac-arm64
