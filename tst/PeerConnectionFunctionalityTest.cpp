@@ -2014,15 +2014,9 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
         SNPRINTF(framePath, SIZEOF(framePath), "%s/frame-%04u.h264", FRAME_DIR, frameNum);
 
         UINT64 fileSize = 0;
-        if (STATUS_FAILED(readFile(framePath, TRUE, NULL, &fileSize))) {
-            continue;
-        }
-        if (fileSize > MAX_FRAME_SIZE) {
-            continue;
-        }
-        if (STATUS_FAILED(readFile(framePath, TRUE, pFrameBuffer, &fileSize))) {
-            continue;
-        }
+        ASSERT_EQ(readFile(framePath, TRUE, NULL, &fileSize), STATUS_SUCCESS) << "Failed to read frame file: " << framePath;
+        ASSERT_LE(fileSize, MAX_FRAME_SIZE) << "Frame too large: " << fileSize << " bytes";
+        ASSERT_EQ(readFile(framePath, TRUE, pFrameBuffer, &fileSize), STATUS_SUCCESS) << "Failed to read frame data: " << framePath;
 
         videoFrame.size = (UINT32) fileSize;
         videoFrame.presentationTs = presentationTs;
