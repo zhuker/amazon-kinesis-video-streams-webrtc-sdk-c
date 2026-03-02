@@ -295,6 +295,40 @@ class WebRtcClientTestBase : public ::testing::Test {
         return retStatus;
     }
 
+    // Extract NAL units from an Annex-B buffer, handling both 3- and 4-byte start codes.
+    // Returns the number of NALs found; populates naluOffsets/naluLengths with positions
+    // of each NAL's payload (i.e. after the start code).
+    static UINT32 extractNaluInfo(PBYTE data, UINT32 dataLen, PUINT32 naluOffsets, PUINT32 naluLengths, UINT32 maxNalus)
+    {
+        UINT32 naluCount = 0, i = 0, naluStart = 0;
+        while (i < dataLen && naluCount < maxNalus) {
+            if (i + 2 < dataLen && data[i] == 0 && data[i + 1] == 0) {
+                UINT32 startCodeLen = 0;
+                if (data[i + 2] == 1) {
+                    startCodeLen = 3;
+                } else if (i + 3 < dataLen && data[i + 2] == 0 && data[i + 3] == 1) {
+                    startCodeLen = 4;
+                } else {
+                    i++;
+                    continue;
+                }
+                if (naluCount > 0) {
+                    naluLengths[naluCount - 1] = i - naluStart;
+                }
+                naluStart = i + startCodeLen;
+                naluOffsets[naluCount] = naluStart;
+                naluCount++;
+                i += startCodeLen;
+            } else {
+                i++;
+            }
+        }
+        if (naluCount > 0) {
+            naluLengths[naluCount - 1] = dataLen - naluStart;
+        }
+        return naluCount;
+    }
+
     bool connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, PCHAR pOfferCertFingerprint = NULL,
                          PCHAR pAnswerCertFingerprint = NULL);
     void addTrackToPeerConnection(PRtcPeerConnection pRtcPeerConnection, PRtcMediaStreamTrack track, PRtcRtpTransceiver* transceiver, RTC_CODEC codec,

@@ -583,6 +583,7 @@ if (BUILD_SAMPLE OR BUILD_TEST)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h264SampleFrames" DESTINATION samples)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/h265SampleFrames" DESTINATION samples)
   file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/bbbH264" DESTINATION samples)
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/samples/girH264" DESTINATION samples)
 endif()
 
 if (BUILD_SAMPLE)

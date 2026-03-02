@@ -35,6 +35,7 @@ public class WebRtcNativeTest {
             "h264SampleFrames",
             "h265SampleFrames",
             "bbbH264",
+            "girH264"
     };
 
     private String workDir;
