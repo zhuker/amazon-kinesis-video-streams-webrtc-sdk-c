@@ -36,5 +36,7 @@ if [[ "$STATUS_CODE" != "0" ]]; then
   echo "::error::Tests failed (INSTRUMENTATION_STATUS_CODE: ${STATUS_CODE})"
   echo "=== logcat ==="
   "${ADB}" -s "${SERIAL}" logcat -d -s "webrtc_test_jni:*" "WebRtcNativeTest:*" "TestRunner:*"
+  echo "=== crash log ==="
+  "${ADB}" -s "${SERIAL}" logcat -d -b crash
   exit 1
 fi
