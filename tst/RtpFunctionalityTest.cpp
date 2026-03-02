@@ -774,7 +774,7 @@ TEST_F(RtpFunctionalityTest, stapADepayloadRoundTrip)
     // Depayload and verify we get back the original NALs
     PBYTE depayload = (PBYTE) MEMALLOC(frameLen + 100);
     UINT32 depayloadLen = frameLen + 100;
-    BOOL isStart = FALSE;
+    BOOL isStart = TRUE;
 
     EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(payloadArray.payloadBuffer, payloadArray.payloadSubLength[0],
                                                       depayload, &depayloadLen, &isStart));

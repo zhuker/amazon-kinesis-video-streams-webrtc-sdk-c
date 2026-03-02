@@ -462,10 +462,18 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
     UINT16 subNaluSize = 0;
     BOOL firstNaluInStap = TRUE;
 
+    // pIsStart serves as input/output:
+    //   Input:  if non-NULL and *pIsStart == FALSE, this is NOT the first NAL in the frame
+    //           -> use 3-byte start codes instead of 4-byte for the leading NAL.
+    //           NULL or *pIsStart == TRUE -> use 4-byte (backward compatible default).
+    //   Output: set to TRUE if this packet starts a new NAL (FU-A start, single NAL, STAP).
+    BOOL useShortStartCode = (pIsStart != NULL && *pIsStart == FALSE);
+    PBYTE startCode = useShortStartCode ? start3ByteCode : start4ByteCode;
+    UINT32 startCodeSize = useShortStartCode ? SIZEOF(start3ByteCode) : SIZEOF(start4ByteCode);
+
     CHK(pRawPacket != NULL && pNaluLength != NULL, STATUS_NULL_ARG);
     CHK(packetLength > 0, retStatus);
 
-    // TODO: Add support for Aggregate Packets https://tools.ietf.org/html/rfc6184#section-5.7
     // indicator for types https://tools.ietf.org/html/rfc3984#section-5.2
     indicator = *pRawPacket & NAL_TYPE_MASK;
     switch (indicator) {
@@ -491,8 +499,9 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
-                naluLength += subNaluSize + (firstNaluInStap ? SIZEOF(start4ByteCode) : SIZEOF(start3ByteCode));
+                // First NAL in packet uses startCode (4-byte if first in frame, 3-byte otherwise),
+                // subsequent NALs in STAP always use 3-byte
+                naluLength += subNaluSize + (firstNaluInStap ? startCodeSize : SIZEOF(start3ByteCode));
                 firstNaluInStap = FALSE;
                 pCurPtr += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
@@ -504,8 +513,7 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
-                naluLength += subNaluSize + (firstNaluInStap ? SIZEOF(start4ByteCode) : SIZEOF(start3ByteCode));
+                naluLength += subNaluSize + (firstNaluInStap ? startCodeSize : SIZEOF(start3ByteCode));
                 firstNaluInStap = FALSE;
                 pCurPtr += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
@@ -518,7 +526,7 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
     }
 
     if (isStartingPacket && indicator != STAP_A_INDICATOR && indicator != STAP_B_INDICATOR) {
-        naluLength += SIZEOF(start4ByteCode);
+        naluLength += startCodeSize;
     }
 
     // Only return size if given buffer is NULL
@@ -526,9 +534,9 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
     CHK(naluLength <= *pNaluLength, STATUS_BUFFER_TOO_SMALL);
 
     if (isStartingPacket && indicator != STAP_A_INDICATOR && indicator != STAP_B_INDICATOR) {
-        MEMCPY(pNaluData, start4ByteCode, SIZEOF(start4ByteCode));
-        naluLength -= SIZEOF(start4ByteCode);
-        pNaluData += SIZEOF(start4ByteCode);
+        MEMCPY(pNaluData, startCode, startCodeSize);
+        naluLength -= startCodeSize;
+        pNaluData += startCodeSize;
     }
     switch (indicator) {
         case FU_A_INDICATOR:
@@ -556,11 +564,10 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
                 if (firstNaluInStap) {
-                    MEMCPY(pNaluData, start4ByteCode, SIZEOF(start4ByteCode));
-                    pNaluData += SIZEOF(start4ByteCode);
-                    naluLength += SIZEOF(start4ByteCode);
+                    MEMCPY(pNaluData, startCode, startCodeSize);
+                    pNaluData += startCodeSize;
+                    naluLength += startCodeSize;
                     firstNaluInStap = FALSE;
                 } else {
                     MEMCPY(pNaluData, start3ByteCode, SIZEOF(start3ByteCode));
@@ -581,11 +588,10 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             do {
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
-                // First NAL gets 4-byte start code, subsequent NALs get 3-byte (same-frame convention)
                 if (firstNaluInStap) {
-                    MEMCPY(pNaluData, start4ByteCode, SIZEOF(start4ByteCode));
-                    pNaluData += SIZEOF(start4ByteCode);
-                    naluLength += SIZEOF(start4ByteCode);
+                    MEMCPY(pNaluData, startCode, startCodeSize);
+                    pNaluData += startCodeSize;
+                    naluLength += startCodeSize;
                     firstNaluInStap = FALSE;
                 } else {
                     MEMCPY(pNaluData, start3ByteCode, SIZEOF(start3ByteCode));
@@ -604,7 +610,7 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             MEMCPY(pNaluData, pRawPacket, naluLength);
     }
     if (isStartingPacket && indicator != STAP_A_INDICATOR && indicator != STAP_B_INDICATOR) {
-        naluLength += SIZEOF(start4ByteCode);
+        naluLength += startCodeSize;
     }
     DLOGS("Wrote naluLength %d isStartingPacket %d", naluLength, isStartingPacket);
 
