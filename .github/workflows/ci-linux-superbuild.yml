@@ -25,6 +25,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  AWS_KVS_LOG_LEVEL: 3
+
 permissions:
   contents: read
 
@@ -50,6 +53,7 @@ jobs:
           docker run --rm --user $(id -u):$(id -g) \
             -v $PWD:/src -w /src \
             -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
+            -e AWS_KVS_LOG_LEVEL \
             webrtc-u24 bash -c "
               export CC=clang CXX=clang++
               cd superbuild
@@ -61,6 +65,7 @@ jobs:
         run: |
           docker run --rm --user $(id -u):$(id -g) \
             -v $PWD:/src -w /src \
+            -e AWS_KVS_LOG_LEVEL \
             webrtc-u24 bash -c "
               cd superbuild/build-linux-x64/sdk/tst
               timeout 600 ./webrtc_client_test --gtest_break_on_failure

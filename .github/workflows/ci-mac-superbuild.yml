@@ -25,6 +25,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  AWS_KVS_LOG_LEVEL: 3
+
 permissions:
   contents: read
 
