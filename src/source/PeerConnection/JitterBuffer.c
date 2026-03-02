@@ -477,7 +477,7 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
     UINT32 curFrameSize = 0;
     UINT32 partialFrameSize = 0;
     UINT64 hashValue = 0;
-    BOOL isStart = FALSE, containStartForEarliestFrame = FALSE, hasEntry = FALSE;
+    BOOL isStart = TRUE, containStartForEarliestFrame = FALSE, hasEntry = FALSE;
     UINT16 lastNonNullIndex = 0;
     PRtpPacket pCurPacket = NULL;
 
@@ -551,6 +551,7 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
                 }
                 // new timestamp means new frame, drop tracking for previous frame size
                 curFrameSize = 0;
+                isStart = TRUE;
             }
 
             // With the missing output buffer parameter, this will only return the size of the packet, and identify if it is a starting packet of a
@@ -644,6 +645,7 @@ STATUS jitterBufferFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT
     PBYTE pCurPtrInFrame = pFrame;
     UINT32 remainingFrameSize = frameSize;
     UINT32 partialFrameSize = 0;
+    BOOL isStart = TRUE;
 
     CHK(pJitterBuffer != NULL && pFrame != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
     for (; UINT16_DEC(index) != endIndex; index++) {
@@ -652,7 +654,7 @@ STATUS jitterBufferFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT
         pCurPacket = (PRtpPacket) hashValue;
         CHK(pCurPacket != NULL, STATUS_NULL_ARG);
         partialFrameSize = remainingFrameSize;
-        CHK_STATUS(pJitterBuffer->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, pCurPtrInFrame, &partialFrameSize, NULL));
+        CHK_STATUS(pJitterBuffer->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, pCurPtrInFrame, &partialFrameSize, &isStart));
         pCurPtrInFrame += partialFrameSize;
         remainingFrameSize -= partialFrameSize;
     }
