@@ -1,0 +1,79 @@
+name: CI macOS Browser Test
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - 'test-pr-*'
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - '.github/workflows/close-stale-issues.yml'
+      - '.github/workflows/doxygen-gh-pages.yml'
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - '.github/workflows/close-stale-issues.yml'
+      - '.github/workflows/doxygen-gh-pages.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_KVS_LOG_LEVEL: 3
+
+permissions:
+  contents: read
+
+jobs:
+  browser-test-mac:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialise superbuild submodules
+        run: |
+          git submodule update --init \
+            superbuild/openssl superbuild/libsrtp \
+            superbuild/googletest
+        shell: bash
+
+      - name: Build dcTestServer
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          export CC=clang CXX=clang++
+          cd superbuild
+          cmake -B build-browser -S . \
+            -DBUILD_TEST=OFF \
+            -DBUILD_BROWSER_TEST=ON \
+            -DENABLE_SIGNALING=OFF \
+            -DENABLE_DATA_CHANNEL=ON \
+            -DENABLE_NATIVE_SCTP=ON
+          cmake --build build-browser --target dcTestServer --parallel $(sysctl -n hw.ncpu)
+        shell: bash
+
+      - name: Install Puppeteer
+        run: |
+          cd browser-test
+          npm install --no-fund --no-audit
+        shell: bash
+
+      - name: Run browser interop tests
+        run: |
+          timeout 600 node browser-test/runner.mjs \
+            superbuild/build-browser/dcTestServer \
+            browser-test
+        shell: bash
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf superbuild/build-browser
+        shell: bash
