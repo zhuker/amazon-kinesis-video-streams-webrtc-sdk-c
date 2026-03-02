@@ -167,49 +167,6 @@ TEST_F(RtpFunctionalityTest, marshallUnmarshallH264Data)
     MEMFREE(payload);
 }
 
-// Helper function to extract NAL units from Annex-B formatted data
-// Returns the number of NAL units found, and populates naluOffsets and naluLengths arrays
-static UINT32 extractNaluInfo(PBYTE data, UINT32 dataLen, PUINT32 naluOffsets, PUINT32 naluLengths, UINT32 maxNalus)
-{
-    UINT32 naluCount = 0;
-    UINT32 i = 0;
-    UINT32 startCodeLen = 0;
-    UINT32 naluStart = 0;
-
-    while (i < dataLen && naluCount < maxNalus) {
-        // Look for start code (0x000001 or 0x00000001)
-        if (i + 2 < dataLen && data[i] == 0 && data[i + 1] == 0) {
-            if (data[i + 2] == 1) {
-                startCodeLen = 3;
-            } else if (i + 3 < dataLen && data[i + 2] == 0 && data[i + 3] == 1) {
-                startCodeLen = 4;
-            } else {
-                i++;
-                continue;
-            }
-
-            // If we had a previous NAL, record its length
-            if (naluCount > 0) {
-                naluLengths[naluCount - 1] = i - naluStart;
-            }
-
-            // Record start of new NAL (after start code)
-            naluStart = i + startCodeLen;
-            naluOffsets[naluCount] = naluStart;
-            naluCount++;
-            i += startCodeLen;
-        } else {
-            i++;
-        }
-    }
-
-    // Record length of last NAL
-    if (naluCount > 0) {
-        naluLengths[naluCount - 1] = dataLen - naluStart;
-    }
-
-    return naluCount;
-}
 
 void RtpFunctionalityTest::verifyH264PackingUnpacking(const char* sampleFolder, UINT32 numFrames)
 {
