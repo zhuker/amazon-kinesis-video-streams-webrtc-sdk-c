@@ -21,6 +21,10 @@ on:
       - '.github/workflows/close-stale-issues.yml'
       - '.github/workflows/doxygen-gh-pages.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

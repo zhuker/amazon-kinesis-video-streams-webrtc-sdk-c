@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#
+# Push test binary and samples to an Android device/emulator and run tests.
+#
+# Usage:
+#   test-ci-android.sh --build-dir <dir> --serial <serial> --arch <abi> [--asan] [--ubsan]
+#
+set -euo pipefail
+
+BUILD_DIR=""
+SERIAL=""
+ARCH=""
+ASAN=false
+UBSAN=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --build-dir)  BUILD_DIR="$2"; shift 2 ;;
+        --serial)     SERIAL="$2";    shift 2 ;;
+        --arch)       ARCH="$2";      shift 2 ;;
+        --asan)       ASAN=true;      shift   ;;
+        --ubsan)      UBSAN=true;     shift   ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+if [[ -z "${BUILD_DIR}" || -z "${SERIAL}" || -z "${ARCH}" ]]; then
+    echo "Usage: test-ci-android.sh --build-dir <dir> --serial <serial> --arch <abi> [--asan] [--ubsan]" >&2
+    exit 1
+fi
+
+ADB="${ANDROID_HOME}/platform-tools/adb"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Verify device supports the requested architecture
+DEVICE_ABILIST=$("${ADB}" -s "${SERIAL}" shell getprop ro.product.cpu.abilist 2>/dev/null | tr -d '\r')
+if [[ ",$DEVICE_ABILIST," != *",${ARCH},"* ]]; then
+    echo "ERROR: Device ${SERIAL} does not support ABI '${ARCH}'." >&2
+    echo "  Device supports: ${DEVICE_ABILIST}" >&2
+    exit 1
+fi
+echo "=== Device ${SERIAL} supports ${ARCH} (abilist: ${DEVICE_ABILIST}) ==="
+
+# Push ASAN runtime if requested
+if [[ "${ASAN}" == "true" ]]; then
+    case "${ARCH}" in
+        arm64-v8a)   ASAN_CLANG_ARCH="aarch64" ;;
+        armeabi-v7a) ASAN_CLANG_ARCH="arm" ;;
+        x86_64)      ASAN_CLANG_ARCH="x86_64" ;;
+        x86)         ASAN_CLANG_ARCH="i686" ;;
+        *)           echo "ERROR: Unknown ABI '${ARCH}' for ASan" >&2; exit 1 ;;
+    esac
+    ASAN_RT=$(find "${ANDROID_NDK}/toolchains/llvm/prebuilt" \
+        -name "libclang_rt.asan-${ASAN_CLANG_ARCH}-android.so" | head -1)
+    "${ADB}" -s "${SERIAL}" push "${ASAN_RT}" /data/local/tmp/
+fi
+
+# Create target directories
+"${ADB}" -s "${SERIAL}" shell mkdir -p /data/local/tmp/tst /data/local/tmp/samples
+
+# Push test binary
+"${ADB}" -s "${SERIAL}" push "${BUILD_DIR}/sdk/tst/webrtc_client_test" /data/local/tmp/tst/
+"${ADB}" -s "${SERIAL}" shell chmod +x /data/local/tmp/tst/webrtc_client_test
+
+# Push sample data
+for d in h264SampleFrames h265SampleFrames opusSampleFrames girH264 bbbH264; do
+    [ -d "samples/$d" ] && "${ADB}" -s "${SERIAL}" push --sync "samples/$d" /data/local/tmp/samples/
+done
+
+# Push and run the on-device test runner
+"${ADB}" -s "${SERIAL}" push "${SCRIPT_DIR}/run-tests-on-device.sh" /data/local/tmp/
+"${ADB}" -s "${SERIAL}" shell chmod +x /data/local/tmp/run-tests-on-device.sh
+
+# Build environment string
+ENV_VARS="AWS_KVS_LOG_LEVEL=${AWS_KVS_LOG_LEVEL:-2}"
+if [[ "${ASAN}" == "true" ]]; then
+    ENV_VARS="${ENV_VARS} ASAN_OPTIONS=detect_odr_violation=0"
+fi
+if [[ "${UBSAN}" == "true" ]]; then
+    ENV_VARS="${ENV_VARS} UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
+fi
+
+# Clear logcat before running so crash buffer only contains this run
+"${ADB}" -s "${SERIAL}" logcat -c || true
+
+# Run tests, capturing output for post-mortem symbolization
+TEST_LOG="${BUILD_DIR}/test-output.log"
+set +e
+"${ADB}" -s "${SERIAL}" shell "${ENV_VARS} /data/local/tmp/run-tests-on-device.sh '*'" | tee "${TEST_LOG}"
+TEST_EXIT=${PIPESTATUS[0]}
+set -e
+
+# Dump crash logcat on failure
+if [[ ${TEST_EXIT} -ne 0 ]]; then
+    echo ""
+    echo "=== crash log ==="
+    "${ADB}" -s "${SERIAL}" logcat -d -b crash
+fi
+
+# Symbolize ASan/UBSan stack traces on failure
+if [[ "${ASAN}" == "true" && ${TEST_EXIT} -ne 0 ]]; then
+    HOST_BINARY="${BUILD_DIR}/sdk/tst/webrtc_client_test"
+    LLVM_SYMBOLIZER=$(find "${ANDROID_NDK}/toolchains/llvm/prebuilt" -name "llvm-symbolizer" -type f | head -1)
+    if [[ -x "${LLVM_SYMBOLIZER}" && -f "${HOST_BINARY}" ]]; then
+        echo ""
+        echo "=== Symbolizing stack traces ==="
+        grep -oE 'webrtc_client_test\+0x[0-9a-fA-F]+' "${TEST_LOG}" | sort -u | while read -r match; do
+            offset="0x${match#*+0x}"
+            result=$("${LLVM_SYMBOLIZER}" --obj="${HOST_BINARY}" "${offset}" 2>/dev/null | head -2)
+            if [[ -n "${result}" ]]; then
+                echo "  ${match#*+}  ${result}" | tr '\n' ' '
+                echo ""
+            fi
+        done
+    else
+        echo "WARN: Cannot symbolize — llvm-symbolizer or unstripped binary not found."
+    fi
+fi
+
+exit ${TEST_EXIT}

@@ -1,7 +1,7 @@
 #!/system/bin/sh
 #
 # Test runner script executed on the Android device/emulator.
-# Pushed and invoked by test-android.sh.
+# Pushed and invoked by test-ci-android.sh.
 #
 # Usage: ./run-tests-on-device.sh [gtest_filter]
 
