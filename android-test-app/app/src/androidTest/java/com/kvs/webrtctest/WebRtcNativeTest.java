@@ -40,6 +40,7 @@ public class WebRtcNativeTest {
 
     private String workDir;
     private String filter;
+    private String logDir;
 
     @Before
     public void setUp() throws IOException {
@@ -64,8 +65,18 @@ public class WebRtcNativeTest {
         Bundle args = InstrumentationRegistry.getArguments();
         filter = args.getString("gtest_filter", "*");
 
+        // External files dir is accessible via adb pull without root
+        File extDir = ctx.getExternalFilesDir(null);
+        if (extDir != null) {
+            extDir.mkdirs();
+            logDir = extDir.getAbsolutePath();
+        } else {
+            logDir = tstDir.getAbsolutePath();
+        }
+
         Log.i(TAG, "Work dir: " + workDir);
         Log.i(TAG, "Samples dir: " + samplesDir.getAbsolutePath());
+        Log.i(TAG, "Log dir: " + logDir);
         Log.i(TAG, "Filter: " + filter);
     }
 
@@ -74,7 +85,7 @@ public class WebRtcNativeTest {
     @Test
     public void runNativeTests() throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        Future<Integer> future = executor.submit(() -> NativeTestLib.runTests(workDir, filter));
+        Future<Integer> future = executor.submit(() -> NativeTestLib.runTests(workDir, filter, logDir));
         try {
             int rc = future.get(TIMEOUT_MINUTES, TimeUnit.MINUTES);
             assertEquals("Native gtest tests failed (see logcat tag 'webrtc_test_jni' for details)", 0, rc);
