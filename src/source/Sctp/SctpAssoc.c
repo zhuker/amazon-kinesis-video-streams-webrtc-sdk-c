@@ -397,8 +397,7 @@ static VOID sctpDrainPendingQueue(PSctpAssociation pAssoc, SctpAssocOutboundPack
         if (!pAssoc->pendingQueue[slot].inUse) {
             continue;
         }
-        if (pAssoc->flightSize >= pAssoc->cwnd || pAssoc->flightSize >= pAssoc->peerArwnd ||
-            pAssoc->outstandingCount >= SCTP_MAX_OUTSTANDING) {
+        if (pAssoc->flightSize >= pAssoc->cwnd || pAssoc->flightSize >= pAssoc->peerArwnd || pAssoc->outstandingCount >= SCTP_MAX_OUTSTANDING) {
             break; // still congested or outstanding table full — leave remaining entries in queue
         }
         // Snapshot and evict before calling sctpAssocSend, which may re-queue if still congested
