@@ -397,8 +397,9 @@ static VOID sctpDrainPendingQueue(PSctpAssociation pAssoc, SctpAssocOutboundPack
         if (!pAssoc->pendingQueue[slot].inUse) {
             continue;
         }
-        if (pAssoc->flightSize >= pAssoc->cwnd || pAssoc->flightSize >= pAssoc->peerArwnd) {
-            break; // still congested — leave remaining entries in queue
+        if (pAssoc->flightSize >= pAssoc->cwnd || pAssoc->flightSize >= pAssoc->peerArwnd ||
+            pAssoc->outstandingCount >= SCTP_MAX_OUTSTANDING) {
+            break; // still congested or outstanding table full — leave remaining entries in queue
         }
         // Snapshot and evict before calling sctpAssocSend, which may re-queue if still congested
         UINT16 streamId = pAssoc->pendingQueue[slot].streamId;
@@ -413,8 +414,7 @@ static VOID sctpDrainPendingQueue(PSctpAssociation pAssoc, SctpAssocOutboundPack
         pAssoc->pendingQueueCount--;
 
         // sctpAssocSend makes its own copy if it re-queues, so freeing payload after is safe
-        sctpAssocSend(pAssoc, streamId, ppid, unordered, payload, payloadLen, maxRetransmits, lifetimeMs, outboundFn,
-                      outboundCustomData);
+        sctpAssocSend(pAssoc, streamId, ppid, unordered, payload, payloadLen, maxRetransmits, lifetimeMs, outboundFn, outboundCustomData);
         MEMFREE(payload);
     }
 }
@@ -802,15 +802,14 @@ STATUS sctpAssocSend(PSctpAssociation pAssoc, UINT16 streamId, UINT32 ppid, BOOL
                     MEMCPY(pAssoc->pendingQueue[slot].payload, pPayload, payloadLen);
                     pAssoc->pendingQueue[slot].inUse = TRUE;
                     pAssoc->pendingQueueCount++;
-                    DLOGD("SCTP: Congestion window full, queued (slot=%u flightSize=%u cwnd=%u)", slot, pAssoc->flightSize,
-                          pAssoc->cwnd);
+                    DLOGD("SCTP: Congestion window full, queued (slot=%u flightSize=%u cwnd=%u)", slot, pAssoc->flightSize, pAssoc->cwnd);
                 } else {
                     DLOGW("SCTP: OOM queuing congested message, dropping (stream=%u)", streamId);
                 }
             }
         } else {
-            DLOGD("SCTP: Congestion window full, pending queue full, dropping (flightSize=%u cwnd=%u peerArwnd=%u)",
-                  pAssoc->flightSize, pAssoc->cwnd, pAssoc->peerArwnd);
+            DLOGD("SCTP: Congestion window full, pending queue full, dropping (flightSize=%u cwnd=%u peerArwnd=%u)", pAssoc->flightSize, pAssoc->cwnd,
+                  pAssoc->peerArwnd);
         }
         return STATUS_SUCCESS;
     }
@@ -827,21 +826,51 @@ STATUS sctpAssocSend(PSctpAssociation pAssoc, UINT16 streamId, UINT32 ppid, BOOL
 
     if (payloadLen <= maxDataPayload) {
         // Single fragment — common case
-        tsn = pAssoc->nextTsn++;
 
-        // Find a free outstanding slot
+        // Find a free outstanding slot BEFORE consuming TSN/SSN so that if the table
+        // is full we can queue to pendingQueue without leaking sequence numbers.
         for (i = 0; i < SCTP_MAX_OUTSTANDING; i++) {
             if (!pAssoc->outstanding[i].inUse) {
                 break;
             }
         }
         if (i >= SCTP_MAX_OUTSTANDING) {
-            // No slot to track this packet — sending without tracking would be unreliable.
-            // The congestion window check above should prevent reaching here under normal
-            // operation; this is a final safety guard.
-            DLOGW("SCTP: Outstanding table full, dropping packet (stream=%u)", streamId);
+            // Outstanding table full — revert SSN and queue to pending so the message
+            // is sent once a SACK frees a slot (same path as congestion window full).
+            if (!unordered && streamId < SCTP_MAX_STREAMS) {
+                pAssoc->nextSsn[streamId]--;
+            }
+            if (pAssoc->pendingQueueCount < SCTP_MAX_PENDING_SENDS) {
+                UINT32 slot;
+                for (slot = 0; slot < SCTP_MAX_PENDING_SENDS; slot++) {
+                    if (!pAssoc->pendingQueue[slot].inUse) {
+                        break;
+                    }
+                }
+                if (slot < SCTP_MAX_PENDING_SENDS) {
+                    pAssoc->pendingQueue[slot].streamId = streamId;
+                    pAssoc->pendingQueue[slot].ppid = ppid;
+                    pAssoc->pendingQueue[slot].unordered = unordered;
+                    pAssoc->pendingQueue[slot].maxRetransmits = maxRetransmits;
+                    pAssoc->pendingQueue[slot].lifetimeMs = lifetimeMs;
+                    pAssoc->pendingQueue[slot].payloadLen = payloadLen;
+                    pAssoc->pendingQueue[slot].payload = (PBYTE) MEMALLOC(payloadLen);
+                    if (pAssoc->pendingQueue[slot].payload != NULL) {
+                        MEMCPY(pAssoc->pendingQueue[slot].payload, pPayload, payloadLen);
+                        pAssoc->pendingQueue[slot].inUse = TRUE;
+                        pAssoc->pendingQueueCount++;
+                        DLOGD("SCTP: Outstanding table full, queued to pending (slot=%u stream=%u)", slot, streamId);
+                    } else {
+                        DLOGW("SCTP: OOM queuing outstanding-full message, dropping (stream=%u)", streamId);
+                    }
+                }
+            } else {
+                DLOGD("SCTP: Outstanding table full, pending also full, dropping (stream=%u)", streamId);
+            }
             return STATUS_SUCCESS;
         }
+
+        tsn = pAssoc->nextTsn++;
 
         pAssoc->outstanding[i].tsn = tsn;
         pAssoc->outstanding[i].streamId = streamId;
