@@ -2020,6 +2020,17 @@ PUBLIC_API STATUS addTransceiver(PRtcPeerConnection, PRtcMediaStreamTrack, PRtcR
 PUBLIC_API STATUS transceiverOnFrame(PRtcRtpTransceiver, UINT64, RtcOnFrame);
 
 /**
+ * @brief Set a callback for partially delivered frames (when some packets are lost/dropped)
+ *
+ * @param[in] PRtcRtpTransceiver Populated RtcRtpTransceiver struct
+ * @param[in] UINT64 User customData that will be passed along when RtcOnFrame is called
+ * @param[in] RtcOnFrame User RtcOnFrame callback for partial frames
+ *
+ * @return STATUS code of the execution. STATUS_SUCCESS on success
+ */
+PUBLIC_API STATUS transceiverOnPartialFrame(PRtcRtpTransceiver, UINT64, RtcOnFrame);
+
+/**
  * @brief Set a callback for bandwidth estimation results
  *
  * @param[in] PRtcRtpTransceiver Populated RtcRtpTransceiver struct

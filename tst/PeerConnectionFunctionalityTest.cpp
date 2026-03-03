@@ -2243,6 +2243,149 @@ TEST_F(PeerConnectionFunctionalityTest, pacingFrameDeadline)
     DLOGD("Frame deadline pacing test completed successfully");
 }
 
+// Send 100 real girH264 frames (a multi-NAL stream that exercises STAP-A packetization)
+// end-to-end through two loopback PeerConnections. Assert that exactly 100 frames are
+// delivered to the receiver and that every frame's NAL units match the original input.
+TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
+{
+    constexpr UINT32 NUM_FRAMES = 100;
+    constexpr UINT32 MAX_FRAME_SIZE = 500000;
+
+    // Pre-read all input frames and record their NAL structure up front so the
+    // receiver callback can compare without re-reading from disk.
+    struct InputFrame {
+        std::vector<BYTE> data;
+        UINT32 naluCount;
+        UINT32 naluOffsets[128];
+        UINT32 naluLengths[128];
+    };
+    std::vector<InputFrame> inputFrames(NUM_FRAMES);
+    {
+        std::vector<BYTE> buf(MAX_FRAME_SIZE);
+        for (UINT32 i = 0; i < NUM_FRAMES; i++) {
+            UINT32 sz = MAX_FRAME_SIZE;
+            ASSERT_EQ(STATUS_SUCCESS,
+                      readFrameData(buf.data(), &sz, i + 1, (PCHAR) "../samples/girH264",
+                                    RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+            inputFrames[i].data.resize(sz);
+            inputFrames[i].data.assign(buf.begin(), buf.begin() + sz);
+            inputFrames[i].naluCount = extractNaluInfo(inputFrames[i].data.data(), sz,
+                                                              inputFrames[i].naluOffsets,
+                                                              inputFrames[i].naluLengths, 128);
+        }
+    }
+
+    RtcConfiguration configuration{};
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+    RtcMediaStreamTrack offerVideoTrack, answerVideoTrack;
+    PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver;
+
+    initRtcConfiguration(&configuration);
+    ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &offerPc));
+    ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &answerPc));
+
+    addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver,
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+
+    struct RxContext {
+        const std::vector<InputFrame>* inputFrames;
+        SIZE_T receivedCount; // incremented atomically; used as sequential frame index
+        SIZE_T mismatchCount; // incremented atomically on any NAL content mismatch
+    };
+    RxContext rxCtx;
+    MEMSET(&rxCtx, 0, SIZEOF(rxCtx));
+    rxCtx.inputFrames = &inputFrames;
+
+    // Non-capturing lambda: state flows through customData.
+    // Jitter buffer guarantees in-order delivery, so receivedCount-1 is the frame index.
+    EXPECT_EQ(STATUS_SUCCESS,
+              transceiverOnFrame(answerVideoTransceiver, (UINT64) &rxCtx,
+                                 [](UINT64 customData, PFrame pFrame) -> void {
+                                     RxContext* ctx = (RxContext*) customData;
+                                     SIZE_T idx = ATOMIC_INCREMENT((PSIZE_T) &ctx->receivedCount);
+                                     DLOGI("%zu received frame %lld %d", idx, pFrame->presentationTs, pFrame->size);
+                                     if (idx - 1 >= 100) {
+                                         return;
+                                     }
+                                     UINT32 rxOffsets[128], rxLengths[128];
+                                     UINT32 rxCount = extractNaluInfo(pFrame->frameData, pFrame->size,
+                                                                             rxOffsets, rxLengths, 128);
+                                     const InputFrame& expected = (*ctx->inputFrames)[(UINT32) idx];
+                                     if (rxCount != expected.naluCount) {
+                                         ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
+                                         return;
+                                     }
+                                     for (UINT32 i = 0; i < rxCount; i++) {
+                                         if (rxLengths[i] != expected.naluLengths[i] ||
+                                             MEMCMP(pFrame->frameData + rxOffsets[i],
+                                                    expected.data.data() + expected.naluOffsets[i],
+                                                    rxLengths[i]) != 0) {
+                                             ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
+                                             return;
+                                         }
+                                     }
+                                 }));
+
+    EXPECT_EQ(TRUE, connectTwoPeers(offerPc, answerPc));
+
+    // Send NUM_FRAMES+1 frames. The extra frame (a repeat of frame 0) carries a new
+    // timestamp that causes the jitter buffer to flush and deliver frame NUM_FRAMES.
+    Frame txFrame;
+    MEMSET(&txFrame, 0x00, SIZEOF(Frame));
+    txFrame.presentationTs = HUNDREDS_OF_NANOS_IN_A_SECOND;
+    for (UINT32 i = 0; i < NUM_FRAMES; i++) {
+        InputFrame& src = inputFrames[i];
+        txFrame.frameData = src.data.data();
+        txFrame.size = (UINT32) src.data.size();
+        EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerVideoTransceiver, &txFrame));
+        txFrame.presentationTs += HUNDREDS_OF_NANOS_IN_A_SECOND / 30;
+        DLOGI("%u sent frame %lld %d", i, txFrame.presentationTs, txFrame.size);
+        THREAD_SLEEP(5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
+
+    // Wait up to 2 s for all NUM_FRAMES to arrive.
+    for (INT32 i = 0; i < 2000 && ATOMIC_LOAD(&rxCtx.receivedCount) < NUM_FRAMES; i++) {
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
+    size_t totalSize = 0;
+    for (const auto& x : inputFrames) {
+        totalSize += x.data.size();
+    }
+    const UINT16 mtu = ((PKvsPeerConnection) offerPc)->MTU;
+    auto perfectWorldNumberOfPackets = totalSize / mtu;
+    DLOGI("perfectWorldNumberOfPackets %lld", perfectWorldNumberOfPackets);
+
+    size_t idealNumberOfPackets = 0;
+    for (const auto& x : inputFrames) {
+        idealNumberOfPackets += (x.data.size() + mtu - 1) / mtu;
+    }
+    DLOGI("idealNumberOfPackets %lld", idealNumberOfPackets);
+
+    RtcOutboundRtpStreamStats stats{};
+    EXPECT_EQ(STATUS_SUCCESS, getRtpOutboundStats(offerPc, offerVideoTransceiver, &stats));
+    DLOGI("packetsSent %lld", stats.sent.packetsSent);
+
+    RtcInboundRtpStreamStats statsRx{};
+    EXPECT_EQ(STATUS_SUCCESS, getRtpInboundStats(answerPc, answerVideoTransceiver, &statsRx));
+    DLOGI("packetsReceived %lld", statsRx.received.packetsReceived);
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+
+    EXPECT_EQ((SIZE_T) NUM_FRAMES, ATOMIC_LOAD(&rxCtx.receivedCount))
+        << "Expected exactly " << NUM_FRAMES << " frames delivered end-to-end";
+    EXPECT_EQ((SIZE_T) 0, ATOMIC_LOAD(&rxCtx.mismatchCount))
+        << "One or more received frames had NAL count or content mismatch";
+
+    EXPECT_EQ(stats.sent.packetsSent, statsRx.received.packetsReceived);
+    EXPECT_LE(stats.sent.packetsSent, perfectWorldNumberOfPackets * 2);
+}
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis
