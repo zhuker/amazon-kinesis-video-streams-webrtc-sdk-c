@@ -10,7 +10,8 @@ public class NativeTestLib {
      *
      * @param workDir working directory (tests expect ../samples/ relative to this)
      * @param filter  gtest filter expression (e.g. "StunApiTest.*"), "*" for all
+     * @param logDir  directory to write test.log into (for reliable log retrieval)
      * @return 0 on success, nonzero on failure
      */
-    public static native int runTests(String workDir, String filter);
+    public static native int runTests(String workDir, String filter, String logDir);
 }
