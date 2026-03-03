@@ -34,9 +34,8 @@ STATUS_CODE=$(grep '^INSTRUMENTATION_STATUS_CODE:' "$OUTPUT_LOG" | tail -1 | awk
 
 if [[ "$STATUS_CODE" != "0" ]]; then
   echo "::error::Tests failed (INSTRUMENTATION_STATUS_CODE: ${STATUS_CODE})"
-  LOG_FILE="/sdcard/Android/data/com.kvs.webrtctest/files/test.log"
   echo "=== test.log ==="
-  "${ADB}" -s "${SERIAL}" pull "${LOG_FILE}" test.log 2>/dev/null && cat test.log || echo "(test.log not available)"
+  "${ADB}" -s "${SERIAL}" shell run-as com.kvs.webrtctest cat files/test.log 2>/dev/null || echo "(test.log not available)"
   echo "=== logcat ==="
   "${ADB}" -s "${SERIAL}" logcat -d -s "webrtc_test_jni:*" "WebRtcNativeTest:*" "TestRunner:*"
   echo "=== crash log ==="
