@@ -389,6 +389,36 @@ static STATUS sctpHandleData(PSctpAssociation pAssoc, UINT8 flags, PBYTE pValue,
     return STATUS_SUCCESS;
 }
 
+// Drain the pending-send queue after the congestion window has grown (called from sctpHandleSack).
+static VOID sctpDrainPendingQueue(PSctpAssociation pAssoc, SctpAssocOutboundPacketFn outboundFn, UINT64 outboundCustomData)
+{
+    UINT32 slot;
+    for (slot = 0; slot < SCTP_MAX_PENDING_SENDS; slot++) {
+        if (!pAssoc->pendingQueue[slot].inUse) {
+            continue;
+        }
+        if (pAssoc->flightSize >= pAssoc->cwnd || pAssoc->flightSize >= pAssoc->peerArwnd) {
+            break; // still congested — leave remaining entries in queue
+        }
+        // Snapshot and evict before calling sctpAssocSend, which may re-queue if still congested
+        UINT16 streamId = pAssoc->pendingQueue[slot].streamId;
+        UINT32 ppid = pAssoc->pendingQueue[slot].ppid;
+        BOOL unordered = pAssoc->pendingQueue[slot].unordered;
+        UINT16 maxRetransmits = pAssoc->pendingQueue[slot].maxRetransmits;
+        UINT64 lifetimeMs = pAssoc->pendingQueue[slot].lifetimeMs;
+        PBYTE payload = pAssoc->pendingQueue[slot].payload;
+        UINT32 payloadLen = pAssoc->pendingQueue[slot].payloadLen;
+        pAssoc->pendingQueue[slot].payload = NULL;
+        pAssoc->pendingQueue[slot].inUse = FALSE;
+        pAssoc->pendingQueueCount--;
+
+        // sctpAssocSend makes its own copy if it re-queues, so freeing payload after is safe
+        sctpAssocSend(pAssoc, streamId, ppid, unordered, payload, payloadLen, maxRetransmits, lifetimeMs, outboundFn,
+                      outboundCustomData);
+        MEMFREE(payload);
+    }
+}
+
 static STATUS sctpHandleSack(PSctpAssociation pAssoc, PBYTE pValue, UINT32 valueLen, SctpAssocOutboundPacketFn outboundFn, UINT64 outboundCustomData)
 {
     UINT32 cumTsn, peerArwnd;
@@ -480,6 +510,11 @@ static STATUS sctpHandleSack(PSctpAssociation pAssoc, PBYTE pValue, UINT32 value
         } else {
             // Restart T3
             pAssoc->t3RtxExpiry = SCTP_NOW_MS() + pAssoc->rtoMs;
+        }
+
+        // Window just opened — try to send any messages that were held back by congestion
+        if (pAssoc->pendingQueueCount > 0) {
+            sctpDrainPendingQueue(pAssoc, outboundFn, outboundCustomData);
         }
     }
 
@@ -741,10 +776,43 @@ STATUS sctpAssocSend(PSctpAssociation pAssoc, UINT16 streamId, UINT32 ppid, BOOL
         return STATUS_SUCCESS; // Don't fail the session, just drop
     }
 
-    // Check congestion window
+    // Enforce congestion window.
+    // On a slow device the cwnd starts at 3*MTU (~3.5 KB) and grows only via SACKs.
+    // Ignoring this check fills the outstanding table (flightSize → 65536), starves
+    // putSctpPacket/sctpSessionTickTimers of their mutex turn, and freezes the session.
+    // Instead of dropping, queue the message; sctpDrainPendingQueue() sends it once a
+    // SACK opens the window.  If the queue is also full we drop (log + silent discard).
     if (pAssoc->flightSize >= pAssoc->cwnd || pAssoc->flightSize >= pAssoc->peerArwnd) {
-        DLOGD("SCTP: Congestion window full, flightSize=%u cwnd=%u peerArwnd=%u", pAssoc->flightSize, pAssoc->cwnd, pAssoc->peerArwnd);
-        // Still send — WebRTC DataChannels are typically small messages
+        if (pAssoc->pendingQueueCount < SCTP_MAX_PENDING_SENDS) {
+            UINT32 slot;
+            for (slot = 0; slot < SCTP_MAX_PENDING_SENDS; slot++) {
+                if (!pAssoc->pendingQueue[slot].inUse) {
+                    break;
+                }
+            }
+            if (slot < SCTP_MAX_PENDING_SENDS) {
+                pAssoc->pendingQueue[slot].streamId = streamId;
+                pAssoc->pendingQueue[slot].ppid = ppid;
+                pAssoc->pendingQueue[slot].unordered = unordered;
+                pAssoc->pendingQueue[slot].maxRetransmits = maxRetransmits;
+                pAssoc->pendingQueue[slot].lifetimeMs = lifetimeMs;
+                pAssoc->pendingQueue[slot].payloadLen = payloadLen;
+                pAssoc->pendingQueue[slot].payload = (PBYTE) MEMALLOC(payloadLen);
+                if (pAssoc->pendingQueue[slot].payload != NULL) {
+                    MEMCPY(pAssoc->pendingQueue[slot].payload, pPayload, payloadLen);
+                    pAssoc->pendingQueue[slot].inUse = TRUE;
+                    pAssoc->pendingQueueCount++;
+                    DLOGD("SCTP: Congestion window full, queued (slot=%u flightSize=%u cwnd=%u)", slot, pAssoc->flightSize,
+                          pAssoc->cwnd);
+                } else {
+                    DLOGW("SCTP: OOM queuing congested message, dropping (stream=%u)", streamId);
+                }
+            }
+        } else {
+            DLOGD("SCTP: Congestion window full, pending queue full, dropping (flightSize=%u cwnd=%u peerArwnd=%u)",
+                  pAssoc->flightSize, pAssoc->cwnd, pAssoc->peerArwnd);
+        }
+        return STATUS_SUCCESS;
     }
 
     // Assign SSN for ordered messages
@@ -767,31 +835,37 @@ STATUS sctpAssocSend(PSctpAssociation pAssoc, UINT16 streamId, UINT32 ppid, BOOL
                 break;
             }
         }
-        if (i < SCTP_MAX_OUTSTANDING) {
-            pAssoc->outstanding[i].tsn = tsn;
-            pAssoc->outstanding[i].streamId = streamId;
-            pAssoc->outstanding[i].ssn = ssn;
-            pAssoc->outstanding[i].ppid = ppid;
-            pAssoc->outstanding[i].payloadLen = payloadLen;
-            pAssoc->outstanding[i].unordered = unordered;
-            pAssoc->outstanding[i].sentTime = nowMs;
-            pAssoc->outstanding[i].retransmitCount = 0;
-            pAssoc->outstanding[i].acked = FALSE;
-            pAssoc->outstanding[i].abandoned = FALSE;
-            pAssoc->outstanding[i].maxRetransmits = maxRetransmits;
-            pAssoc->outstanding[i].lifetimeMs = lifetimeMs;
-            pAssoc->outstanding[i].creationTime = nowMs;
-            pAssoc->outstanding[i].inUse = TRUE;
-
-            // Copy payload for retransmit
-            pAssoc->outstanding[i].payload = (PBYTE) MEMALLOC(payloadLen);
-            if (pAssoc->outstanding[i].payload != NULL) {
-                MEMCPY(pAssoc->outstanding[i].payload, pPayload, payloadLen);
-            }
-
-            pAssoc->outstandingCount++;
-            pAssoc->flightSize += payloadLen;
+        if (i >= SCTP_MAX_OUTSTANDING) {
+            // No slot to track this packet — sending without tracking would be unreliable.
+            // The congestion window check above should prevent reaching here under normal
+            // operation; this is a final safety guard.
+            DLOGW("SCTP: Outstanding table full, dropping packet (stream=%u)", streamId);
+            return STATUS_SUCCESS;
         }
+
+        pAssoc->outstanding[i].tsn = tsn;
+        pAssoc->outstanding[i].streamId = streamId;
+        pAssoc->outstanding[i].ssn = ssn;
+        pAssoc->outstanding[i].ppid = ppid;
+        pAssoc->outstanding[i].payloadLen = payloadLen;
+        pAssoc->outstanding[i].unordered = unordered;
+        pAssoc->outstanding[i].sentTime = nowMs;
+        pAssoc->outstanding[i].retransmitCount = 0;
+        pAssoc->outstanding[i].acked = FALSE;
+        pAssoc->outstanding[i].abandoned = FALSE;
+        pAssoc->outstanding[i].maxRetransmits = maxRetransmits;
+        pAssoc->outstanding[i].lifetimeMs = lifetimeMs;
+        pAssoc->outstanding[i].creationTime = nowMs;
+        pAssoc->outstanding[i].inUse = TRUE;
+
+        // Copy payload for retransmit
+        pAssoc->outstanding[i].payload = (PBYTE) MEMALLOC(payloadLen);
+        if (pAssoc->outstanding[i].payload != NULL) {
+            MEMCPY(pAssoc->outstanding[i].payload, pPayload, payloadLen);
+        }
+
+        pAssoc->outstandingCount++;
+        pAssoc->flightSize += payloadLen;
 
         // Send DATA chunk
         offset = sctpWriteCommonHeader(pAssoc->outPacket, pAssoc->localPort, pAssoc->remotePort, pAssoc->peerVerificationTag);
@@ -831,30 +905,33 @@ STATUS sctpAssocSend(PSctpAssociation pAssoc, UINT16 streamId, UINT32 ppid, BOOL
                     break;
                 }
             }
-            if (i < SCTP_MAX_OUTSTANDING) {
-                pAssoc->outstanding[i].tsn = tsn;
-                pAssoc->outstanding[i].streamId = streamId;
-                pAssoc->outstanding[i].ssn = ssn;
-                pAssoc->outstanding[i].ppid = ppid;
-                pAssoc->outstanding[i].payloadLen = fragmentLen;
-                pAssoc->outstanding[i].unordered = unordered;
-                pAssoc->outstanding[i].sentTime = nowMs;
-                pAssoc->outstanding[i].retransmitCount = 0;
-                pAssoc->outstanding[i].acked = FALSE;
-                pAssoc->outstanding[i].abandoned = FALSE;
-                pAssoc->outstanding[i].maxRetransmits = maxRetransmits;
-                pAssoc->outstanding[i].lifetimeMs = lifetimeMs;
-                pAssoc->outstanding[i].creationTime = nowMs;
-                pAssoc->outstanding[i].inUse = TRUE;
-
-                pAssoc->outstanding[i].payload = (PBYTE) MEMALLOC(fragmentLen);
-                if (pAssoc->outstanding[i].payload != NULL) {
-                    MEMCPY(pAssoc->outstanding[i].payload, pPayload + fragmentOffset, fragmentLen);
-                }
-
-                pAssoc->outstandingCount++;
-                pAssoc->flightSize += fragmentLen;
+            if (i >= SCTP_MAX_OUTSTANDING) {
+                DLOGW("SCTP: Outstanding table full during fragmentation, dropping (stream=%u)", streamId);
+                return STATUS_SUCCESS;
             }
+
+            pAssoc->outstanding[i].tsn = tsn;
+            pAssoc->outstanding[i].streamId = streamId;
+            pAssoc->outstanding[i].ssn = ssn;
+            pAssoc->outstanding[i].ppid = ppid;
+            pAssoc->outstanding[i].payloadLen = fragmentLen;
+            pAssoc->outstanding[i].unordered = unordered;
+            pAssoc->outstanding[i].sentTime = nowMs;
+            pAssoc->outstanding[i].retransmitCount = 0;
+            pAssoc->outstanding[i].acked = FALSE;
+            pAssoc->outstanding[i].abandoned = FALSE;
+            pAssoc->outstanding[i].maxRetransmits = maxRetransmits;
+            pAssoc->outstanding[i].lifetimeMs = lifetimeMs;
+            pAssoc->outstanding[i].creationTime = nowMs;
+            pAssoc->outstanding[i].inUse = TRUE;
+
+            pAssoc->outstanding[i].payload = (PBYTE) MEMALLOC(fragmentLen);
+            if (pAssoc->outstanding[i].payload != NULL) {
+                MEMCPY(pAssoc->outstanding[i].payload, pPayload + fragmentOffset, fragmentLen);
+            }
+
+            pAssoc->outstandingCount++;
+            pAssoc->flightSize += fragmentLen;
 
             // Build and send DATA chunk with manual flags
             offset = sctpWriteCommonHeader(pAssoc->outPacket, pAssoc->localPort, pAssoc->remotePort, pAssoc->peerVerificationTag);
@@ -1030,6 +1107,15 @@ VOID sctpAssocCleanup(PSctpAssociation pAssoc)
     }
     pAssoc->outstandingCount = 0;
     pAssoc->flightSize = 0;
+
+    for (i = 0; i < SCTP_MAX_PENDING_SENDS; i++) {
+        if (pAssoc->pendingQueue[i].inUse && pAssoc->pendingQueue[i].payload != NULL) {
+            MEMFREE(pAssoc->pendingQueue[i].payload);
+            pAssoc->pendingQueue[i].payload = NULL;
+        }
+        pAssoc->pendingQueue[i].inUse = FALSE;
+    }
+    pAssoc->pendingQueueCount = 0;
 
     if (pAssoc->reassemblyBuf != NULL) {
         MEMFREE(pAssoc->reassemblyBuf);

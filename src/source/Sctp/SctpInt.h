@@ -239,6 +239,21 @@ typedef struct {
         BOOL inUse;
     } sendQueue[SCTP_MAX_QUEUED_MESSAGES];
     UINT32 sendQueueCount;
+
+    // Pending-send queue: messages held back by congestion, drained when SACKs open the window.
+    // Payloads are heap-allocated (no size cap) so large messages are handled correctly.
+#define SCTP_MAX_PENDING_SENDS 1024
+    struct {
+        UINT16 streamId;
+        UINT32 ppid;
+        BOOL unordered;
+        UINT16 maxRetransmits;
+        UINT64 lifetimeMs;
+        PBYTE payload; // heap-allocated; freed after send or on cleanup
+        UINT32 payloadLen;
+        BOOL inUse;
+    } pendingQueue[SCTP_MAX_PENDING_SENDS];
+    UINT32 pendingQueueCount;
 } SctpAssociation, *PSctpAssociation;
 
 #ifdef __cplusplus
