@@ -65,14 +65,8 @@ public class WebRtcNativeTest {
         Bundle args = InstrumentationRegistry.getArguments();
         filter = args.getString("gtest_filter", "*");
 
-        // External files dir is accessible via adb pull without root
-        File extDir = ctx.getExternalFilesDir(null);
-        if (extDir != null) {
-            extDir.mkdirs();
-            logDir = extDir.getAbsolutePath();
-        } else {
-            logDir = tstDir.getAbsolutePath();
-        }
+        // Use internal files dir for logging – accessible via run-as on debuggable apps
+        logDir = filesDir.getAbsolutePath();
 
         Log.i(TAG, "Work dir: " + workDir);
         Log.i(TAG, "Samples dir: " + samplesDir.getAbsolutePath());
