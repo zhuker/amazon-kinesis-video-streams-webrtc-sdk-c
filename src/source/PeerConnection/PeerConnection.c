@@ -199,6 +199,7 @@ VOID onInboundPacket(UINT64 customData, PBYTE buff, UINT32 buffLen)
     INT32 signedBuffLen = buffLen;
 
     CHK(signedBuffLen > 2 && pKvsPeerConnection != NULL, STATUS_SUCCESS);
+    CHK(ATOMIC_LOAD_BOOL(&pKvsPeerConnection->receiveEnabled), STATUS_SUCCESS);
 
     /*
      demux each packet off of its first byte
@@ -1171,6 +1172,7 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
         ? DEFAULT_MTU_SIZE_BYTES
         : pConfiguration->kvsRtcConfiguration.maximumTransmissionUnit;
     ATOMIC_STORE_BOOL(&pKvsPeerConnection->sctpIsEnabled, FALSE);
+    ATOMIC_STORE_BOOL(&pKvsPeerConnection->receiveEnabled, TRUE);
 
     iceAgentCallbacks.customData = (UINT64) pKvsPeerConnection;
     iceAgentCallbacks.inboundPacketFn = onInboundPacket;
@@ -1249,9 +1251,10 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     CHK(pKvsPeerConnection != NULL, retStatus);
 
     startTime = GETTIME();
-    /* Prevent the receive thread from (re)allocating or calling into SCTP
+    /* Prevent the receive thread from processing any more inbound packets
      * while we are tearing down.  This must happen before iceAgentShutdown
      * because packets may already be in-flight in the callback chain. */
+    ATOMIC_STORE_BOOL(&pKvsPeerConnection->receiveEnabled, FALSE);
     ATOMIC_STORE_BOOL(&pKvsPeerConnection->sctpIsEnabled, FALSE);
 
     /* Shutdown IceAgent first so there is no more incoming packets which can cause
