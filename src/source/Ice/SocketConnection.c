@@ -89,14 +89,17 @@ STATUS freeSocketConnection(PSocketConnection* ppSocketConnection)
     ATOMIC_STORE_BOOL(&pSocketConnection->connectionClosed, TRUE);
     MUTEX_UNLOCK(pSocketConnection->lock);
 
-    // Await for the socket connection to be released
+    // Await for the socket connection to be released.
+    // The connection listener thread guarantees it will set inUse = FALSE
+    // within one poll cycle after seeing connectionClosed = TRUE, so we
+    // must wait for it to finish before freeing the object.
     shutdownTimeout = GETTIME() + KVS_ICE_TURN_CONNECTION_SHUTDOWN_TIMEOUT;
-    while (ATOMIC_LOAD_BOOL(&pSocketConnection->inUse) && GETTIME() < shutdownTimeout) {
+    while (ATOMIC_LOAD_BOOL(&pSocketConnection->inUse)) {
+        if (GETTIME() > shutdownTimeout) {
+            DLOGW("Still waiting for socket connection to be released, inUse is still TRUE");
+            shutdownTimeout = GETTIME() + KVS_ICE_TURN_CONNECTION_SHUTDOWN_TIMEOUT;
+        }
         THREAD_SLEEP(KVS_ICE_SHORT_CHECK_DELAY);
-    }
-
-    if (ATOMIC_LOAD_BOOL(&pSocketConnection->inUse)) {
-        DLOGW("Shutting down socket connection timedout after %u seconds", KVS_ICE_TURN_CONNECTION_SHUTDOWN_TIMEOUT / HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
 
     if (IS_VALID_MUTEX_VALUE(pSocketConnection->lock)) {
