@@ -25,6 +25,12 @@ list(FILTER JNI_TEST_SOURCES EXCLUDE REGEX ".*DualStackEndpointsTest\\.cpp")
 list(FILTER JNI_TEST_SOURCES EXCLUDE REGEX ".*TurnConnectionFunctionalityTest\\.cpp")
 list(FILTER JNI_TEST_SOURCES EXCLUDE REGEX ".*IceConfigParsingTest\\.cpp")
 
+# Exclude native SCTP tests when ENABLE_NATIVE_SCTP is OFF (mirrors tst/CMakeLists.txt)
+if(NOT ENABLE_NATIVE_SCTP)
+  list(FILTER JNI_TEST_SOURCES EXCLUDE REGEX
+    "SctpAssoc.*\\.cpp|SctpCrc32c.*\\.cpp|SctpPacket.*\\.cpp")
+endif()
+
 add_library(webrtc_test_jni SHARED
     ${JNI_TEST_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/jni_bridge.cpp")

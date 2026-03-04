@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 # VERSION required so CMAKE_PROJECT_VERSION is non-empty; libsrtp uses it in
 # set_target_properties(srtp2 PROPERTIES VERSION ${CMAKE_PROJECT_VERSION}).
-project(KinesisWebRTCSuperbuild VERSION 1.0.0 LANGUAGES C)
+project(KinesisWebRTCSuperbuild VERSION 1.0.0 LANGUAGES C CXX)
 
 option(USE_SYSTEM_OPENSSL "Use system OpenSSL instead of building from submodule" OFF)
+option(BUILD_BROWSER_TEST "Build DataChannel browser interop test server" OFF)
+option(ENABLE_NATIVE_SCTP "Use native SCTP implementation instead of usrsctp" OFF)
 
 set(BUILD_OPENSSL_PLATFORM "" CACHE STRING "OpenSSL cross-compile target platform")
 option(OPENSSL_NO_ASM "Disable OpenSSL assembly optimizations" OFF)
@@ -144,14 +146,16 @@ else()
 endif()
 
 # =============================================================================
-# 2. usrsctp  (add_subdirectory)
+# 2. usrsctp  (add_subdirectory) — skipped when using native SCTP
 # =============================================================================
-set(sctp_werror         OFF CACHE BOOL "" FORCE)
-set(sctp_build_programs OFF CACHE BOOL "" FORCE)
-add_subdirectory(usrsctp)
-# usrsctp.h lives in usrsctplib/ – expose it globally (SDK includes it even
-# from targets that don't link usrsctp directly)
-include_directories("${CMAKE_CURRENT_SOURCE_DIR}/usrsctp/usrsctplib")
+if(NOT ENABLE_NATIVE_SCTP)
+  set(sctp_werror         OFF CACHE BOOL "" FORCE)
+  set(sctp_build_programs OFF CACHE BOOL "" FORCE)
+  add_subdirectory(usrsctp)
+  # usrsctp.h lives in usrsctplib/ – expose it globally (SDK includes it even
+  # from targets that don't link usrsctp directly)
+  include_directories("${CMAKE_CURRENT_SOURCE_DIR}/usrsctp/usrsctplib")
+endif()
 
 # =============================================================================
 # 3. libsrtp  (add_subdirectory)
@@ -213,6 +217,15 @@ set(BUILD_STATIC_LIBS       ON  CACHE BOOL "" FORCE)
 set(BUILD_TEST              ON  CACHE BOOL "" FORCE)
 set(ENABLE_AWS_SDK_IN_TESTS OFF CACHE BOOL "" FORCE)
 set(OPEN_SRC_INSTALL_PREFIX "${DEPS_INSTALL_PREFIX}" CACHE PATH "" FORCE)
+set(ENABLE_NATIVE_SCTP      ${ENABLE_NATIVE_SCTP}    CACHE BOOL "" FORCE)
+
+# Forward sanitizer options to the SDK
+option(ADDRESS_SANITIZER "Build with AddressSanitizer." OFF)
+option(THREAD_SANITIZER "Build with ThreadSanitizer." OFF)
+option(UNDEFINED_BEHAVIOR_SANITIZER "Build with UndefinedBehaviorSanitizer." OFF)
+set(ADDRESS_SANITIZER            ${ADDRESS_SANITIZER}            CACHE BOOL "" FORCE)
+set(THREAD_SANITIZER             ${THREAD_SANITIZER}             CACHE BOOL "" FORCE)
+set(UNDEFINED_BEHAVIOR_SANITIZER ${UNDEFINED_BEHAVIOR_SANITIZER} CACHE BOOL "" FORCE)
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_BINARY_DIR}/sdk")
 
@@ -223,5 +236,22 @@ if(TARGET openssl_install)
   add_dependencies(kvsWebrtcClient openssl_install)
   if(TARGET webrtc_client_test)
     add_dependencies(webrtc_client_test openssl_install)
+  endif()
+endif()
+
+# =============================================================================
+# 6. DataChannel Test Server  (Puppeteer browser interop tests)
+# =============================================================================
+if(BUILD_BROWSER_TEST AND ENABLE_DATA_CHANNEL)
+  set(WEBRTC_SDK_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
+  add_executable(dcTestServer
+      "${WEBRTC_SDK_SRC_DIR}/browser-test/dcTestServer.cpp")
+  target_include_directories(dcTestServer PRIVATE
+      "${WEBRTC_SDK_SRC_DIR}/samples"
+      "${WEBRTC_SDK_SRC_DIR}/src/include")
+  target_link_libraries(dcTestServer kvsWebrtcClient kvspicUtils)
+  set_target_properties(dcTestServer PROPERTIES CXX_STANDARD 17)
+  if(TARGET openssl_install)
+    add_dependencies(dcTestServer openssl_install)
   endif()
 endif()

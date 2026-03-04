@@ -101,6 +101,9 @@ typedef struct {
     PSrtpSession pSrtpSession;
 
     PSctpSession pSctpSession;
+#ifdef ENABLE_NATIVE_SCTP
+    UINT32 sctpTimerCallbackId;
+#endif
 
     PSessionDescription pRemoteSessionDescription;
     PDoubleList pTransceivers;
@@ -108,6 +111,7 @@ typedef struct {
     PDoubleList pAnswerTransceivers;
 
     volatile ATOMIC_BOOL sctpIsEnabled;
+    volatile ATOMIC_BOOL receiveEnabled;
 
     CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
     CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];

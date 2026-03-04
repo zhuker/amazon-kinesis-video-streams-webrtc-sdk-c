@@ -79,7 +79,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_Disconnected)
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
     // Busy wait until DataChannels connect and send a message
-    for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4; i++) {
+    for (auto i = 0; i <= 10 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
 
@@ -142,7 +142,7 @@ TEST_F(DataChannelFunctionalityTest, dataChannelSendRecvMessageAfterDtlsComplete
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
     // Busy wait until remote channel open and dtls completed
-    for (auto i = 0; i <= 100 &&
+    for (auto i = 0; i <= 10 &&
          (dtlsSessionIsInitFinished(((PKvsPeerConnection) offerPc)->pDtlsSession, &dtlsCompleted) || ATOMIC_LOAD(&pOfferRemoteDataChannel) == 0);
          i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
@@ -405,7 +405,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityOrdered
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
     // Busy wait until DataChannels connect and send a message
-    for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
+    for (auto i = 0; i <= 10 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
 
@@ -491,7 +491,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_PartialReliabilityOrdered
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
     // Busy wait until DataChannels connect and send a message
-    for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
+    for (auto i = 0; i <= 10 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4 ; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
 
@@ -575,7 +575,7 @@ TEST_F(DataChannelFunctionalityTest, createDataChannel_DataChannelMetricsTest)
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
     // Busy wait until DataChannels connect and send a message
-    for (auto i = 0; i <= 100 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4; i++) {
+    for (auto i = 0; i <= 10 && (ATOMIC_LOAD(&datachannelLocalOpenCount) + ATOMIC_LOAD(&msgCount)) != 4; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
     EXPECT_EQ(rtcPeerConnectionGetMetrics(offerPc, NULL, &rtcMetrics), STATUS_SUCCESS);
@@ -865,13 +865,13 @@ TEST_F(DataChannelFunctionalityTest, dataChannelConcurrentSends)
 
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
-    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&datachannelLocalOpenCount) == 0; i++) {
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&datachannelLocalOpenCount) == 0; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
     ASSERT_EQ(ATOMIC_LOAD(&datachannelLocalOpenCount), 1);
 
     // Wait for remote data channel (message callback already registered in onDataChannel)
-    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&remoteCtx.remoteDataChannel) == 0; i++) {
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&remoteCtx.remoteDataChannel) == 0; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
     ASSERT_NE(ATOMIC_LOAD(&remoteCtx.remoteDataChannel), 0);
@@ -943,7 +943,7 @@ TEST_F(DataChannelFunctionalityTest, dataChannelSendDuringDisconnect)
 
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
-    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&datachannelLocalOpenCount) == 0; i++) {
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&datachannelLocalOpenCount) == 0; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
     ASSERT_EQ(ATOMIC_LOAD(&datachannelLocalOpenCount), 1);
@@ -1047,13 +1047,13 @@ TEST_F(DataChannelFunctionalityTest, dataChannelSendAfterClose)
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
     // Wait for channel to open
-    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&datachannelLocalOpenCount) == 0; i++) {
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&datachannelLocalOpenCount) == 0; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
     ASSERT_EQ(ATOMIC_LOAD(&datachannelLocalOpenCount), 1);
 
     // Wait for remote channel (message callback already registered in onDataChannel)
-    for (auto i = 0; i <= 100 && ATOMIC_LOAD(&remoteCtx.remoteDataChannel) == 0; i++) {
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&remoteCtx.remoteDataChannel) == 0; i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
     ASSERT_NE(ATOMIC_LOAD(&remoteCtx.remoteDataChannel), 0);

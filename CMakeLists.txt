@@ -18,6 +18,7 @@ option(BUILD_LIBSRTP_HOST_PLATFORM "If buildng LibSRTP what is the current platf
 option(BUILD_LIBSRTP_DESTINATION_PLATFORM "If buildng LibSRTP what is the destination platform" OFF)
 option(BUILD_SAMPLE "Build available samples" ON)
 option(ENABLE_DATA_CHANNEL "Enable support for data channel" ON)
+option(ENABLE_NATIVE_SCTP "Use native SCTP implementation instead of usrsctp" OFF)
 option(ENABLE_KVS_THREADPOOL "Enable support for KVS thread pool in signaling" OFF)
 option(ENABLE_SELF_CONTAINED "Use vendored PIC/producer-c sources instead of external dependencies" OFF)
 option(ENABLE_SIGNALING "Enable AWS signaling client (requires libwebsockets)" ON)
@@ -268,8 +269,9 @@ if(BUILD_DEPENDENCIES)
       -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
       -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS})
 
+  if(NOT ENABLE_NATIVE_SCTP)
   build_dependency(usrsctp ${BUILD_ARGS})
-
+  endif ()
   if(BUILD_TEST)
     build_dependency(gtest)
 
@@ -349,30 +351,36 @@ else()
 endif()
 endif()
 
-if (BUILD_DEPENDENCIES)
-  find_library(
-    Usrsctp
-    NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
-    PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
-elseif(TARGET usrsctp)
-  # Provided by a parent superbuild via add_subdirectory; include dirs are
-  # already on the path from the parent's include_directories() calls.
-  set(Usrsctp usrsctp)
-else()
-  pkg_check_modules(LIBUSRSCTP REQUIRED usrsctp)
-  set(Usrsctp ${LIBUSRSCTP_LIBRARIES})
-  # The usrsctp .pc file sets includedir to .../include/usrsctp but the header
-  # lives in .../include/usrsctp.h.  Use find_path to get the correct directory.
-  find_path(USRSCTP_INCLUDE_DIR usrsctp.h HINTS ${LIBUSRSCTP_INCLUDE_DIRS} PATH_SUFFIXES .. REQUIRED)
-  set(LIBUSRSCTP_INCLUDE_DIRS ${USRSCTP_INCLUDE_DIR})
+if(NOT ENABLE_NATIVE_SCTP)
+  if (BUILD_DEPENDENCIES)
+    find_library(
+      Usrsctp
+      NAMES ${USRSCTP_LIBNAME} usrsctp REQUIRED
+      PATHS ${OPEN_SRC_INSTALL_PREFIX}/lib ${OPEN_SRC_INSTALL_PREFIX}/lib64)
+  elseif(TARGET usrsctp)
+    # Provided by a parent superbuild via add_subdirectory; include dirs are
+    # already on the path from the parent's include_directories() calls.
+    set(Usrsctp usrsctp)
+  else()
+    pkg_check_modules(LIBUSRSCTP REQUIRED usrsctp)
+    set(Usrsctp ${LIBUSRSCTP_LIBRARIES})
+    # The usrsctp .pc file sets includedir to .../include/usrsctp but the header
+    # lives in .../include/usrsctp.h.  Use find_path to get the correct directory.
+    find_path(USRSCTP_INCLUDE_DIR usrsctp.h HINTS ${LIBUSRSCTP_INCLUDE_DIRS} PATH_SUFFIXES .. REQUIRED)
+    set(LIBUSRSCTP_INCLUDE_DIRS ${USRSCTP_INCLUDE_DIR})
+  endif()
 endif()
 
 set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBSRTP_INCLUDE_DIRS}
-                          ${LIBUSRSCTP_INCLUDE_DIRS}
                           ${CURL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS})
+if(NOT ENABLE_NATIVE_SCTP)
+  set(OPEN_SRC_INCLUDE_DIRS ${OPEN_SRC_INCLUDE_DIRS} ${LIBUSRSCTP_INCLUDE_DIRS})
+endif()
 
 link_directories(${LIBSRTP_LIBRARY_DIRS})
-link_directories(${LIBUSRSCTP_LIBRARY_DIRS})
+if(NOT ENABLE_NATIVE_SCTP)
+  link_directories(${LIBUSRSCTP_LIBRARY_DIRS})
+endif()
 link_directories(${LIBWEBSOCKETS_LIBRARY_DIRS})
 link_directories(${OPEN_SRC_INSTALL_PREFIX}/lib)
 
@@ -414,12 +422,21 @@ endif()
 # Uncomment below line for very verbose logging
 # add_definitions(-DLOG_STREAMING)
 
-if (ENABLE_DATA_CHANNEL)
+if(ENABLE_DATA_CHANNEL)
   add_definitions(-DENABLE_DATA_CHANNEL)
-  set (DATACHANNEL_SRC
-      src/source/PeerConnection/DataChannel.c
-      src/source/Sctp/Sctp.c
-      )
+  if(ENABLE_NATIVE_SCTP)
+    add_definitions(-DENABLE_NATIVE_SCTP)
+    set(DATACHANNEL_SRC
+        src/source/PeerConnection/DataChannel.c
+        src/source/Sctp/NativeSctp.c
+        src/source/Sctp/SctpPacket.c
+        src/source/Sctp/SctpAssoc.c
+        src/source/Sctp/SctpCrc32c.c)
+  else()
+    set(DATACHANNEL_SRC
+        src/source/PeerConnection/DataChannel.c
+        src/source/Sctp/Sctp.c)
+  endif()
 endif()
 
 if (INSTRUMENTED_ALLOCATORS)

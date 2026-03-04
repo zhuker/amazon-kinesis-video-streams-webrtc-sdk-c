@@ -18,7 +18,7 @@ echo "=== Test run started: $(date) ==="
 echo "Filter: ${GTEST_FILTER}"
 echo ""
 
-timeout 300 ./webrtc_client_test \
+timeout -s ABRT 300 ./webrtc_client_test \
     --gtest_filter="${GTEST_FILTER}" \
     --gtest_break_on_failure 2>&1
 

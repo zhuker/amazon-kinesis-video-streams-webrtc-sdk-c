@@ -36,7 +36,12 @@ if(ENABLE_AWS_SDK_IN_TESTS)
   set(AWS_SDK_TEST_LIBS ${AWSSDK_LINK_LIBRARIES})
 endif()
 
-file(GLOB WEBRTC_CLIENT_TEST_SOURCE_FILES "*.cpp" )
+file(GLOB WEBRTC_CLIENT_TEST_SOURCE_FILES "*.cpp")
+
+if(NOT ENABLE_NATIVE_SCTP)
+  list(FILTER WEBRTC_CLIENT_TEST_SOURCE_FILES EXCLUDE REGEX
+    "SctpAssoc.*\\.cpp|SctpCrc32c.*\\.cpp|SctpPacket.*\\.cpp")
+endif()
 
 add_executable(webrtc_client_test ${WEBRTC_CLIENT_TEST_SOURCE_FILES} SignalingApiFunctionalityTest.h)
 if (ENABLE_SIGNALING)
@@ -60,10 +65,14 @@ else ()
 
 endif ()
 
-# UBSan false positives on Android in mixed C/C++ codebases:
-# - vptr: Google Test global registration triggers during dynamic linker init
+# UBSan false positives in mixed C/C++ codebases:
+# - vptr: Google Test global registration triggers during dynamic linker init (Android only)
 # - function: C++ calling C functions via function pointers lacks RTTI metadata
-if(UNDEFINED_BEHAVIOR_SANITIZER AND ANDROID)
-    target_compile_options(webrtc_client_test PRIVATE -fno-sanitize=vptr,function)
-    target_link_options(webrtc_client_test PRIVATE -fno-sanitize=vptr,function)
+if(UNDEFINED_BEHAVIOR_SANITIZER)
+    set(_ubsan_exclude "function")
+    if(ANDROID)
+        set(_ubsan_exclude "vptr,function")
+    endif()
+    target_compile_options(webrtc_client_test PRIVATE -fno-sanitize=${_ubsan_exclude})
+    target_link_options(webrtc_client_test PRIVATE -fno-sanitize=${_ubsan_exclude})
 endif()

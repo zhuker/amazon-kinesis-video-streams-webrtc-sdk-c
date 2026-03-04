@@ -11,6 +11,13 @@
 extern "C" {
 #endif
 
+#ifdef ENABLE_NATIVE_SCTP
+#include "SctpCrc32c.h"
+#include "SctpInt.h"
+#include "SctpPacket.h"
+#include "SctpAssoc.h"
+#endif
+
 // DEFAULT_MTU_SIZE(1200) - DTLS record overhead (~50 bytes depending on cipher)
 // Must fit within a single DTLS record to avoid fragmentation across datagrams
 #define SCTP_MTU                         1150
@@ -26,7 +33,9 @@ extern "C" {
 
 #define DEFAULT_SCTP_SHUTDOWN_TIMEOUT 2 * HUNDREDS_OF_NANOS_IN_A_SECOND
 
+#ifndef ENABLE_NATIVE_SCTP
 #define DEFAULT_USRSCTP_TEARDOWN_POLLING_INTERVAL (10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
+#endif
 
 enum { SCTP_PPID_DCEP = 50, SCTP_PPID_STRING = 51, SCTP_PPID_BINARY = 53, SCTP_PPID_STRING_EMPTY = 56, SCTP_PPID_BINARY_EMPTY = 57 };
 
@@ -61,11 +70,16 @@ typedef struct {
 
 typedef struct {
     volatile SIZE_T shutdownStatus;
+#ifdef ENABLE_NATIVE_SCTP
+    MUTEX lock;
+    SctpAssociation assoc;
+#else
     struct socket* socket;
     struct sctp_sendv_spa spa;
+    volatile SIZE_T lastTimerTime;
+#endif
     BYTE packet[SCTP_MAX_ALLOWABLE_PACKET_LENGTH];
     UINT32 packetSize;
-    volatile SIZE_T lastTimerTime;
     SctpSessionCallbacks sctpSessionCallbacks;
 } SctpSession, *PSctpSession;
 
@@ -77,9 +91,13 @@ STATUS putSctpPacket(PSctpSession, PBYTE, UINT32);
 STATUS sctpSessionWriteMessage(PSctpSession, UINT32, BOOL, PBYTE, UINT32);
 STATUS sctpSessionWriteDcep(PSctpSession, UINT32, PCHAR, UINT32, PRtcDataChannelInit);
 
+#ifdef ENABLE_NATIVE_SCTP
+STATUS sctpSessionTickTimers(PSctpSession);
+#else
 // Callbacks used by usrsctp
 INT32 onSctpOutboundPacket(PVOID, PVOID, SIZE_T, UINT8, UINT8);
 INT32 onSctpInboundPacket(struct socket*, union sctp_sockstore, PVOID, SIZE_T, struct sctp_rcvinfo, INT32, PVOID);
+#endif
 
 #ifdef __cplusplus
 }

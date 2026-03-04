@@ -20,7 +20,11 @@ android {
             abiFilters "armeabi-v7a", "arm64-v8a"
         }
 
-        // cmake arguments handled by superbuild/CMakeLists.txt
+        externalNativeBuild {
+            cmake {
+                arguments "-DENABLE_NATIVE_SCTP=ON"
+            }
+        }
     }
 
     externalNativeBuild {

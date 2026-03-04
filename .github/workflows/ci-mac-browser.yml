@@ -1,4 +1,4 @@
-name: CI macOS Superbuild
+name: CI macOS Browser Test
 
 on:
   push:
@@ -32,7 +32,7 @@ permissions:
   contents: read
 
 jobs:
-  superbuild-mac:
+  browser-test-mac:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 15
     steps:
@@ -46,27 +46,34 @@ jobs:
             superbuild/googletest
         shell: bash
 
-      - name: Configure (builds OpenSSL at configure time)
+      - name: Build dcTestServer
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
           export CC=clang CXX=clang++
           cd superbuild
-          cmake --preset mac-arm64 -DENABLE_NATIVE_SCTP=ON
+          cmake -B build-browser -S . \
+            -DBUILD_TEST=OFF \
+            -DBUILD_BROWSER_TEST=ON \
+            -DENABLE_SIGNALING=OFF \
+            -DENABLE_DATA_CHANNEL=ON \
+            -DENABLE_NATIVE_SCTP=ON
+          cmake --build build-browser --target dcTestServer --parallel $(sysctl -n hw.ncpu)
         shell: bash
 
-      - name: Build
+      - name: Install Puppeteer
         run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          cmake --build superbuild/build-mac-arm64 --parallel $(sysctl -n hw.ncpu)
+          cd browser-test
+          npm install --no-fund --no-audit
         shell: bash
 
-      - name: Test
+      - name: Run browser interop tests
         run: |
-          cd superbuild/build-mac-arm64/sdk/tst
-          timeout 600 ./webrtc_client_test --gtest_break_on_failure
+          timeout 600 node browser-test/runner.mjs \
+            superbuild/build-browser/dcTestServer \
+            browser-test
         shell: bash
 
       - name: Cleanup
         if: always()
-        run: rm -rf superbuild/build-mac-arm64
+        run: rm -rf superbuild/build-browser
         shell: bash
