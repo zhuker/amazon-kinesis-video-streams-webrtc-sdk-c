@@ -140,6 +140,10 @@ STATUS putSctpPacket(PSctpSession pSctpSession, PBYTE buf, UINT32 bufLen)
 
     CHK(pSctpSession != NULL, STATUS_NULL_ARG);
 
+    if (ATOMIC_LOAD(&pSctpSession->shutdownStatus) != SCTP_SESSION_ACTIVE) {
+        CHK(FALSE, retStatus);
+    }
+
     MUTEX_LOCK(pSctpSession->lock);
     locked = TRUE;
 
@@ -196,6 +200,10 @@ STATUS sctpSessionWriteMessage(PSctpSession pSctpSession, UINT32 streamId, BOOL 
     BOOL locked = FALSE;
 
     CHK(pSctpSession != NULL && pMessage != NULL, STATUS_NULL_ARG);
+
+    if (ATOMIC_LOAD(&pSctpSession->shutdownStatus) != SCTP_SESSION_ACTIVE) {
+        CHK(FALSE, retStatus);
+    }
 
     MUTEX_LOCK(pSctpSession->lock);
     locked = TRUE;

@@ -1249,6 +1249,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     CHK(pKvsPeerConnection != NULL, retStatus);
 
     startTime = GETTIME();
+    /* Prevent the receive thread from (re)allocating or calling into SCTP
+     * while we are tearing down.  This must happen before iceAgentShutdown
+     * because packets may already be in-flight in the callback chain. */
+    ATOMIC_STORE_BOOL(&pKvsPeerConnection->sctpIsEnabled, FALSE);
+
     /* Shutdown IceAgent first so there is no more incoming packets which can cause
      * SCTP to be allocated again after SCTP is freed. */
     CHK_LOG_ERR(iceAgentShutdown(pKvsPeerConnection->pIceAgent));

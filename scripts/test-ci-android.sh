@@ -74,7 +74,7 @@ done
 # Build environment string
 ENV_VARS="AWS_KVS_LOG_LEVEL=${AWS_KVS_LOG_LEVEL:-2}"
 if [[ "${ASAN}" == "true" ]]; then
-    ENV_VARS="${ENV_VARS} ASAN_OPTIONS=detect_odr_violation=0"
+    ENV_VARS="${ENV_VARS} ASAN_OPTIONS=detect_odr_violation=0:symbolize=0:print_module_map=2"
 fi
 if [[ "${UBSAN}" == "true" ]]; then
     ENV_VARS="${ENV_VARS} UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
@@ -84,11 +84,12 @@ fi
 "${ADB}" -s "${SERIAL}" logcat -c || true
 
 # Run tests, capturing output for post-mortem symbolization
+# exec-out gives unbuffered output but does not propagate exit codes,
+# so we parse the exit code from the on-device script's output.
 TEST_LOG="${BUILD_DIR}/test-output.log"
-set +e
-"${ADB}" -s "${SERIAL}" shell "${ENV_VARS} /data/local/tmp/run-tests-on-device.sh '*'" | tee "${TEST_LOG}"
-TEST_EXIT=${PIPESTATUS[0]}
-set -e
+"${ADB}" -s "${SERIAL}" exec-out "${ENV_VARS} /data/local/tmp/run-tests-on-device.sh '*'" | tee "${TEST_LOG}"
+TEST_EXIT=$(sed -n 's/.*exit code: \([0-9]*\).*/\1/p' "${TEST_LOG}" | tail -1)
+TEST_EXIT=${TEST_EXIT:-0}
 
 # Dump crash logcat on failure
 if [[ ${TEST_EXIT} -ne 0 ]]; then
@@ -103,15 +104,21 @@ if [[ "${ASAN}" == "true" && ${TEST_EXIT} -ne 0 ]]; then
     LLVM_SYMBOLIZER=$(find "${ANDROID_NDK}/toolchains/llvm/prebuilt" -name "llvm-symbolizer" -type f | head -1)
     if [[ -x "${LLVM_SYMBOLIZER}" && -f "${HOST_BINARY}" ]]; then
         echo ""
-        echo "=== Symbolizing stack traces ==="
-        grep -oE 'webrtc_client_test\+0x[0-9a-fA-F]+' "${TEST_LOG}" | sort -u | while read -r match; do
-            offset="0x${match#*+0x}"
-            result=$("${LLVM_SYMBOLIZER}" --obj="${HOST_BINARY}" "${offset}" 2>/dev/null | head -2)
-            if [[ -n "${result}" ]]; then
-                echo "  ${match#*+}  ${result}" | tr '\n' ' '
-                echo ""
+        echo "=== Symbolized stack traces ==="
+        # Replace each (webrtc_client_test+0xOFFSET) with resolved function/file info
+        while IFS= read -r line; do
+            if [[ "${line}" =~ (webrtc_client_test\+0x([0-9a-fA-F]+)) ]]; then
+                offset="0x${BASH_REMATCH[2]}"
+                sym=$("${LLVM_SYMBOLIZER}" --obj="${HOST_BINARY}" "${offset}" 2>/dev/null | head -2 | tr '\n' ' ')
+                if [[ -n "${sym}" ]]; then
+                    echo "${line}  ${sym}"
+                else
+                    echo "${line}"
+                fi
+            else
+                echo "${line}"
             fi
-        done
+        done < <(grep -E '#[0-9]+ 0x|ERROR: AddressSanitizer|SUMMARY:' "${TEST_LOG}")
     else
         echo "WARN: Cannot symbolize — llvm-symbolizer or unstripped binary not found."
     fi
