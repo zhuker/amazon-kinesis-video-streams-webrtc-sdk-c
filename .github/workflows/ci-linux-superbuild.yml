@@ -74,3 +74,54 @@ jobs:
       - name: Cleanup
         if: always()
         run: rm -rf superbuild/build-linux-x64
+
+      # ---------------------------------------------------------------
+      # Sanitizers (native SCTP)
+      # ---------------------------------------------------------------
+
+      - name: ASAN + UBSAN build + test
+        run: |
+          docker run --rm --user $(id -u):$(id -g) \
+            -v $PWD:/src -w /src \
+            -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
+            -e AWS_KVS_LOG_LEVEL \
+            -e ASAN_OPTIONS=detect_odr_violation=0:detect_leaks=1 \
+            -e LSAN_OPTIONS=suppressions=/src/tst/suppressions/LSAN.supp \
+            -e UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+            webrtc-u24 bash -c "
+              export CC=clang CXX=clang++
+              cd superbuild
+              cmake --preset linux-x64 \
+                -DENABLE_NATIVE_SCTP=ON \
+                -DADDRESS_SANITIZER=ON \
+                -DUNDEFINED_BEHAVIOR_SANITIZER=ON
+              cmake --build build-linux-x64 --parallel \$(nproc)
+              cd build-linux-x64/sdk/tst
+              timeout 600 ./webrtc_client_test --gtest_break_on_failure
+            "
+
+      - name: Clean ASAN build
+        if: always()
+        run: rm -rf superbuild/build-linux-x64
+
+      - name: TSAN build + test
+        run: |
+          docker run --rm --user $(id -u):$(id -g) \
+            -v $PWD:/src -w /src \
+            -e CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
+            -e AWS_KVS_LOG_LEVEL \
+            -e TSAN_OPTIONS=second_deadlock_stack=1:halt_on_error=1:suppressions=/src/tst/suppressions/TSAN.supp \
+            webrtc-u24 bash -c "
+              export CC=clang CXX=clang++
+              cd superbuild
+              cmake --preset linux-x64 \
+                -DENABLE_NATIVE_SCTP=ON \
+                -DTHREAD_SANITIZER=ON
+              cmake --build build-linux-x64 --parallel \$(nproc)
+              cd build-linux-x64/sdk/tst
+              timeout 600 ./webrtc_client_test --gtest_break_on_failure
+            "
+
+      - name: Clean TSAN build
+        if: always()
+        run: rm -rf superbuild/build-linux-x64

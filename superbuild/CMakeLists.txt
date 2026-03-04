@@ -219,6 +219,14 @@ set(ENABLE_AWS_SDK_IN_TESTS OFF CACHE BOOL "" FORCE)
 set(OPEN_SRC_INSTALL_PREFIX "${DEPS_INSTALL_PREFIX}" CACHE PATH "" FORCE)
 set(ENABLE_NATIVE_SCTP      ${ENABLE_NATIVE_SCTP}    CACHE BOOL "" FORCE)
 
+# Forward sanitizer options to the SDK
+option(ADDRESS_SANITIZER "Build with AddressSanitizer." OFF)
+option(THREAD_SANITIZER "Build with ThreadSanitizer." OFF)
+option(UNDEFINED_BEHAVIOR_SANITIZER "Build with UndefinedBehaviorSanitizer." OFF)
+set(ADDRESS_SANITIZER            ${ADDRESS_SANITIZER}            CACHE BOOL "" FORCE)
+set(THREAD_SANITIZER             ${THREAD_SANITIZER}             CACHE BOOL "" FORCE)
+set(UNDEFINED_BEHAVIOR_SANITIZER ${UNDEFINED_BEHAVIOR_SANITIZER} CACHE BOOL "" FORCE)
+
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_BINARY_DIR}/sdk")
 
 # Preserve build order: everything that includes OpenSSL headers must wait
