@@ -143,7 +143,9 @@ STATUS generateJSONSafeString(PCHAR, UINT32);
 ////////////////////////////////////////////////////
 // Project internal includes
 ////////////////////////////////////////////////////
+#ifdef ENABLE_KVS_THREADPOOL
 #include "Threadpool/ThreadpoolContext.h"
+#endif
 #include "Crypto/IOBuffer.h"
 #include "Crypto/Crypto.h"
 #include "Crypto/Dtls.h"
