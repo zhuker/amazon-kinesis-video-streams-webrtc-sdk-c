@@ -513,7 +513,7 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
     PRtpPacket pCurPacket = NULL;
 
     CHK(pJitterBuffer != NULL && pJitterBuffer->onFrameDroppedFn != NULL && pJitterBuffer->onFrameReadyFn != NULL, STATUS_NULL_ARG);
-    CHK(pJitterBuffer->tailTimestamp != 0, retStatus);
+    CHK(pJitterBuffer->started, retStatus);
 
     if (pJitterBuffer->tailTimestamp > pJitterBuffer->maxLatency) {
         earliestAllowedTimestamp = pJitterBuffer->tailTimestamp - pJitterBuffer->maxLatency;
