@@ -2398,16 +2398,17 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     constexpr UINT32 NUM_DC_MESSAGES = 120;
     constexpr UINT32 DC_MSG_SIZE = 32;
 
-    // --- Pre-read H.264 video frames ---
-    struct InputVideoFrame {
+    // --- Frame struct used for both input (sent) and received frames ---
+    struct TestFrame {
         std::vector<BYTE> data;
-        UINT32 naluCount;
-        UINT32 naluOffsets[128];
-        UINT32 naluLengths[128];
-        UINT64 sendTime;
-        UINT64 sendPts;
+        UINT64 sendPts = 0;
+        UINT64 receivePts = 0;
+        UINT64 sendTime = 0;
+        UINT64 receiveTime = 0;
     };
-    std::vector<InputVideoFrame> videoInputFrames(NUM_VIDEO_FRAMES);
+
+    // --- Pre-read H.264 video frames ---
+    std::vector<TestFrame> videoInputFrames(NUM_VIDEO_FRAMES);
     {
         std::vector<BYTE> buf(MAX_FRAME_SIZE);
         for (UINT32 i = 0; i < NUM_VIDEO_FRAMES; i++) {
@@ -2416,21 +2417,13 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
                       readFrameData(buf.data(), &sz, i + 1, (PCHAR) "../samples/girH264",
                                     RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
             videoInputFrames[i].data.assign(buf.begin(), buf.begin() + sz);
-            videoInputFrames[i].naluCount = extractNaluInfo(videoInputFrames[i].data.data(), sz,
-                                                            videoInputFrames[i].naluOffsets,
-                                                            videoInputFrames[i].naluLengths, 128);
-            videoInputFrames[i].sendTime = 0;
-            videoInputFrames[i].sendPts = 0;
+            videoInputFrames[i].sendPts = i * (HUNDREDS_OF_NANOS_IN_A_SECOND / 25);
         }
     }
 
     // --- Pre-read Opus audio frames ---
-    struct InputAudioFrame {
-        std::vector<BYTE> data;
-        UINT64 sendTime;
-        UINT64 sendPts;
-    };
-    std::vector<InputAudioFrame> audioInputFrames(NUM_AUDIO_FRAMES);
+    constexpr UINT64 OPUS_FRAME_DURATION = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    std::vector<TestFrame> audioInputFrames(NUM_AUDIO_FRAMES);
     {
         CHAR filePath[MAX_PATH_LEN + 1];
         for (UINT32 i = 0; i < NUM_AUDIO_FRAMES; i++) {
@@ -2439,8 +2432,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
             ASSERT_EQ(STATUS_SUCCESS, readFile(filePath, TRUE, NULL, &size));
             audioInputFrames[i].data.resize((size_t) size);
             ASSERT_EQ(STATUS_SUCCESS, readFile(filePath, TRUE, audioInputFrames[i].data.data(), &size));
-            audioInputFrames[i].sendTime = 0;
-            audioInputFrames[i].sendPts = 0;
+            audioInputFrames[i].sendPts = i * OPUS_FRAME_DURATION;
         }
     }
 
@@ -2466,43 +2458,28 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
                              RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
 
     // --- Received frame storage ---
-    struct ReceivedFrame {
-        std::vector<BYTE> data;
-        UINT64 presentationTs;
-        UINT64 receiveTime;
-    };
     struct RxContext {
-        std::vector<ReceivedFrame> frames;
+        std::vector<TestFrame> frames;
         std::mutex mtx;
+        std::atomic<size_t> count{0};
     };
 
-    // --- Set up video frame receiver on answer peer ---
-    RxContext videoRx;
-    EXPECT_EQ(STATUS_SUCCESS,
-              transceiverOnFrame(answerVideoTransceiver, (UINT64) &videoRx,
-                                 [](UINT64 customData, PFrame pFrame) -> void {
-                                     RxContext* ctx = (RxContext*) customData;
-                                     ReceivedFrame rf;
-                                     rf.data.assign(pFrame->frameData, pFrame->frameData + pFrame->size);
-                                     rf.presentationTs = pFrame->presentationTs;
-                                     rf.receiveTime = GETTIME();
-                                     std::lock_guard<std::mutex> lock(ctx->mtx);
-                                     ctx->frames.push_back(std::move(rf));
-                                 }));
+    // --- Set up frame receivers on answer peer ---
+    auto onFrameReceived = [](UINT64 customData, PFrame pFrame) -> void {
+        RxContext* ctx = (RxContext*) customData;
+        TestFrame rf;
+        rf.data.assign(pFrame->frameData, pFrame->frameData + pFrame->size);
+        rf.receivePts = pFrame->presentationTs;
+        rf.receiveTime = GETTIME();
+        std::lock_guard<std::mutex> lock(ctx->mtx);
+        ctx->frames.push_back(std::move(rf));
+        ctx->count++;
+    };
 
-    // --- Set up audio frame receiver on answer peer ---
+    RxContext videoRx;
+    EXPECT_EQ(STATUS_SUCCESS, transceiverOnFrame(answerVideoTransceiver, (UINT64) &videoRx, onFrameReceived));
     RxContext audioRx;
-    EXPECT_EQ(STATUS_SUCCESS,
-              transceiverOnFrame(answerAudioTransceiver, (UINT64) &audioRx,
-                                 [](UINT64 customData, PFrame pFrame) -> void {
-                                     RxContext* ctx = (RxContext*) customData;
-                                     ReceivedFrame rf;
-                                     rf.data.assign(pFrame->frameData, pFrame->frameData + pFrame->size);
-                                     rf.presentationTs = pFrame->presentationTs;
-                                     rf.receiveTime = GETTIME();
-                                     std::lock_guard<std::mutex> lock(ctx->mtx);
-                                     ctx->frames.push_back(std::move(rf));
-                                 }));
+    EXPECT_EQ(STATUS_SUCCESS, transceiverOnFrame(answerAudioTransceiver, (UINT64) &audioRx, onFrameReceived));
 
     // --- Set up data channel: offer creates, answer receives and sends messages back ---
     PRtcDataChannel pOfferDataChannel = nullptr;
@@ -2512,14 +2489,18 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     dcInit.maxRetransmits.value = 0;
     ASSERT_EQ(STATUS_SUCCESS, createDataChannel(offerPc, (PCHAR) "data", &dcInit, &pOfferDataChannel));
 
-    SIZE_T dcMsgsReceived = 0;
+    RxContext dcRx;
     auto dcOnMessageCallback = [](UINT64 customData, PRtcDataChannel pDataChannel, BOOL isBinary, PBYTE pMsg, UINT32 pMsgLen) {
         UNUSED_PARAM(pDataChannel);
-        if (isBinary && pMsgLen == DC_MSG_SIZE) {
-            ATOMIC_INCREMENT((PSIZE_T) customData);
-        }
+        if (!isBinary || pMsgLen != DC_MSG_SIZE) return;
+        RxContext* ctx = (RxContext*) customData;
+        TestFrame rf;
+        rf.data.assign(pMsg, pMsg + pMsgLen);
+        std::lock_guard<std::mutex> lock(ctx->mtx);
+        ctx->frames.push_back(std::move(rf));
+        ctx->count++;
     };
-    EXPECT_EQ(STATUS_SUCCESS, dataChannelOnMessage(pOfferDataChannel, (UINT64) &dcMsgsReceived, dcOnMessageCallback));
+    EXPECT_EQ(STATUS_SUCCESS, dataChannelOnMessage(pOfferDataChannel, (UINT64) &dcRx, dcOnMessageCallback));
 
     SIZE_T answerRemoteDc = 0;
     auto onDataChannelCallback = [](UINT64 customData, PRtcDataChannel pRtcDataChannel) {
@@ -2538,48 +2519,39 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     ASSERT_TRUE(pAnswerRemoteDc != nullptr);
 
     // --- Answer peer sends DC messages back to offer peer ---
-    BYTE dcMsgPayload[DC_MSG_SIZE];
-    MEMSET(dcMsgPayload, 0xCC, DC_MSG_SIZE);
     std::thread dcSenderThread([&]() {
+        BYTE dcMsgPayload[DC_MSG_SIZE];
         for (UINT32 i = 0; i < NUM_DC_MESSAGES; i++) {
+            MEMSET(dcMsgPayload, (BYTE)(i & 0xFF), DC_MSG_SIZE);
             dataChannelSend(pAnswerRemoteDc, TRUE, dcMsgPayload, DC_MSG_SIZE);
             THREAD_SLEEP(8 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND); // ~120 msg/sec
         }
     });
 
     // --- Offer peer sends video frames ---
-    Frame txVideoFrame;
-    MEMSET(&txVideoFrame, 0x00, SIZEOF(Frame));
-    txVideoFrame.presentationTs = 0;
-
     std::thread videoSenderThread([&]() {
+        Frame txFrame{};
         for (UINT32 i = 0; i < NUM_VIDEO_FRAMES; i++) {
-            txVideoFrame.frameData = videoInputFrames[i].data.data();
-            txVideoFrame.size = (UINT32) videoInputFrames[i].data.size();
-            videoInputFrames[i].sendPts = txVideoFrame.presentationTs;
+            txFrame.frameData = videoInputFrames[i].data.data();
+            txFrame.size = (UINT32) videoInputFrames[i].data.size();
+            txFrame.presentationTs = videoInputFrames[i].sendPts;
             videoInputFrames[i].sendTime = GETTIME();
-            EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerVideoTransceiver, &txVideoFrame));
-            DLOGI("video frame %u sent, pts=%llu size=%u", i, txVideoFrame.presentationTs, txVideoFrame.size);
-            txVideoFrame.presentationTs += HUNDREDS_OF_NANOS_IN_A_SECOND / 25;
+            EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerVideoTransceiver, &txFrame));
+            DLOGI("video frame %u sent, pts=%llu size=%u", i, txFrame.presentationTs, txFrame.size);
             THREAD_SLEEP(5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
         }
     });
 
     // --- Offer peer sends audio frames ---
-    Frame txAudioFrame;
-    MEMSET(&txAudioFrame, 0x00, SIZEOF(Frame));
-    txAudioFrame.presentationTs = 0;
-    constexpr UINT64 OPUS_FRAME_DURATION = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-
     std::thread audioSenderThread([&]() {
+        Frame txFrame{};
         for (UINT32 i = 0; i < NUM_AUDIO_FRAMES; i++) {
-            txAudioFrame.frameData = audioInputFrames[i].data.data();
-            txAudioFrame.size = (UINT32) audioInputFrames[i].data.size();
-            audioInputFrames[i].sendPts = txAudioFrame.presentationTs;
+            txFrame.frameData = audioInputFrames[i].data.data();
+            txFrame.size = (UINT32) audioInputFrames[i].data.size();
+            txFrame.presentationTs = audioInputFrames[i].sendPts;
             audioInputFrames[i].sendTime = GETTIME();
-            EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerAudioTransceiver, &txAudioFrame));
-            DLOGI("audio frame %u sent, pts=%llu size=%u", i, txAudioFrame.presentationTs, txAudioFrame.size);
-            txAudioFrame.presentationTs += OPUS_FRAME_DURATION;
+            EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerAudioTransceiver, &txFrame));
+            DLOGI("audio frame %u sent, pts=%llu size=%u", i, txFrame.presentationTs, txFrame.size);
             THREAD_SLEEP(5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
         }
     });
@@ -2589,16 +2561,12 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     audioSenderThread.join();
 
     // --- Drain: wait for all frames and messages to arrive ---
-    auto rxCount = [](RxContext& rx) -> SIZE_T {
-        std::lock_guard<std::mutex> lock(rx.mtx);
-        return rx.frames.size();
-    };
-    for (INT32 i = 0; i < 5000 &&
-         (ATOMIC_LOAD(&dcMsgsReceived) < NUM_DC_MESSAGES ||
-          rxCount(videoRx) < NUM_VIDEO_FRAMES ||
-          rxCount(audioRx) < NUM_AUDIO_FRAMES);
+    for (INT32 i = 0; i < 50 &&
+         (dcRx.count < NUM_DC_MESSAGES ||
+          videoRx.count < NUM_VIDEO_FRAMES ||
+          audioRx.count < NUM_AUDIO_FRAMES);
          i++) {
-        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
     closePeerConnection(offerPc);
@@ -2607,8 +2575,19 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     freePeerConnection(&answerPc);
 
     // --- Verify data channel messages ---
-    EXPECT_EQ((SIZE_T) NUM_DC_MESSAGES, ATOMIC_LOAD(&dcMsgsReceived))
-        << "Expected " << NUM_DC_MESSAGES << " data channel messages but got " << ATOMIC_LOAD(&dcMsgsReceived);
+    EXPECT_EQ((SIZE_T) NUM_DC_MESSAGES, dcRx.frames.size())
+        << "Expected " << NUM_DC_MESSAGES << " DC messages but got " << dcRx.frames.size();
+    for (UINT32 i = 0; i < dcRx.frames.size() && i < NUM_DC_MESSAGES; i++) {
+        const auto& msg = dcRx.frames[i];
+        EXPECT_EQ((UINT32) DC_MSG_SIZE, (UINT32) msg.data.size()) << "DC message " << i << " size mismatch";
+        BYTE expectedFill = (BYTE)(i & 0xFF);
+        BYTE expectedPayload[DC_MSG_SIZE];
+        MEMSET(expectedPayload, expectedFill, DC_MSG_SIZE);
+        if (msg.data.size() == DC_MSG_SIZE) {
+            EXPECT_EQ(0, MEMCMP(msg.data.data(), expectedPayload, DC_MSG_SIZE))
+                << "DC message " << i << " content mismatch (expected fill 0x" << std::hex << (int) expectedFill << std::dec << ")";
+        }
+    }
 
     // --- Verify video frame count ---
     EXPECT_EQ((SIZE_T) NUM_VIDEO_FRAMES, videoRx.frames.size())
@@ -2617,16 +2596,17 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     // --- Verify video frame content (NALU-level comparison) ---
     for (UINT32 i = 0; i < videoRx.frames.size() && i < NUM_VIDEO_FRAMES; i++) {
         const auto& rx = videoRx.frames[i];
-        EXPECT_EQ(videoInputFrames[i].sendPts, rx.presentationTs) << "Video frame " << i << " pts mismatch";
-        UINT32 rxOffsets[128], rxLengths[128];
-        UINT32 rxCount = extractNaluInfo((PBYTE) rx.data.data(), (UINT32) rx.data.size(), rxOffsets, rxLengths, 128);
         const auto& expected = videoInputFrames[i];
-        EXPECT_EQ(expected.naluCount, rxCount) << "Video frame " << i << " NALU count mismatch";
-        if (rxCount == expected.naluCount) {
-            for (UINT32 j = 0; j < rxCount; j++) {
-                EXPECT_EQ(expected.naluLengths[j], rxLengths[j]) << "Video frame " << i << " NALU " << j << " length mismatch";
-                if (rxLengths[j] == expected.naluLengths[j]) {
-                    EXPECT_EQ(0, MEMCMP(rx.data.data() + rxOffsets[j], expected.data.data() + expected.naluOffsets[j], rxLengths[j]))
+        EXPECT_EQ(expected.sendPts, rx.receivePts) << "Video frame " << i << " pts mismatch";
+        UINT32 expectedOffsets[128], expectedLengths[128], rxOffsets[128], rxLengths[128];
+        UINT32 expectedNaluCount = extractNaluInfo((PBYTE) expected.data.data(), (UINT32) expected.data.size(), expectedOffsets, expectedLengths, 128);
+        UINT32 rxNaluCount = extractNaluInfo((PBYTE) rx.data.data(), (UINT32) rx.data.size(), rxOffsets, rxLengths, 128);
+        EXPECT_EQ(expectedNaluCount, rxNaluCount) << "Video frame " << i << " NALU count mismatch";
+        if (rxNaluCount == expectedNaluCount) {
+            for (UINT32 j = 0; j < rxNaluCount; j++) {
+                EXPECT_EQ(expectedLengths[j], rxLengths[j]) << "Video frame " << i << " NALU " << j << " length mismatch";
+                if (rxLengths[j] == expectedLengths[j]) {
+                    EXPECT_EQ(0, MEMCMP(rx.data.data() + rxOffsets[j], expected.data.data() + expectedOffsets[j], rxLengths[j]))
                         << "Video frame " << i << " NALU " << j << " content mismatch";
                 }
             }
@@ -2638,7 +2618,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         << "Expected " << NUM_AUDIO_FRAMES << " audio frames but got " << audioRx.frames.size();
     for (UINT32 i = 0; i < audioRx.frames.size() && i < NUM_AUDIO_FRAMES; i++) {
         const auto& rx = audioRx.frames[i];
-        EXPECT_EQ(audioInputFrames[i].sendPts, rx.presentationTs) << "Audio frame " << i << " pts mismatch";
+        EXPECT_EQ(audioInputFrames[i].sendPts, rx.receivePts) << "Audio frame " << i << " pts mismatch";
         EXPECT_EQ((UINT32) audioInputFrames[i].data.size(), (UINT32) rx.data.size()) << "Audio frame " << i << " size mismatch";
         if (rx.data.size() == audioInputFrames[i].data.size()) {
             EXPECT_EQ(0, MEMCMP(rx.data.data(), audioInputFrames[i].data.data(), rx.data.size()))
