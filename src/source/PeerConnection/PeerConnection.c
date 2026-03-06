@@ -1998,8 +1998,11 @@ STATUS addTransceiver(PRtcPeerConnection pPeerConnection, PRtcMediaStreamTrack p
     // TODO: Add ssrc duplicate detection here not only relying on RAND()
     CHK_STATUS(createKvsRtpTransceiver(direction, pKvsPeerConnection, ssrc, rtxSsrc, pRtcMediaStreamTrack, NULL, pRtcMediaStreamTrack->codec,
                                        &pKvsRtpTransceiver));
+    // Audio codecs (Opus per RFC 7587, G.711) never fragment frames across RTP packets
+    BOOL alwaysSinglePacketFrames = (pRtcMediaStreamTrack->codec == RTC_CODEC_OPUS || pRtcMediaStreamTrack->codec == RTC_CODEC_MULAW ||
+                                     pRtcMediaStreamTrack->codec == RTC_CODEC_ALAW);
     CHK_STATUS(createJitterBuffer(onFrameReadyFunc, onFrameDroppedFunc, depayFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY, clockRate,
-                                  (UINT64) pKvsRtpTransceiver, &pJitterBuffer));
+                                  (UINT64) pKvsRtpTransceiver, alwaysSinglePacketFrames, &pJitterBuffer));
     CHK_STATUS(kvsRtpTransceiverSetJitterBuffer(pKvsRtpTransceiver, pJitterBuffer));
 
     // after pKvsRtpTransceiver is successfully created, jitterBuffer will be freed by pKvsRtpTransceiver.

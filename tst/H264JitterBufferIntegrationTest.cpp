@@ -11,10 +11,10 @@ namespace kinesis {
 namespace video {
 namespace webrtcclient {
 
-#define H264_INTEGRATION_TEST_CLOCK_RATE 90000
-#define H264_INTEGRATION_TEST_MAX_LATENCY (5000 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
-#define H264_INTEGRATION_TEST_MTU 1200
-#define H264_INTEGRATION_TEST_SSRC 0x12345678
+#define H264_INTEGRATION_TEST_CLOCK_RATE   90000
+#define H264_INTEGRATION_TEST_MAX_LATENCY  (5000 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND)
+#define H264_INTEGRATION_TEST_MTU          1200
+#define H264_INTEGRATION_TEST_SSRC         0x12345678
 #define H264_INTEGRATION_TEST_PAYLOAD_TYPE 96
 
 // Helper to extract NAL unit info from Annex-B formatted H264 data
@@ -57,7 +57,7 @@ static UINT32 extractNaluInfoForTest(PBYTE data, UINT32 dataLen, PUINT32 naluOff
 }
 
 class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
-protected:
+  protected:
     // Storage for original frames (Annex-B format with start codes)
     std::vector<std::vector<BYTE>> mOriginalFrames;
 
@@ -71,10 +71,10 @@ protected:
         PRtpPacket pPacket;
         UINT32 frameIndex;
         UINT32 timestamp;
-        UINT16 sequenceNumber;  // Saved separately since pPacket may be freed
-        UINT32 payloadLength;   // RTP payload size
-        BYTE nalIndicator;      // First byte of payload (NAL type indicator)
-        BYTE fuHeader;          // Second byte for FU-A packets (contains S/E bits)
+        UINT16 sequenceNumber; // Saved separately since pPacket may be freed
+        UINT32 payloadLength;  // RTP payload size
+        BYTE nalIndicator;     // First byte of payload (NAL type indicator)
+        BYTE fuHeader;         // Second byte for FU-A packets (contains S/E bits)
     };
     std::vector<RtpPacketInfo> mAllPackets;
 
@@ -132,14 +132,9 @@ protected:
 
     void initializeH264JitterBuffer()
     {
-        ASSERT_EQ(STATUS_SUCCESS, createJitterBuffer(
-            h264FrameReadyCallback,
-            h264FrameDroppedCallback,
-            depayH264FromRtpPayload,
-            H264_INTEGRATION_TEST_MAX_LATENCY,
-            mClockRate,
-            (UINT64) this,
-            &mJitterBuffer));
+        ASSERT_EQ(STATUS_SUCCESS,
+                  createJitterBuffer(h264FrameReadyCallback, h264FrameDroppedCallback, depayH264FromRtpPayload, H264_INTEGRATION_TEST_MAX_LATENCY,
+                                     mClockRate, (UINT64) this, FALSE, &mJitterBuffer));
     }
 
     void loadFramesFromSamples(const char* sampleFolder, UINT32 numFrames)
@@ -149,9 +144,9 @@ protected:
 
         DLOGI("Loading %u frames from %s", numFrames, sampleFolder);
         for (UINT32 i = 1; i <= numFrames; i++) {
-            ASSERT_EQ(STATUS_SUCCESS, readFrameData(
-                frameBuffer, &frameSize, i, (PCHAR) sampleFolder,
-                RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+            ASSERT_EQ(STATUS_SUCCESS,
+                      readFrameData(frameBuffer, &frameSize, i, (PCHAR) sampleFolder,
+                                    RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
             mOriginalFrames.push_back(std::vector<BYTE>(frameBuffer, frameBuffer + frameSize));
         }
         DLOGI("Loaded %zu frames", mOriginalFrames.size());
@@ -171,9 +166,7 @@ protected:
         UINT32 i = 0;
 
         // Get required sizes
-        CHK_STATUS(createPayloadForH264(mMtu, frameData, frameSize, NULL,
-                                        &payloadArray.payloadLength, NULL,
-                                        &payloadArray.payloadSubLenSize));
+        CHK_STATUS(createPayloadForH264(mMtu, frameData, frameSize, NULL, &payloadArray.payloadLength, NULL, &payloadArray.payloadSubLenSize));
 
         // Allocate buffers
         payloadArray.payloadBuffer = (PBYTE) MEMALLOC(payloadArray.payloadLength);
@@ -181,16 +174,14 @@ protected:
         CHK(payloadArray.payloadBuffer != NULL && payloadArray.payloadSubLength != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
         // Fill payload data
-        CHK_STATUS(createPayloadForH264(mMtu, frameData, frameSize,
-                                        payloadArray.payloadBuffer, &payloadArray.payloadLength,
+        CHK_STATUS(createPayloadForH264(mMtu, frameData, frameSize, payloadArray.payloadBuffer, &payloadArray.payloadLength,
                                         payloadArray.payloadSubLength, &payloadArray.payloadSubLenSize));
 
         // Create RTP packets
         pPacketList = (PRtpPacket) MEMALLOC(payloadArray.payloadSubLenSize * SIZEOF(RtpPacket));
         CHK(pPacketList != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
-        CHK_STATUS(constructRtpPackets(&payloadArray, H264_INTEGRATION_TEST_PAYLOAD_TYPE, *pSeqNum,
-                                       timestamp, H264_INTEGRATION_TEST_SSRC,
+        CHK_STATUS(constructRtpPackets(&payloadArray, H264_INTEGRATION_TEST_PAYLOAD_TYPE, *pSeqNum, timestamp, H264_INTEGRATION_TEST_SSRC,
                                        pPacketList, payloadArray.payloadSubLenSize));
 
         // Store packet info for later use (create copies that own their memory)
@@ -256,9 +247,7 @@ protected:
             STATUS status = jitterBufferPush(mJitterBuffer, info.pPacket, &discarded);
             ASSERT_EQ(STATUS_SUCCESS, status) << "Failed to push packet " << i;
             if (discarded) {
-                DLOGW("Packet %zu (seq=%u, ts=%u) was DISCARDED",
-                      i, info.pPacket ? info.pPacket->header.sequenceNumber : 0,
-                      info.timestamp);
+                DLOGW("Packet %zu (seq=%u, ts=%u) was DISCARDED", i, info.pPacket ? info.pPacket->header.sequenceNumber : 0, info.timestamp);
             } else {
                 mTotalPacketsSent++;
             }
@@ -288,28 +277,21 @@ protected:
         UINT32 origNaluOffsets[MAX_NALUS], origNaluLengths[MAX_NALUS];
         UINT32 recvNaluOffsets[MAX_NALUS], recvNaluLengths[MAX_NALUS];
 
-        UINT32 origNaluCount = extractNaluInfoForTest(
-            mOriginalFrames[originalIndex].data(),
-            (UINT32) mOriginalFrames[originalIndex].size(),
-            origNaluOffsets, origNaluLengths, MAX_NALUS);
+        UINT32 origNaluCount = extractNaluInfoForTest(mOriginalFrames[originalIndex].data(), (UINT32) mOriginalFrames[originalIndex].size(),
+                                                      origNaluOffsets, origNaluLengths, MAX_NALUS);
 
-        UINT32 recvNaluCount = extractNaluInfoForTest(
-            mReceivedFrames[receivedIndex].data(),
-            (UINT32) mReceivedFrames[receivedIndex].size(),
-            recvNaluOffsets, recvNaluLengths, MAX_NALUS);
+        UINT32 recvNaluCount = extractNaluInfoForTest(mReceivedFrames[receivedIndex].data(), (UINT32) mReceivedFrames[receivedIndex].size(),
+                                                      recvNaluOffsets, recvNaluLengths, MAX_NALUS);
 
-        EXPECT_EQ(origNaluCount, recvNaluCount)
-            << "NAL count mismatch for frame " << originalIndex;
+        EXPECT_EQ(origNaluCount, recvNaluCount) << "NAL count mismatch for frame " << originalIndex;
 
         for (UINT32 i = 0; i < MIN(origNaluCount, recvNaluCount); i++) {
-            EXPECT_EQ(origNaluLengths[i], recvNaluLengths[i])
-                << "NAL " << i << " length mismatch for frame " << originalIndex;
+            EXPECT_EQ(origNaluLengths[i], recvNaluLengths[i]) << "NAL " << i << " length mismatch for frame " << originalIndex;
 
             if (origNaluLengths[i] == recvNaluLengths[i]) {
-                EXPECT_EQ(0, MEMCMP(
-                    mOriginalFrames[originalIndex].data() + origNaluOffsets[i],
-                    mReceivedFrames[receivedIndex].data() + recvNaluOffsets[i],
-                    origNaluLengths[i]))
+                EXPECT_EQ(0,
+                          MEMCMP(mOriginalFrames[originalIndex].data() + origNaluOffsets[i],
+                                 mReceivedFrames[receivedIndex].data() + recvNaluOffsets[i], origNaluLengths[i]))
                     << "NAL " << i << " data mismatch for frame " << originalIndex;
             }
         }
@@ -334,13 +316,7 @@ protected:
             return STATUS_SUCCESS; // Don't fail the jitter buffer operation
         }
 
-        STATUS status = jitterBufferFillFrameData(
-            pTest->mJitterBuffer,
-            frameBuffer,
-            frameSize,
-            &filledSize,
-            startIndex,
-            endIndex);
+        STATUS status = jitterBufferFillFrameData(pTest->mJitterBuffer, frameBuffer, frameSize, &filledSize, startIndex, endIndex);
 
         if (STATUS_SUCCEEDED(status) && filledSize == frameSize) {
             pTest->mReceivedFrames.push_back(std::vector<BYTE>(frameBuffer, frameBuffer + frameSize));
@@ -413,7 +389,8 @@ protected:
     // Calculate expected frame loss rate given packet loss rate
     DOUBLE calculateExpectedFrameLoss(DOUBLE packetLossRate) const
     {
-        if (mTotalFramesSent == 0) return 0.0;
+        if (mTotalFramesSent == 0)
+            return 0.0;
         DOUBLE avgPacketsPerFrame = (DOUBLE) mAllPackets.size() / mTotalFramesSent;
         return 1.0 - pow(1.0 - packetLossRate, avgPacketsPerFrame);
     }
@@ -424,10 +401,10 @@ protected:
     // - framesPartiallyDelivered: SOME packets dropped, but first remaining IS a start → delivered (corrupted)
     // - framesIntact: NO packets dropped → should be received
     struct FrameLossAnalysis {
-        UINT32 framesFullyDropped;        // All packets lost - invisible
-        UINT32 framesPartiallyDropped;    // Some packets lost, will be dropped by jitter buffer
-        UINT32 framesPartiallyDelivered;  // Some packets lost, but still delivered (corrupted)
-        UINT32 framesIntact;              // No packets lost - should be received
+        UINT32 framesFullyDropped;       // All packets lost - invisible
+        UINT32 framesPartiallyDropped;   // Some packets lost, will be dropped by jitter buffer
+        UINT32 framesPartiallyDelivered; // Some packets lost, but still delivered (corrupted)
+        UINT32 framesIntact;             // No packets lost - should be received
     };
 
     // Check if a packet is a "starting" packet for H264
@@ -511,13 +488,13 @@ protected:
     void analyzeDiscrepancy(const std::set<UINT32>& dropIndices) const
     {
         // Build map of timestamp -> frame status (expected)
-        std::map<UINT32, std::string> expectedStatus;  // "intact", "partial", "full"
+        std::map<UINT32, std::string> expectedStatus; // "intact", "partial", "full"
         std::map<UINT32, UINT32> timestampToFrameIndex;
 
         // Count packets per frame and dropped packets per frame
         std::map<UINT32, UINT32> packetsPerFrame;
         std::map<UINT32, UINT32> droppedPacketsPerFrame;
-        std::map<UINT32, UINT32> frameTimestamps;  // frameIndex -> timestamp
+        std::map<UINT32, UINT32> frameTimestamps; // frameIndex -> timestamp
 
         for (UINT32 i = 0; i < mAllPackets.size(); i++) {
             UINT32 frameIdx = mAllPackets[i].frameIndex;
@@ -549,8 +526,7 @@ protected:
         std::set<UINT32> actuallyReceivedTimestamps(mReceivedFrameTimestamps.begin(), mReceivedFrameTimestamps.end());
         std::set<UINT32> actuallyDroppedTimestamps(mDroppedFrameTimestamps.begin(), mDroppedFrameTimestamps.end());
 
-        DLOGI("Received timestamps count: %zu, Dropped timestamps count: %zu",
-              actuallyReceivedTimestamps.size(), actuallyDroppedTimestamps.size());
+        DLOGI("Received timestamps count: %zu, Dropped timestamps count: %zu", actuallyReceivedTimestamps.size(), actuallyDroppedTimestamps.size());
 
         // Find discrepancies
         DLOGI("=== DISCREPANCY ANALYSIS ===");
@@ -567,15 +543,16 @@ protected:
                 for (UINT32 i = 0; i < mAllPackets.size(); i++) {
                     if (mAllPackets[i].frameIndex == frameIdx) {
                         BYTE nalType = mAllPackets[i].nalIndicator & 0x1F;
-                        const char* nalTypeName = (nalType == 24) ? "STAP-A" :
-                                                  (nalType == 28) ? "FU-A" :
-                                                  (nalType == 1) ? "slice" :
-                                                  (nalType == 5) ? "IDR" :
-                                                  (nalType == 7) ? "SPS" :
-                                                  (nalType == 8) ? "PPS" :
-                                                  (nalType == 9) ? "AUD" : "other";
-                        DLOGI("  Frame %u: pktIdx=%u, seq=%u, size=%u, nalType=%u (%s)",
-                              frameIdx, i, mAllPackets[i].sequenceNumber, mAllPackets[i].payloadLength, nalType, nalTypeName);
+                        const char* nalTypeName = (nalType == 24) ? "STAP-A"
+                            : (nalType == 28)                     ? "FU-A"
+                            : (nalType == 1)                      ? "slice"
+                            : (nalType == 5)                      ? "IDR"
+                            : (nalType == 7)                      ? "SPS"
+                            : (nalType == 8)                      ? "PPS"
+                            : (nalType == 9)                      ? "AUD"
+                                                                  : "other";
+                        DLOGI("  Frame %u: pktIdx=%u, seq=%u, size=%u, nalType=%u (%s)", frameIdx, i, mAllPackets[i].sequenceNumber,
+                              mAllPackets[i].payloadLength, nalType, nalTypeName);
                     }
                 }
                 // Print adjacent frames
@@ -584,8 +561,8 @@ protected:
                     for (UINT32 i = 0; i < mAllPackets.size(); i++) {
                         if (mAllPackets[i].frameIndex == frameIdx - 1) {
                             bool pktDropped = dropIndices.find(i) != dropIndices.end();
-                            DLOGI("    pktIdx=%u, seq=%u, ts=%u, dropped=%s",
-                                  i, mAllPackets[i].sequenceNumber, mAllPackets[i].timestamp, pktDropped ? "YES" : "NO");
+                            DLOGI("    pktIdx=%u, seq=%u, ts=%u, dropped=%s", i, mAllPackets[i].sequenceNumber, mAllPackets[i].timestamp,
+                                  pktDropped ? "YES" : "NO");
                         }
                     }
                 }
@@ -606,16 +583,16 @@ protected:
                         BYTE nalType = mAllPackets[i].nalIndicator & 0x1F;
                         BYTE fuStart = (mAllPackets[i].fuHeader >> 7) & 1;
                         BYTE fuEnd = (mAllPackets[i].fuHeader >> 6) & 1;
-                        const char* nalTypeName = (nalType == 24) ? "STAP-A" :
-                                                  (nalType == 28) ? "FU-A" :
-                                                  (nalType == 1) ? "slice" :
-                                                  (nalType == 5) ? "IDR" :
-                                                  (nalType == 7) ? "SPS" :
-                                                  (nalType == 8) ? "PPS" :
-                                                  (nalType == 9) ? "AUD" : "other";
-                        DLOGI("  Packet idx=%u, seq=%u, size=%u, nalType=%u (%s), fuStart=%u, fuEnd=%u, dropped=%s",
-                              i, mAllPackets[i].sequenceNumber, mAllPackets[i].payloadLength,
-                              nalType, nalTypeName, fuStart, fuEnd, pktDropped ? "YES" : "NO");
+                        const char* nalTypeName = (nalType == 24) ? "STAP-A"
+                            : (nalType == 28)                     ? "FU-A"
+                            : (nalType == 1)                      ? "slice"
+                            : (nalType == 5)                      ? "IDR"
+                            : (nalType == 7)                      ? "SPS"
+                            : (nalType == 8)                      ? "PPS"
+                            : (nalType == 9)                      ? "AUD"
+                                                                  : "other";
+                        DLOGI("  Packet idx=%u, seq=%u, size=%u, nalType=%u (%s), fuStart=%u, fuEnd=%u, dropped=%s", i, mAllPackets[i].sequenceNumber,
+                              mAllPackets[i].payloadLength, nalType, nalTypeName, fuStart, fuEnd, pktDropped ? "YES" : "NO");
                     }
                 }
                 // Also print packets for adjacent frames
@@ -624,9 +601,8 @@ protected:
                     for (UINT32 i = 0; i < mAllPackets.size(); i++) {
                         if (mAllPackets[i].frameIndex == frameIdx - 1) {
                             BYTE adjNalType = mAllPackets[i].nalIndicator & 0x1F;
-                            DLOGI("    Packet idx=%u, seq=%u, size=%u, nalType=%u, ts=%u",
-                                  i, mAllPackets[i].sequenceNumber, mAllPackets[i].payloadLength,
-                                  adjNalType, mAllPackets[i].timestamp);
+                            DLOGI("    Packet idx=%u, seq=%u, size=%u, nalType=%u, ts=%u", i, mAllPackets[i].sequenceNumber,
+                                  mAllPackets[i].payloadLength, adjNalType, mAllPackets[i].timestamp);
                         }
                     }
                 }
@@ -634,8 +610,7 @@ protected:
                 for (UINT32 i = 0; i < mAllPackets.size(); i++) {
                     if (mAllPackets[i].frameIndex == frameIdx + 1) {
                         BYTE adjNalType = mAllPackets[i].nalIndicator & 0x1F;
-                        DLOGI("    Packet idx=%u, seq=%u, size=%u, nalType=%u, ts=%u",
-                              i, mAllPackets[i].sequenceNumber, mAllPackets[i].payloadLength,
+                        DLOGI("    Packet idx=%u, seq=%u, size=%u, nalType=%u, ts=%u", i, mAllPackets[i].sequenceNumber, mAllPackets[i].payloadLength,
                               adjNalType, mAllPackets[i].timestamp);
                     }
                 }
@@ -655,10 +630,10 @@ protected:
     UINT32 countIntactFramesDropped(const std::set<UINT32>& dropIndices) const
     {
         // Build map of timestamp -> expected status
-        std::map<UINT32, bool> frameIsIntact;  // timestamp -> true if intact
+        std::map<UINT32, bool> frameIsIntact; // timestamp -> true if intact
         std::map<UINT32, UINT32> packetsPerFrame;
         std::map<UINT32, UINT32> droppedPacketsPerFrame;
-        std::map<UINT32, UINT32> frameTimestamps;  // frameIndex -> timestamp
+        std::map<UINT32, UINT32> frameTimestamps; // frameIndex -> timestamp
 
         for (UINT32 i = 0; i < mAllPackets.size(); i++) {
             UINT32 frameIdx = mAllPackets[i].frameIndex;
@@ -689,9 +664,7 @@ protected:
     }
 
     // Save benchmark results to file for comparison
-    void saveBenchmarkResults(const char* filename, const char* testName,
-                              const FrameLossAnalysis& analysis,
-                              UINT32 intactDropped) const
+    void saveBenchmarkResults(const char* filename, const char* testName, const FrameLossAnalysis& analysis, UINT32 intactDropped) const
     {
         FILE* fp = fopen(filename, "a");
         if (fp != NULL) {
@@ -722,7 +695,7 @@ protected:
     static DropGenerator randomLoss(DOUBLE rate)
     {
         return [rate](UINT32 totalPackets) {
-            UINT32 seed = (UINT32)(rate * 100000);
+            UINT32 seed = (UINT32) (rate * 100000);
             std::set<UINT32> dropIndices;
             std::mt19937 gen(seed);
             std::uniform_real_distribution<> dis(0.0, 1.0);
@@ -772,7 +745,7 @@ protected:
     {
         return [p, r, pLossGood, pLossBad](UINT32 totalPackets) {
             std::set<UINT32> dropIndices;
-            std::mt19937 gen(42);  // Fixed seed for reproducibility
+            std::mt19937 gen(42); // Fixed seed for reproducibility
             std::uniform_real_distribution<> dis(0.0, 1.0);
 
             bool inBadState = false;
@@ -780,11 +753,11 @@ protected:
                 // State transition
                 if (inBadState) {
                     if (dis(gen) < r) {
-                        inBadState = false;  // Bad -> Good
+                        inBadState = false; // Bad -> Good
                     }
                 } else {
                     if (dis(gen) < p) {
-                        inBadState = true;   // Good -> Bad
+                        inBadState = true; // Good -> Bad
                     }
                 }
 
@@ -824,9 +797,8 @@ protected:
 
         // Analyze expected frame loss based on which specific packets are dropped
         auto analysis = analyzeFrameLoss(dropIndices);
-        DLOGI("Frame loss analysis: fullyDropped=%u, partiallyDropped=%u, partiallyDelivered=%u, intact=%u",
-              analysis.framesFullyDropped, analysis.framesPartiallyDropped,
-              analysis.framesPartiallyDelivered, analysis.framesIntact);
+        DLOGI("Frame loss analysis: fullyDropped=%u, partiallyDropped=%u, partiallyDelivered=%u, intact=%u", analysis.framesFullyDropped,
+              analysis.framesPartiallyDropped, analysis.framesPartiallyDelivered, analysis.framesIntact);
 
         // Build send indices: optionally reordered, with dropped packets removed
         std::vector<UINT32> sendIndices;
@@ -854,11 +826,8 @@ protected:
         freeJitterBuffer(&mJitterBuffer);
         mJitterBuffer = NULL;
 
-        DLOGI("reorder=%u: received=%u (flush added %u), dropped=%u (flush added %u), packets dropped=%zu",
-              maxReorderDistance,
-              mTotalFramesReceived, mTotalFramesReceived - receivedBeforeFlush,
-              mTotalFramesDropped, mTotalFramesDropped - droppedBeforeFlush,
-              dropIndices.size());
+        DLOGI("reorder=%u: received=%u (flush added %u), dropped=%u (flush added %u), packets dropped=%zu", maxReorderDistance, mTotalFramesReceived,
+              mTotalFramesReceived - receivedBeforeFlush, mTotalFramesDropped, mTotalFramesDropped - droppedBeforeFlush, dropIndices.size());
 
         // Count intact frames that were incorrectly dropped
         mIntactFramesDropped = countIntactFramesDropped(dropIndices);
@@ -871,23 +840,19 @@ protected:
         // FIX VERIFIED: No intact frames should be dropped
         // The per-frame continuity tracking ensures that intact frames following
         // dropped frames are correctly delivered.
-        EXPECT_EQ(0u, mIntactFramesDropped)
-            << "Intact frames were incorrectly dropped - fix may have regressed";
+        EXPECT_EQ(0u, mIntactFramesDropped) << "Intact frames were incorrectly dropped - fix may have regressed";
 
         // Upper bound: can't receive more than intact + partiallyDelivered
         UINT32 maxExpectedReceived = analysis.framesIntact + analysis.framesPartiallyDelivered;
-        EXPECT_LE(mTotalFramesReceived, maxExpectedReceived)
-            << "More frames received than possible";
+        EXPECT_LE(mTotalFramesReceived, maxExpectedReceived) << "More frames received than possible";
 
         // All frames must be accounted for: received + dropped = NUM_FRAMES - fullyDropped
         // (fullyDropped frames never reach the jitter buffer because all their packets were lost)
         UINT32 accountedFrames = mTotalFramesReceived + mTotalFramesDropped;
         UINT32 expectedAccountedFrames = numFrames - analysis.framesFullyDropped;
-        DLOGI("Frame accounting: received=%u + dropped=%u = %u, expected=%u (NUM_FRAMES=%u - fullyDropped=%u)",
-              mTotalFramesReceived, mTotalFramesDropped, accountedFrames, expectedAccountedFrames,
-              numFrames, analysis.framesFullyDropped);
-        EXPECT_EQ(expectedAccountedFrames, accountedFrames)
-            << "Frame accounting mismatch: some frames are unaccounted for";
+        DLOGI("Frame accounting: received=%u + dropped=%u = %u, expected=%u (NUM_FRAMES=%u - fullyDropped=%u)", mTotalFramesReceived,
+              mTotalFramesDropped, accountedFrames, expectedAccountedFrames, numFrames, analysis.framesFullyDropped);
+        EXPECT_EQ(expectedAccountedFrames, accountedFrames) << "Frame accounting mismatch: some frames are unaccounted for";
     }
 };
 
@@ -946,6 +911,57 @@ TEST_F(H264JitterBufferIntegrationTest, gilbertElliottPacketLoss)
 {
     runPacketLossTest("../samples/girH264", 1000, gilbertElliottLoss(0.05, 0.3));
     runPacketLossTest("../samples/h264SampleFrames", 1000, gilbertElliottLoss(0.05, 0.3));
+}
+
+// Test: Frame 0 at RTP timestamp 0 with marker packet arriving first (reorder).
+// Reproduces a bug where the jitter buffer mistakenly delivered a single marker
+// packet as a complete frame, then later dropped the remaining packets.
+// This caused frame 0 to be both "received" (partial) and "dropped" (orphans).
+TEST_F(H264JitterBufferIntegrationTest, markerPacketFirstAtTimestampZeroNoDoubleCallback)
+{
+    // Load 2 frames from h264SampleFrames (frame 0 is multi-packet IDR)
+    initializeH264JitterBuffer();
+    loadFramesFromSamples("../samples/h264SampleFrames", 2);
+
+    UINT16 seqNum = 0;
+    UINT32 timestamp = 0;
+    // Packetize frame 0 at ts=0
+    ASSERT_EQ(STATUS_SUCCESS, packetizeFrame(0, timestamp, &seqNum));
+    UINT32 frame0PacketCount = (UINT32) mAllPackets.size();
+    ASSERT_GE(frame0PacketCount, 2u) << "Frame 0 must have multiple packets for this test";
+
+    // Packetize frame 1 at ts=3000
+    timestamp += 3000;
+    ASSERT_EQ(STATUS_SUCCESS, packetizeFrame(1, timestamp, &seqNum));
+    UINT32 totalPackets = (UINT32) mAllPackets.size();
+
+    DLOGI("Frame 0: %u packets (seq 0-%u), Frame 1: %u packets", frame0PacketCount, frame0PacketCount - 1, totalPackets - frame0PacketCount);
+
+    // Verify last packet of frame 0 has marker bit
+    ASSERT_TRUE(mAllPackets[frame0PacketCount - 1].pPacket->header.marker) << "Last packet of frame 0 must have marker bit";
+
+    // Push in reordered order: marker packet of frame 0 first, then rest in order
+    // This simulates the Linux reorder pattern that caused the bug
+    std::vector<UINT32> pushOrder;
+    pushOrder.push_back(frame0PacketCount - 1); // marker packet first
+    for (UINT32 i = 0; i < totalPackets; i++) {
+        if (i != frame0PacketCount - 1) {
+            pushOrder.push_back(i);
+        }
+    }
+    pushPacketsWithIndices(pushOrder);
+
+    // Flush remaining
+    freeJitterBuffer(&mJitterBuffer);
+    mJitterBuffer = NULL;
+
+    // Frame 0 must be received exactly once and never dropped
+    EXPECT_EQ(2u, mTotalFramesReceived) << "Both frames should be received";
+    EXPECT_EQ(0u, mTotalFramesDropped) << "No frames should be dropped";
+
+    // Verify frame 0 was received with correct timestamp
+    ASSERT_GE(mReceivedFrameTimestamps.size(), 1u);
+    EXPECT_EQ(0u, mReceivedFrameTimestamps[0]) << "Frame 0 should have timestamp 0";
 }
 
 // Benchmark test: Records jitter buffer deficiency metrics

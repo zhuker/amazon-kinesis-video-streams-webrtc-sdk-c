@@ -38,8 +38,7 @@ WebRtcClientTestBase::WebRtcClientTestBase()
 #ifdef ENABLE_SIGNALING
       mSignalingClientHandle(INVALID_SIGNALING_CLIENT_HANDLE_VALUE),
 #endif
-      mAccessKey(NULL), mSecretKey(NULL), mSessionToken(NULL), mRegion(NULL),
-      mCaCertPath(NULL), mAccessKeyIdSet(FALSE)
+      mAccessKey(NULL), mSecretKey(NULL), mSessionToken(NULL), mRegion(NULL), mCaCertPath(NULL), mAccessKeyIdSet(FALSE)
 {
     // Initialize the endianness of the library
     initializeEndianness();
@@ -134,7 +133,7 @@ VOID WebRtcClientTestBase::initializeJitterBuffer(UINT32 expectedFrameCount, UIN
     UINT32 i, timestamp;
     EXPECT_EQ(STATUS_SUCCESS,
               createJitterBuffer(testFrameReadyFunc, testFrameDroppedFunc, testDepayRtpFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY,
-                                 TEST_JITTER_BUFFER_CLOCK_RATE, (UINT64) this, &mJitterBuffer));
+                                 TEST_JITTER_BUFFER_CLOCK_RATE, (UINT64) this, FALSE, &mJitterBuffer));
     mExpectedFrameCount = expectedFrameCount;
     mFrame = NULL;
     if (expectedFrameCount > 0) {
@@ -198,21 +197,21 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     this->noNewThreads = FALSE;
 
     auto onICECandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
-        PPeerContainer container = (PPeerContainer)customData;
+        PPeerContainer container = (PPeerContainer) customData;
         if (candidateStr != NULL) {
             container->client->lock.lock();
-            if(!container->client->noNewThreads) {
+            if (!container->client->noNewThreads) {
                 container->client->threads.push_back(std::thread(
                     [container](std::string candidate) {
                         RtcIceCandidateInit iceCandidate;
-                        EXPECT_EQ(STATUS_SUCCESS, deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
+                        EXPECT_EQ(STATUS_SUCCESS,
+                                  deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
                         EXPECT_EQ(STATUS_SUCCESS, addIceCandidate((PRtcPeerConnection) container->pc, iceCandidate.candidate));
                     },
                     std::string(candidateStr)));
             }
             container->client->lock.unlock();
         }
-
     };
 
     auto onICECandidateHdlrDone = [](UINT64 customData, PCHAR candidateStr) -> void {
@@ -253,14 +252,15 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     }
 
     for (auto i = 0; i <= 10 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2 &&
-             ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]) == 0;
+         ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]) == 0;
          i++) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
 
     this->lock.lock();
-    //join all threads before leaving
-    for (auto& th : this->threads) th.join();
+    // join all threads before leaving
+    for (auto& th : this->threads)
+        th.join();
 
     this->threads.clear();
     this->noNewThreads = TRUE;
@@ -268,7 +268,6 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
 
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, onICECandidateHdlrDone));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) 0, onICECandidateHdlrDone));
-
 
     return ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) == 2;
 }
@@ -299,7 +298,8 @@ void WebRtcClientTestBase::getIceServers(PRtcConfiguration pRtcConfiguration)
     EXPECT_EQ(STATUS_SUCCESS, signalingClientGetIceConfigInfoCount(mSignalingClientHandle, &iceConfigCount));
 
     // Set the  STUN server
-    SNPRINTF(pRtcConfiguration->iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
+    SNPRINTF(pRtcConfiguration->iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
+             TEST_DEFAULT_STUN_URL_POSTFIX);
 
     for (uriCount = 0, i = 0; i < iceConfigCount; i++) {
         EXPECT_EQ(STATUS_SUCCESS, signalingClientGetIceConfigInfo(mSignalingClientHandle, i, &pIceConfigInfo));

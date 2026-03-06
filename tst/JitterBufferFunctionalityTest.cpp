@@ -1918,13 +1918,16 @@ TEST_F(JitterBufferFunctionalityTest, markerBitTriggersImmediateDelivery)
         switch (i) {
             case 0:
             case 1:
-                EXPECT_EQ(0, mReadyFrameIndex); // Frame not complete yet
-                break;
             case 2:
-                EXPECT_EQ(1, mReadyFrameIndex); // Frame delivered on marker!
+                // First frame not delivered yet: marker-bit delivery is skipped for the very first
+                // frame to avoid false delivery when reordered packets look like complete single-packet
+                // frames. The first frame is delivered via frame-boundary when the next frame arrives.
+                EXPECT_EQ(0, mReadyFrameIndex);
                 break;
             case 3:
-                EXPECT_EQ(2, mReadyFrameIndex); // Second frame delivered on marker
+                // Frame 1 delivered via frame-boundary (ts change 100->200), then frame 2
+                // delivered via marker-bit (firstFrameProcessed is now TRUE)
+                EXPECT_EQ(2, mReadyFrameIndex);
                 break;
             default:
                 ASSERT_TRUE(FALSE);
@@ -1984,21 +1987,13 @@ TEST_F(JitterBufferFunctionalityTest, markerBitOutOfOrderWaitsForCompletion)
 
     for (i = 0; i < pktCount; i++) {
         EXPECT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, mPRtpPackets[i], nullptr));
-        switch (i) {
-            case 0:
-                EXPECT_EQ(0, mReadyFrameIndex); // Only start, not complete
-                break;
-            case 1:
-                EXPECT_EQ(0, mReadyFrameIndex); // Marker but missing seq 1
-                break;
-            case 2:
-                EXPECT_EQ(1, mReadyFrameIndex); // Now complete with marker!
-                break;
-            default:
-                ASSERT_TRUE(FALSE);
-        }
+        // Marker-bit delivery is skipped for the very first frame to prevent false delivery
+        // of reordered packets. This frame will be delivered during flush.
+        EXPECT_EQ(0, mReadyFrameIndex);
     }
 
+    // Frame is delivered during flush (freeJitterBuffer with bufferClosed=TRUE).
+    // clearJitterBufferForTest verifies mReadyFrameIndex == mExpectedFrameCount.
     clearJitterBufferForTest();
 }
 

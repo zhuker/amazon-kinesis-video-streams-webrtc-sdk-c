@@ -34,6 +34,7 @@ public class WebRtcNativeTest {
     private static final String[] SAMPLE_DIRS = {
             "h264SampleFrames",
             "h265SampleFrames",
+            "opusSampleFrames",
             "bbbH264",
             "girH264"
     };
