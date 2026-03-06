@@ -948,6 +948,59 @@ TEST_F(H264JitterBufferIntegrationTest, gilbertElliottPacketLoss)
     runPacketLossTest("../samples/h264SampleFrames", 1000, gilbertElliottLoss(0.05, 0.3));
 }
 
+// Test: Frame 0 at RTP timestamp 0 with marker packet arriving first (reorder).
+// Reproduces a bug where the jitter buffer mistakenly delivered a single marker
+// packet as a complete frame, then later dropped the remaining packets.
+// This caused frame 0 to be both "received" (partial) and "dropped" (orphans).
+TEST_F(H264JitterBufferIntegrationTest, markerPacketFirstAtTimestampZeroNoDoubleCallback)
+{
+    // Load 2 frames from h264SampleFrames (frame 0 is multi-packet IDR)
+    initializeH264JitterBuffer();
+    loadFramesFromSamples("../samples/h264SampleFrames", 2);
+
+    UINT16 seqNum = 0;
+    UINT32 timestamp = 0;
+    // Packetize frame 0 at ts=0
+    ASSERT_EQ(STATUS_SUCCESS, packetizeFrame(0, timestamp, &seqNum));
+    UINT32 frame0PacketCount = (UINT32) mAllPackets.size();
+    ASSERT_GE(frame0PacketCount, 2u) << "Frame 0 must have multiple packets for this test";
+
+    // Packetize frame 1 at ts=3000
+    timestamp += 3000;
+    ASSERT_EQ(STATUS_SUCCESS, packetizeFrame(1, timestamp, &seqNum));
+    UINT32 totalPackets = (UINT32) mAllPackets.size();
+
+    DLOGI("Frame 0: %u packets (seq 0-%u), Frame 1: %u packets",
+          frame0PacketCount, frame0PacketCount - 1, totalPackets - frame0PacketCount);
+
+    // Verify last packet of frame 0 has marker bit
+    ASSERT_TRUE(mAllPackets[frame0PacketCount - 1].pPacket->header.marker)
+        << "Last packet of frame 0 must have marker bit";
+
+    // Push in reordered order: marker packet of frame 0 first, then rest in order
+    // This simulates the Linux reorder pattern that caused the bug
+    std::vector<UINT32> pushOrder;
+    pushOrder.push_back(frame0PacketCount - 1);  // marker packet first
+    for (UINT32 i = 0; i < totalPackets; i++) {
+        if (i != frame0PacketCount - 1) {
+            pushOrder.push_back(i);
+        }
+    }
+    pushPacketsWithIndices(pushOrder);
+
+    // Flush remaining
+    freeJitterBuffer(&mJitterBuffer);
+    mJitterBuffer = NULL;
+
+    // Frame 0 must be received exactly once and never dropped
+    EXPECT_EQ(2u, mTotalFramesReceived) << "Both frames should be received";
+    EXPECT_EQ(0u, mTotalFramesDropped) << "No frames should be dropped";
+
+    // Verify frame 0 was received with correct timestamp
+    ASSERT_GE(mReceivedFrameTimestamps.size(), 1u);
+    EXPECT_EQ(0u, mReceivedFrameTimestamps[0]) << "Frame 0 should have timestamp 0";
+}
+
 // Benchmark test: Records jitter buffer deficiency metrics
 // Run this test to capture baseline performance before/after fix
 TEST_F(H264JitterBufferIntegrationTest, DISABLED_jitterBufferDeficiencyBenchmark)

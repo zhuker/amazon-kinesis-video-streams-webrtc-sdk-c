@@ -671,7 +671,10 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
             // This reduces latency by not waiting for the next frame's first packet
             // Use headFrameIsContiguous (per-frame tracking) instead of isFrameDataContinuous (global) for consistency
             // with the frame boundary delivery logic
-            if (curTimestamp == pJitterBuffer->headTimestamp && pCurPacket->header.marker && containStartForEarliestFrame && headFrameIsContiguous) {
+            // Skip marker-bit delivery for the very first frame: when no frame has been processed yet, we can't
+            // distinguish a complete single-packet frame from a late-arriving last packet of a multi-packet frame
+            // (reordering). The first frame is delivered via the frame-boundary path when the next frame arrives.
+            if (pJitterBuffer->firstFrameProcessed && curTimestamp == pJitterBuffer->headTimestamp && pCurPacket->header.marker && containStartForEarliestFrame && headFrameIsContiguous) {
                 // Frame is complete: has start, has marker, all packets contiguous
                 CHK_STATUS(pJitterBuffer->onFrameReadyFn(pJitterBuffer->customData, startDropIndex, index, curFrameSize));
                 CHK_STATUS(jitterBufferDropBufferData(pJitterBuffer, startDropIndex, index, curTimestamp));

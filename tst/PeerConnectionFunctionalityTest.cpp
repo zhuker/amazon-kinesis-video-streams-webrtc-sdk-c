@@ -2386,6 +2386,291 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
     EXPECT_EQ(stats.sent.packetsSent, statsRx.received.packetsReceived);
     EXPECT_LE(stats.sent.packetsSent, perfectWorldNumberOfPackets * 2);
 }
+
+// Full-cycle test: peer A sends H.264 video and Opus audio; peer B sends
+// binary data-channel messages back to peer A. Verifies that all video frames,
+// audio frames, and data-channel messages are delivered correctly.
+TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
+{
+    constexpr UINT32 NUM_VIDEO_FRAMES = 100;
+    constexpr UINT32 MAX_FRAME_SIZE = 500000;
+    constexpr UINT32 NUM_AUDIO_FRAMES = 100;
+    constexpr UINT32 NUM_DC_MESSAGES = 120;
+    constexpr UINT32 DC_MSG_SIZE = 32;
+
+    // --- Pre-read H.264 video frames ---
+    struct InputVideoFrame {
+        std::vector<BYTE> data;
+        UINT32 naluCount;
+        UINT32 naluOffsets[128];
+        UINT32 naluLengths[128];
+        UINT64 sendTime;
+        UINT64 sendPts;
+    };
+    std::vector<InputVideoFrame> videoInputFrames(NUM_VIDEO_FRAMES);
+    {
+        std::vector<BYTE> buf(MAX_FRAME_SIZE);
+        for (UINT32 i = 0; i < NUM_VIDEO_FRAMES; i++) {
+            UINT32 sz = MAX_FRAME_SIZE;
+            ASSERT_EQ(STATUS_SUCCESS,
+                      readFrameData(buf.data(), &sz, i + 1, (PCHAR) "../samples/girH264",
+                                    RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+            videoInputFrames[i].data.assign(buf.begin(), buf.begin() + sz);
+            videoInputFrames[i].naluCount = extractNaluInfo(videoInputFrames[i].data.data(), sz,
+                                                            videoInputFrames[i].naluOffsets,
+                                                            videoInputFrames[i].naluLengths, 128);
+            videoInputFrames[i].sendTime = 0;
+            videoInputFrames[i].sendPts = 0;
+        }
+    }
+
+    // --- Pre-read Opus audio frames ---
+    struct InputAudioFrame {
+        std::vector<BYTE> data;
+        UINT64 sendTime;
+        UINT64 sendPts;
+    };
+    std::vector<InputAudioFrame> audioInputFrames(NUM_AUDIO_FRAMES);
+    {
+        CHAR filePath[MAX_PATH_LEN + 1];
+        for (UINT32 i = 0; i < NUM_AUDIO_FRAMES; i++) {
+            SNPRINTF(filePath, MAX_PATH_LEN, "../samples/opusSampleFrames/sample-%03d.opus", i);
+            UINT64 size = 0;
+            ASSERT_EQ(STATUS_SUCCESS, readFile(filePath, TRUE, NULL, &size));
+            audioInputFrames[i].data.resize((size_t) size);
+            ASSERT_EQ(STATUS_SUCCESS, readFile(filePath, TRUE, audioInputFrames[i].data.data(), &size));
+            audioInputFrames[i].sendTime = 0;
+            audioInputFrames[i].sendPts = 0;
+        }
+    }
+
+    // --- Create peer connections with video + audio tracks ---
+    RtcConfiguration configuration{};
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+    RtcMediaStreamTrack offerVideoTrack, answerVideoTrack, offerAudioTrack, answerAudioTrack;
+    PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver, offerAudioTransceiver, answerAudioTransceiver;
+
+    initRtcConfiguration(&configuration);
+    ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &offerPc));
+    ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &answerPc));
+
+    addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(offerPc, &offerAudioTrack, &offerAudioTransceiver,
+                             RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+    addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver,
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(answerPc, &answerAudioTrack, &answerAudioTransceiver,
+                             RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+
+    // --- Received frame storage ---
+    struct ReceivedFrame {
+        std::vector<BYTE> data;
+        UINT64 presentationTs;
+        UINT64 receiveTime;
+    };
+    struct RxContext {
+        std::vector<ReceivedFrame> frames;
+        std::mutex mtx;
+    };
+
+    // --- Set up video frame receiver on answer peer ---
+    RxContext videoRx;
+    EXPECT_EQ(STATUS_SUCCESS,
+              transceiverOnFrame(answerVideoTransceiver, (UINT64) &videoRx,
+                                 [](UINT64 customData, PFrame pFrame) -> void {
+                                     RxContext* ctx = (RxContext*) customData;
+                                     ReceivedFrame rf;
+                                     rf.data.assign(pFrame->frameData, pFrame->frameData + pFrame->size);
+                                     rf.presentationTs = pFrame->presentationTs;
+                                     rf.receiveTime = GETTIME();
+                                     std::lock_guard<std::mutex> lock(ctx->mtx);
+                                     ctx->frames.push_back(std::move(rf));
+                                 }));
+
+    // --- Set up audio frame receiver on answer peer ---
+    RxContext audioRx;
+    EXPECT_EQ(STATUS_SUCCESS,
+              transceiverOnFrame(answerAudioTransceiver, (UINT64) &audioRx,
+                                 [](UINT64 customData, PFrame pFrame) -> void {
+                                     RxContext* ctx = (RxContext*) customData;
+                                     ReceivedFrame rf;
+                                     rf.data.assign(pFrame->frameData, pFrame->frameData + pFrame->size);
+                                     rf.presentationTs = pFrame->presentationTs;
+                                     rf.receiveTime = GETTIME();
+                                     std::lock_guard<std::mutex> lock(ctx->mtx);
+                                     ctx->frames.push_back(std::move(rf));
+                                 }));
+
+    // --- Set up data channel: offer creates, answer receives and sends messages back ---
+    PRtcDataChannel pOfferDataChannel = nullptr;
+    RtcDataChannelInit dcInit{};
+    dcInit.ordered = FALSE;
+    dcInit.maxRetransmits.isNull = FALSE;
+    dcInit.maxRetransmits.value = 0;
+    ASSERT_EQ(STATUS_SUCCESS, createDataChannel(offerPc, (PCHAR) "data", &dcInit, &pOfferDataChannel));
+
+    SIZE_T dcMsgsReceived = 0;
+    auto dcOnMessageCallback = [](UINT64 customData, PRtcDataChannel pDataChannel, BOOL isBinary, PBYTE pMsg, UINT32 pMsgLen) {
+        UNUSED_PARAM(pDataChannel);
+        if (isBinary && pMsgLen == DC_MSG_SIZE) {
+            ATOMIC_INCREMENT((PSIZE_T) customData);
+        }
+    };
+    EXPECT_EQ(STATUS_SUCCESS, dataChannelOnMessage(pOfferDataChannel, (UINT64) &dcMsgsReceived, dcOnMessageCallback));
+
+    SIZE_T answerRemoteDc = 0;
+    auto onDataChannelCallback = [](UINT64 customData, PRtcDataChannel pRtcDataChannel) {
+        ATOMIC_STORE((PSIZE_T) customData, reinterpret_cast<UINT64>(pRtcDataChannel));
+    };
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnDataChannel(answerPc, (UINT64) &answerRemoteDc, onDataChannelCallback));
+
+    // --- Connect ---
+    EXPECT_EQ(TRUE, connectTwoPeers(offerPc, answerPc));
+
+    // Wait for the SCTP data channel to arrive on answer peer
+    for (INT32 i = 0; i < 100 && ATOMIC_LOAD(&answerRemoteDc) == 0; i++) {
+        THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
+    PRtcDataChannel pAnswerRemoteDc = (PRtcDataChannel) ATOMIC_LOAD(&answerRemoteDc);
+    ASSERT_TRUE(pAnswerRemoteDc != nullptr);
+
+    // --- Answer peer sends DC messages back to offer peer ---
+    BYTE dcMsgPayload[DC_MSG_SIZE];
+    MEMSET(dcMsgPayload, 0xCC, DC_MSG_SIZE);
+    std::thread dcSenderThread([&]() {
+        for (UINT32 i = 0; i < NUM_DC_MESSAGES; i++) {
+            dataChannelSend(pAnswerRemoteDc, TRUE, dcMsgPayload, DC_MSG_SIZE);
+            THREAD_SLEEP(8 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND); // ~120 msg/sec
+        }
+    });
+
+    // --- Offer peer sends video frames ---
+    Frame txVideoFrame;
+    MEMSET(&txVideoFrame, 0x00, SIZEOF(Frame));
+    txVideoFrame.presentationTs = 0;
+
+    std::thread videoSenderThread([&]() {
+        for (UINT32 i = 0; i < NUM_VIDEO_FRAMES; i++) {
+            txVideoFrame.frameData = videoInputFrames[i].data.data();
+            txVideoFrame.size = (UINT32) videoInputFrames[i].data.size();
+            videoInputFrames[i].sendPts = txVideoFrame.presentationTs;
+            videoInputFrames[i].sendTime = GETTIME();
+            EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerVideoTransceiver, &txVideoFrame));
+            DLOGI("video frame %u sent, pts=%llu size=%u", i, txVideoFrame.presentationTs, txVideoFrame.size);
+            txVideoFrame.presentationTs += HUNDREDS_OF_NANOS_IN_A_SECOND / 25;
+            THREAD_SLEEP(5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        }
+    });
+
+    // --- Offer peer sends audio frames ---
+    Frame txAudioFrame;
+    MEMSET(&txAudioFrame, 0x00, SIZEOF(Frame));
+    txAudioFrame.presentationTs = 0;
+    constexpr UINT64 OPUS_FRAME_DURATION = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+    std::thread audioSenderThread([&]() {
+        for (UINT32 i = 0; i < NUM_AUDIO_FRAMES; i++) {
+            txAudioFrame.frameData = audioInputFrames[i].data.data();
+            txAudioFrame.size = (UINT32) audioInputFrames[i].data.size();
+            audioInputFrames[i].sendPts = txAudioFrame.presentationTs;
+            audioInputFrames[i].sendTime = GETTIME();
+            EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerAudioTransceiver, &txAudioFrame));
+            DLOGI("audio frame %u sent, pts=%llu size=%u", i, txAudioFrame.presentationTs, txAudioFrame.size);
+            txAudioFrame.presentationTs += OPUS_FRAME_DURATION;
+            THREAD_SLEEP(5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        }
+    });
+
+    dcSenderThread.join();
+    videoSenderThread.join();
+    audioSenderThread.join();
+
+    // --- Drain: wait for all frames and messages to arrive ---
+    auto rxCount = [](RxContext& rx) -> SIZE_T {
+        std::lock_guard<std::mutex> lock(rx.mtx);
+        return rx.frames.size();
+    };
+    for (INT32 i = 0; i < 5000 &&
+         (ATOMIC_LOAD(&dcMsgsReceived) < NUM_DC_MESSAGES ||
+          rxCount(videoRx) < NUM_VIDEO_FRAMES ||
+          rxCount(audioRx) < NUM_AUDIO_FRAMES);
+         i++) {
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+
+    // --- Verify data channel messages ---
+    EXPECT_EQ((SIZE_T) NUM_DC_MESSAGES, ATOMIC_LOAD(&dcMsgsReceived))
+        << "Expected " << NUM_DC_MESSAGES << " data channel messages but got " << ATOMIC_LOAD(&dcMsgsReceived);
+
+    // --- Verify video frame count ---
+    EXPECT_EQ((SIZE_T) NUM_VIDEO_FRAMES, videoRx.frames.size())
+        << "Expected " << NUM_VIDEO_FRAMES << " video frames but got " << videoRx.frames.size();
+
+    // --- Verify video frame content (NALU-level comparison) ---
+    for (UINT32 i = 0; i < videoRx.frames.size() && i < NUM_VIDEO_FRAMES; i++) {
+        const auto& rx = videoRx.frames[i];
+        EXPECT_EQ(videoInputFrames[i].sendPts, rx.presentationTs) << "Video frame " << i << " pts mismatch";
+        UINT32 rxOffsets[128], rxLengths[128];
+        UINT32 rxCount = extractNaluInfo((PBYTE) rx.data.data(), (UINT32) rx.data.size(), rxOffsets, rxLengths, 128);
+        const auto& expected = videoInputFrames[i];
+        EXPECT_EQ(expected.naluCount, rxCount) << "Video frame " << i << " NALU count mismatch";
+        if (rxCount == expected.naluCount) {
+            for (UINT32 j = 0; j < rxCount; j++) {
+                EXPECT_EQ(expected.naluLengths[j], rxLengths[j]) << "Video frame " << i << " NALU " << j << " length mismatch";
+                if (rxLengths[j] == expected.naluLengths[j]) {
+                    EXPECT_EQ(0, MEMCMP(rx.data.data() + rxOffsets[j], expected.data.data() + expected.naluOffsets[j], rxLengths[j]))
+                        << "Video frame " << i << " NALU " << j << " content mismatch";
+                }
+            }
+        }
+    }
+
+    // --- Verify audio frame count and content ---
+    EXPECT_EQ((SIZE_T) NUM_AUDIO_FRAMES, audioRx.frames.size())
+        << "Expected " << NUM_AUDIO_FRAMES << " audio frames but got " << audioRx.frames.size();
+    for (UINT32 i = 0; i < audioRx.frames.size() && i < NUM_AUDIO_FRAMES; i++) {
+        const auto& rx = audioRx.frames[i];
+        EXPECT_EQ(audioInputFrames[i].sendPts, rx.presentationTs) << "Audio frame " << i << " pts mismatch";
+        EXPECT_EQ((UINT32) audioInputFrames[i].data.size(), (UINT32) rx.data.size()) << "Audio frame " << i << " size mismatch";
+        if (rx.data.size() == audioInputFrames[i].data.size()) {
+            EXPECT_EQ(0, MEMCMP(rx.data.data(), audioInputFrames[i].data.data(), rx.data.size()))
+                << "Audio frame " << i << " content mismatch";
+        }
+    }
+
+    // --- Verify frame delivery latency ---
+    // Frame 0 has higher latency because the jitter buffer delays the first frame until the next
+    // frame's first packet arrives (firstFrameProcessed guard). This adds ~1 frame interval of latency
+    // to the very first frame only. All subsequent frames use marker-bit delivery with near-zero latency.
+    constexpr UINT64 FIRST_FRAME_LATENCY_LIMIT = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    constexpr UINT64 STEADY_STATE_LATENCY_LIMIT = 5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+    // Video latency
+    for (UINT32 i = 0; i < videoRx.frames.size() && i < NUM_VIDEO_FRAMES; i++) {
+        UINT64 latency = videoRx.frames[i].receiveTime - videoInputFrames[i].sendTime;
+        DOUBLE latencyMs = (DOUBLE) latency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        DLOGI("video frame %u latency: %.2f ms", i, latencyMs);
+        UINT64 limit = (i == 0) ? FIRST_FRAME_LATENCY_LIMIT : STEADY_STATE_LATENCY_LIMIT;
+        EXPECT_LT(latency, limit) << "Video frame " << i << " latency " << latencyMs << " ms exceeded limit";
+    }
+
+    // Audio latency
+    for (UINT32 i = 0; i < audioRx.frames.size() && i < NUM_AUDIO_FRAMES; i++) {
+        UINT64 latency = audioRx.frames[i].receiveTime - audioInputFrames[i].sendTime;
+        DOUBLE latencyMs = (DOUBLE) latency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        DLOGI("audio frame %u latency: %.2f ms", i, latencyMs);
+        UINT64 limit = (i == 0) ? FIRST_FRAME_LATENCY_LIMIT : STEADY_STATE_LATENCY_LIMIT;
+        EXPECT_LT(latency, limit) << "Audio frame " << i << " latency " << latencyMs << " ms exceeded limit";
+    }
+}
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis
