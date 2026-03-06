@@ -9,7 +9,7 @@
 STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed);
 
 STATUS createJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedFunc onFrameDroppedFunc, DepayRtpPayloadFunc depayRtpPayloadFunc,
-                          UINT32 maxLatency, UINT32 clockRate, UINT64 customData, PJitterBuffer* ppJitterBuffer)
+                          UINT32 maxLatency, UINT32 clockRate, UINT64 customData, BOOL alwaysSinglePacketFrames, PJitterBuffer* ppJitterBuffer)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -42,6 +42,7 @@ STATUS createJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedFunc onFr
     pJitterBuffer->firstFrameProcessed = FALSE;
     pJitterBuffer->timestampOverFlowState = FALSE;
     pJitterBuffer->sequenceNumberOverflowState = FALSE;
+    pJitterBuffer->alwaysSinglePacketFrames = alwaysSinglePacketFrames;
 
     pJitterBuffer->customData = customData;
     CHK_STATUS(hashTableCreateWithParams(JITTER_BUFFER_HASH_TABLE_BUCKET_COUNT, JITTER_BUFFER_HASH_TABLE_BUCKET_LENGTH,
@@ -674,7 +675,9 @@ STATUS jitterBufferInternalParse(PJitterBuffer pJitterBuffer, BOOL bufferClosed)
             // Skip marker-bit delivery for the very first frame: when no frame has been processed yet, we can't
             // distinguish a complete single-packet frame from a late-arriving last packet of a multi-packet frame
             // (reordering). The first frame is delivered via the frame-boundary path when the next frame arrives.
-            if (pJitterBuffer->firstFrameProcessed && curTimestamp == pJitterBuffer->headTimestamp && pCurPacket->header.marker && containStartForEarliestFrame && headFrameIsContiguous) {
+            // Exception: codecs that never fragment (alwaysSinglePacketFrames, e.g. Opus) are always safe.
+            if ((pJitterBuffer->firstFrameProcessed || pJitterBuffer->alwaysSinglePacketFrames) && curTimestamp == pJitterBuffer->headTimestamp &&
+                pCurPacket->header.marker && containStartForEarliestFrame && headFrameIsContiguous) {
                 // Frame is complete: has start, has marker, all packets contiguous
                 CHK_STATUS(pJitterBuffer->onFrameReadyFn(pJitterBuffer->customData, startDropIndex, index, curFrameSize));
                 CHK_STATUS(jitterBufferDropBufferData(pJitterBuffer, startDropIndex, index, curTimestamp));

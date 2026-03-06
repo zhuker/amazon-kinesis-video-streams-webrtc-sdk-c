@@ -41,11 +41,14 @@ typedef struct {
     BOOL firstFrameProcessed;
     BOOL sequenceNumberOverflowState;
     BOOL timestampOverFlowState;
+    // Codec never fragments frames across multiple RTP packets (e.g. Opus per RFC 7587).
+    // When TRUE, marker-bit delivery is safe even for the very first frame.
+    BOOL alwaysSinglePacketFrames;
     PHashTable pPkgBufferHashTable;
 } JitterBuffer, *PJitterBuffer;
 
 // constructor
-STATUS createJitterBuffer(FrameReadyFunc, FrameDroppedFunc, DepayRtpPayloadFunc, UINT32, UINT32, UINT64, PJitterBuffer*);
+STATUS createJitterBuffer(FrameReadyFunc, FrameDroppedFunc, DepayRtpPayloadFunc, UINT32, UINT32, UINT64, BOOL, PJitterBuffer*);
 // destructor
 STATUS freeJitterBuffer(PJitterBuffer*);
 STATUS jitterBufferPush(PJitterBuffer, PRtpPacket, PBOOL);

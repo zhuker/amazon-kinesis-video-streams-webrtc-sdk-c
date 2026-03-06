@@ -12,10 +12,10 @@ namespace webrtcclient {
 struct PacingTestContext;
 
 class PeerConnectionFunctionalityTest : public WebRtcClientTestBase {
-protected:
+  protected:
     void runPacingTest(const RtcPacerConfig& pacerConfig, PacingTestContext& context);
-    void validatePacingResults(PacingTestContext& context, const std::vector<TwccPacketReport>& validReports,
-                               UINT64 targetBitrateBps, DOUBLE pacingFactor);
+    void validatePacingResults(PacingTestContext& context, const std::vector<TwccPacketReport>& validReports, UINT64 targetBitrateBps,
+                               DOUBLE pacingFactor);
 };
 
 // Assert that two PeerConnections can connect to each other and go to connected
@@ -48,21 +48,22 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithDelay)
     PeerContainer answer;
 
     initRtcConfiguration(&configuration);
-    //solves occassional failure in this test where the peers fail to connect because of the delay in ICE candidate nomination
+    // solves occassional failure in this test where the peers fail to connect because of the delay in ICE candidate nomination
     configuration.kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(2000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
 
     EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
     EXPECT_EQ(createPeerConnection(&configuration, &answerPc), STATUS_SUCCESS);
 
     auto onICECandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
-        PPeerContainer container = (PPeerContainer)customData;
+        PPeerContainer container = (PPeerContainer) customData;
         if (candidateStr != NULL) {
             container->client->lock.lock();
-            if(!container->client->noNewThreads) {
+            if (!container->client->noNewThreads) {
                 container->client->threads.push_back(std::thread(
                     [container](std::string candidate) {
                         RtcIceCandidateInit iceCandidate;
-                        EXPECT_EQ(STATUS_SUCCESS, deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
+                        EXPECT_EQ(STATUS_SUCCESS,
+                                  deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
                         EXPECT_EQ(STATUS_SUCCESS, addIceCandidate((PRtcPeerConnection) container->pc, iceCandidate.candidate));
                     },
                     std::string(candidateStr)));
@@ -111,8 +112,9 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithDelay)
     EXPECT_EQ(2, connectedCount);
 
     this->lock.lock();
-    //join all threads before leaving
-    for (auto& th : this->threads) th.join();
+    // join all threads before leaving
+    for (auto& th : this->threads)
+        th.join();
 
     this->threads.clear();
     this->noNewThreads = TRUE;
@@ -677,14 +679,15 @@ TEST_F(PeerConnectionFunctionalityTest, noLostFramesAfterConnected)
     addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver, RTC_CODEC_VP8, MEDIA_STREAM_TRACK_KIND_VIDEO);
 
     auto onICECandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
-        PPeerContainer container = (PPeerContainer)customData;
+        PPeerContainer container = (PPeerContainer) customData;
         if (candidateStr != NULL) {
             container->client->lock.lock();
-            if(!container->client->noNewThreads) {
+            if (!container->client->noNewThreads) {
                 container->client->threads.push_back(std::thread(
                     [container](std::string candidate) {
                         RtcIceCandidateInit iceCandidate;
-                        EXPECT_EQ(STATUS_SUCCESS, deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
+                        EXPECT_EQ(STATUS_SUCCESS,
+                                  deserializeRtcIceCandidateInit((PCHAR) candidate.c_str(), STRLEN(candidate.c_str()), &iceCandidate));
                         EXPECT_EQ(STATUS_SUCCESS, addIceCandidate((PRtcPeerConnection) container->pc, iceCandidate.candidate));
                     },
                     std::string(candidateStr)));
@@ -752,7 +755,8 @@ TEST_F(PeerConnectionFunctionalityTest, noLostFramesAfterConnected)
     }
 
     this->lock.lock();
-    for (auto& th : this->threads) th.join();
+    for (auto& th : this->threads)
+        th.join();
 
     this->threads.clear();
     this->noNewThreads = TRUE;
@@ -822,7 +826,7 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
 
     EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
 
-    //send 2 frames, receiver should see at least 1 frames
+    // send 2 frames, receiver should see at least 1 frames
     for (int i = 0; i < 2; i++) {
         EXPECT_EQ(writeFrame(offerVideoTransceiver, &videoFrame), STATUS_SUCCESS);
         videoFrame.presentationTs += (HUNDREDS_OF_NANOS_IN_A_SECOND / 25);
@@ -1668,7 +1672,7 @@ TEST_F(PeerConnectionFunctionalityTest, twccFeedbackTriggersBandwidthEstimation)
     // For peer-to-peer testing between SDK instances, we need to set it manually
     PKvsPeerConnection pOfferKvs = (PKvsPeerConnection) offerPc;
     PKvsPeerConnection pAnswerKvs = (PKvsPeerConnection) answerPc;
-    pOfferKvs->twccExtId = 1;  // Standard TWCC extension ID
+    pOfferKvs->twccExtId = 1; // Standard TWCC extension ID
     pAnswerKvs->twccExtId = 1;
 
     // Add video tracks to both peers (VP8 codec supports TWCC)
@@ -1676,8 +1680,8 @@ TEST_F(PeerConnectionFunctionalityTest, twccFeedbackTriggersBandwidthEstimation)
     addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver, RTC_CODEC_VP8, MEDIA_STREAM_TRACK_KIND_VIDEO);
 
     // Callback for when sender receives TWCC feedback and computes bandwidth estimation
-    auto onBandwidthEstimationHandler = [](UINT64 customData, UINT32 txBytes, UINT32 rxBytes,
-                                           UINT32 txPackets, UINT32 rxPackets, UINT64 duration) -> void {
+    auto onBandwidthEstimationHandler = [](UINT64 customData, UINT32 txBytes, UINT32 rxBytes, UINT32 txPackets, UINT32 rxPackets,
+                                           UINT64 duration) -> void {
         UNUSED_PARAM(duration);
         TwccTestContext* pContext = (TwccTestContext*) customData;
 
@@ -1688,8 +1692,7 @@ TEST_F(PeerConnectionFunctionalityTest, twccFeedbackTriggersBandwidthEstimation)
         pContext->totalRxPackets += rxPackets;
 
         ATOMIC_STORE_BOOL(&pContext->bandwidthEstimationReceived, TRUE);
-        DLOGD("Bandwidth estimation callback: txBytes=%u rxBytes=%u txPackets=%u rxPackets=%u",
-              txBytes, rxBytes, txPackets, rxPackets);
+        DLOGD("Bandwidth estimation callback: txBytes=%u rxBytes=%u txPackets=%u rxPackets=%u", txBytes, rxBytes, txPackets, rxPackets);
 
         // Mark test complete if we've received enough callbacks
         if (pContext->callbackCount >= 2) {
@@ -1722,9 +1725,9 @@ TEST_F(PeerConnectionFunctionalityTest, twccFeedbackTriggersBandwidthEstimation)
         // Send video frame
         videoFrame.flags = (i % 30 == 0) ? FRAME_FLAG_KEY_FRAME : FRAME_FLAG_NONE;
         EXPECT_EQ(writeFrame(offerVideoTransceiver, &videoFrame), STATUS_SUCCESS);
-        videoFrame.presentationTs += (HUNDREDS_OF_NANOS_IN_A_SECOND / 30);  // 30 fps
+        videoFrame.presentationTs += (HUNDREDS_OF_NANOS_IN_A_SECOND / 30); // 30 fps
 
-        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND * 33);  // ~30fps timing
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_MILLISECOND * 33); // ~30fps timing
     }
 
     // Cleanup
@@ -1744,8 +1747,7 @@ TEST_F(PeerConnectionFunctionalityTest, twccFeedbackTriggersBandwidthEstimation)
     EXPECT_GT(context.totalTxPackets, 0) << "Should have reported transmitted packets";
     EXPECT_GT(context.totalRxPackets, 0) << "Should have reported received packets";
 
-    DLOGD("TWCC test completed: %zu callbacks, txPackets=%u rxPackets=%u",
-          context.callbackCount, context.totalTxPackets, context.totalRxPackets);
+    DLOGD("TWCC test completed: %zu callbacks, txPackets=%u rxPackets=%u", context.callbackCount, context.totalTxPackets, context.totalRxPackets);
 }
 
 // Test TWCC feedback generation on the receiver side
@@ -1806,8 +1808,8 @@ TEST_F(PeerConnectionFunctionalityTest, twccReceiverGeneratesFeedback)
     addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver, RTC_CODEC_VP8, MEDIA_STREAM_TRACK_KIND_VIDEO);
 
     // Bandwidth estimation callback on SENDER (offer) proves receiver sent feedback
-    auto onBandwidthEstimationHandler = [](UINT64 customData, UINT32 txBytes, UINT32 rxBytes,
-                                           UINT32 txPackets, UINT32 rxPackets, UINT64 duration) -> void {
+    auto onBandwidthEstimationHandler = [](UINT64 customData, UINT32 txBytes, UINT32 rxBytes, UINT32 txPackets, UINT32 rxPackets,
+                                           UINT64 duration) -> void {
         UNUSED_PARAM(txBytes);
         UNUSED_PARAM(rxBytes);
         TwccReceiverTestContext* pContext = (TwccReceiverTestContext*) customData;
@@ -1869,36 +1871,29 @@ TEST_F(PeerConnectionFunctionalityTest, twccReceiverGeneratesFeedback)
     freePeerConnection(&answerPc);
 
     // Verify receiver generated feedback
-    EXPECT_TRUE(ATOMIC_LOAD_BOOL(&context.feedbackSent))
-        << "Receiver should have sent TWCC feedback";
-    EXPECT_GE(context.feedbackCount, 3)
-        << "Should have received multiple TWCC feedbacks";
-    EXPECT_GT(context.totalRxPackets, 0)
-        << "Should have reported received packets (not all marked lost due to delta bugs)";
+    EXPECT_TRUE(ATOMIC_LOAD_BOOL(&context.feedbackSent)) << "Receiver should have sent TWCC feedback";
+    EXPECT_GE(context.feedbackCount, 3) << "Should have received multiple TWCC feedbacks";
+    EXPECT_GT(context.totalRxPackets, 0) << "Should have reported received packets (not all marked lost due to delta bugs)";
 
     // Verify duration checks actually ran and ALL passed
     // Using total ensures we don't pass by doing nothing (0 == 0 would be meaningless)
     SIZE_T totalDurationChecks = context.validDurationCount + context.invalidDurationCount;
-    EXPECT_GT(totalDurationChecks, 0)
-        << "Should have performed duration checks (test did nothing if 0)";
-    EXPECT_EQ(context.validDurationCount, totalDurationChecks)
-        << "All duration checks should pass (had " << context.invalidDurationCount
-        << " invalid out of " << totalDurationChecks << ", indicates delta overflow bugs)";
+    EXPECT_GT(totalDurationChecks, 0) << "Should have performed duration checks (test did nothing if 0)";
+    EXPECT_EQ(context.validDurationCount, totalDurationChecks) << "All duration checks should pass (had " << context.invalidDurationCount
+                                                               << " invalid out of " << totalDurationChecks << ", indicates delta overflow bugs)";
 
     // Final receive ratio check - should be high if deltas are correct
-    EXPECT_GT(context.totalTxPackets, 0)
-        << "Should have transmitted packets";
+    EXPECT_GT(context.totalTxPackets, 0) << "Should have transmitted packets";
     if (context.totalTxPackets > 0) {
         UINT32 overallReceivePercent = (context.totalRxPackets * 100) / context.totalTxPackets;
-        EXPECT_GE(overallReceivePercent, 80)
-            << "Overall receive ratio should be >= 80% (was " << overallReceivePercent
-            << "%), low ratio indicates TWCC delta calculation bugs";
+        EXPECT_GE(overallReceivePercent, 80) << "Overall receive ratio should be >= 80% (was " << overallReceivePercent
+                                             << "%), low ratio indicates TWCC delta calculation bugs";
     }
 
     DLOGD("TWCC receiver test completed: %zu feedbacks, txPackets=%u rxPackets=%u ratio=%u%% validDurations=%zu invalidDurations=%zu",
           context.feedbackCount, context.totalTxPackets, context.totalRxPackets,
-          context.totalTxPackets > 0 ? (context.totalRxPackets * 100) / context.totalTxPackets : 0,
-          context.validDurationCount, context.invalidDurationCount);
+          context.totalTxPackets > 0 ? (context.totalRxPackets * 100) / context.totalTxPackets : 0, context.validDurationCount,
+          context.invalidDurationCount);
 }
 
 // Context for collecting TWCC packet reports (no mutex - peer connection closed before analysis)
@@ -1971,11 +1966,9 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
 
     // Add video tracks (H264 codec)
     addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
-                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, MEDIA_STREAM_TRACK_KIND_VIDEO);
     addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver,
-                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, MEDIA_STREAM_TRACK_KIND_VIDEO);
 
     // Enable pacing with the provided config (including maxQueueTimeKvs if set)
     EXPECT_EQ(peerConnectionEnablePacing(offerPc, const_cast<PRtcPacerConfig>(&pacerConfig)), STATUS_SUCCESS);
@@ -1995,7 +1988,7 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
         ctx->feedbackCount++;
     };
 
-    PacingTestContext *pContext = &context;
+    PacingTestContext* pContext = &context;
     EXPECT_EQ(peerConnectionOnTwccPacketReport(offerPc, (UINT64) pContext, onTwccPacketReportHandler), STATUS_SUCCESS);
 
     // Connect peers
@@ -2055,8 +2048,7 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
 }
 
 // Common pacing validation: computes stats and runs shared assertions
-void PeerConnectionFunctionalityTest::validatePacingResults(PacingTestContext& context,
-                                                            const std::vector<TwccPacketReport>& validReports,
+void PeerConnectionFunctionalityTest::validatePacingResults(PacingTestContext& context, const std::vector<TwccPacketReport>& validReports,
                                                             UINT64 targetBitrateBps, DOUBLE pacingFactor)
 {
     ASSERT_GT(validReports.size(), 2) << "Need at least 3 valid reports for analysis";
@@ -2076,9 +2068,8 @@ void PeerConnectionFunctionalityTest::validatePacingResults(PacingTestContext& c
 
     context.actualBitrateBps = (context.totalBytes * 8.0) / context.totalDurationSec;
 
-    DLOGD("Transmission stats: %zu packets, %llu bytes over %.2fs = %.0f bps (target: %llu bps)",
-          validReports.size(), (unsigned long long) context.totalBytes, context.totalDurationSec,
-          context.actualBitrateBps, (unsigned long long) targetBitrateBps);
+    DLOGD("Transmission stats: %zu packets, %llu bytes over %.2fs = %.0f bps (target: %llu bps)", validReports.size(),
+          (unsigned long long) context.totalBytes, context.totalDurationSec, context.actualBitrateBps, (unsigned long long) targetBitrateBps);
 
     // Measure throughput in sliding 50ms windows
     const UINT64 WINDOW_SIZE_KVS = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
@@ -2100,12 +2091,11 @@ void PeerConnectionFunctionalityTest::validatePacingResults(PacingTestContext& c
     context.maxWindowBitrateBps = (maxWindowBytes * 8.0) / 0.050;
     context.burstRatio = context.maxWindowBitrateBps / targetBitrateBps;
 
-    DLOGD("Window analysis (50ms): maxWindowBytes=%llu maxWindowBitrate=%.0f bps burstRatio=%.2fx",
-          (unsigned long long) maxWindowBytes, context.maxWindowBitrateBps, context.burstRatio);
+    DLOGD("Window analysis (50ms): maxWindowBytes=%llu maxWindowBitrate=%.0f bps burstRatio=%.2fx", (unsigned long long) maxWindowBytes,
+          context.maxWindowBitrateBps, context.burstRatio);
 
     // Common assertions
-    EXPECT_LT(context.actualBitrateBps, targetBitrateBps * pacingFactor)
-        << "Overall bitrate should be < " << pacingFactor << "x target with pacing";
+    EXPECT_LT(context.actualBitrateBps, targetBitrateBps * pacingFactor) << "Overall bitrate should be < " << pacingFactor << "x target with pacing";
 
     ASSERT_GT(context.totalPackets, 0);
     context.receiveRatio = (DOUBLE) context.receivedPackets / context.totalPackets;
@@ -2117,14 +2107,14 @@ void PeerConnectionFunctionalityTest::validatePacingResults(PacingTestContext& c
 // Verifies that packets are spread over time according to target bitrate
 TEST_F(PeerConnectionFunctionalityTest, pacingBitrate)
 {
-    const UINT64 TARGET_BITRATE_BPS = 5000000;  // 5 Mbps
+    const UINT64 TARGET_BITRATE_BPS = 5000000; // 5 Mbps
 
     RtcPacerConfig pacerConfig;
     pacerConfig.initialBitrateBps = TARGET_BITRATE_BPS;
     pacerConfig.maxQueueSize = 1000;
     pacerConfig.maxQueueBytes = 4 * 1024 * 1024;
     pacerConfig.pacingFactor = 2.5;
-    pacerConfig.maxQueueTimeKvs = 0;  // No frame deadline, use bitrate-based pacing only
+    pacerConfig.maxQueueTimeKvs = 0; // No frame deadline, use bitrate-based pacing only
 
     PacingTestContext context;
     runPacingTest(pacerConfig, context);
@@ -2144,8 +2134,8 @@ TEST_F(PeerConnectionFunctionalityTest, pacingBitrate)
 // Verifies that large frames are sent within the deadline
 TEST_F(PeerConnectionFunctionalityTest, pacingFrameDeadline)
 {
-    const UINT64 TARGET_BITRATE_BPS = 5000000;  // 5 Mbps
-    const UINT32 FRAME_DEADLINE_MS = 16;  // 16ms for 60fps
+    const UINT64 TARGET_BITRATE_BPS = 5000000; // 5 Mbps
+    const UINT32 FRAME_DEADLINE_MS = 16;       // 16ms for 60fps
     const UINT64 FRAME_DEADLINE_KVS = FRAME_DEADLINE_MS * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
 
     RtcPacerConfig pacerConfig;
@@ -2208,7 +2198,7 @@ TEST_F(PeerConnectionFunctionalityTest, pacingFrameDeadline)
 
         UINT64 firstSend = group.front().sendTimeKvs;
         UINT64 lastSend = group.back().sendTimeKvs;
-        DOUBLE durationMs = (DOUBLE)(lastSend - firstSend) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        DOUBLE durationMs = (DOUBLE) (lastSend - firstSend) / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
 
         if (durationMs > maxFrameDurationMs) {
             maxFrameDurationMs = durationMs;
@@ -2221,17 +2211,14 @@ TEST_F(PeerConnectionFunctionalityTest, pacingFrameDeadline)
         }
     }
 
-    DLOGD("Frame deadline analysis: %zu large frames, %zu met deadline (%.1f%%), max=%.1fms for %llu bytes",
-          largeFrameCount, deadlineMetCount,
-          largeFrameCount > 0 ? (100.0 * deadlineMetCount / largeFrameCount) : 0.0,
-          maxFrameDurationMs, (unsigned long long) maxFrameBytes);
+    DLOGD("Frame deadline analysis: %zu large frames, %zu met deadline (%.1f%%), max=%.1fms for %llu bytes", largeFrameCount, deadlineMetCount,
+          largeFrameCount > 0 ? (100.0 * deadlineMetCount / largeFrameCount) : 0.0, maxFrameDurationMs, (unsigned long long) maxFrameBytes);
 
     // Frame-specific assertions
     ASSERT_GT(largeFrameCount, 0) << "Should have at least one large frame";
 
     DOUBLE deadlineRatio = (DOUBLE) deadlineMetCount / largeFrameCount;
-    EXPECT_GT(deadlineRatio, 0.70)
-        << "At least 70% of large frames should meet deadline, got " << (deadlineRatio * 100.0) << "%";
+    EXPECT_GT(deadlineRatio, 0.70) << "At least 70% of large frames should meet deadline, got " << (deadlineRatio * 100.0) << "%";
 #ifdef __ANDROID__
     static constexpr auto frameDeadlineMultiplier = 6;
 #else
@@ -2269,9 +2256,7 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
                                     RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
             inputFrames[i].data.resize(sz);
             inputFrames[i].data.assign(buf.begin(), buf.begin() + sz);
-            inputFrames[i].naluCount = extractNaluInfo(inputFrames[i].data.data(), sz,
-                                                              inputFrames[i].naluOffsets,
-                                                              inputFrames[i].naluLengths, 128);
+            inputFrames[i].naluCount = extractNaluInfo(inputFrames[i].data.data(), sz, inputFrames[i].naluOffsets, inputFrames[i].naluLengths, 128);
         }
     }
 
@@ -2285,11 +2270,9 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
     ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &answerPc));
 
     addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
-                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, MEDIA_STREAM_TRACK_KIND_VIDEO);
     addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver,
-                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                             MEDIA_STREAM_TRACK_KIND_VIDEO);
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, MEDIA_STREAM_TRACK_KIND_VIDEO);
 
     struct RxContext {
         const std::vector<InputFrame>* inputFrames;
@@ -2302,33 +2285,28 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
 
     // Non-capturing lambda: state flows through customData.
     // Jitter buffer guarantees in-order delivery, so receivedCount-1 is the frame index.
-    EXPECT_EQ(STATUS_SUCCESS,
-              transceiverOnFrame(answerVideoTransceiver, (UINT64) &rxCtx,
-                                 [](UINT64 customData, PFrame pFrame) -> void {
-                                     RxContext* ctx = (RxContext*) customData;
-                                     SIZE_T idx = ATOMIC_INCREMENT((PSIZE_T) &ctx->receivedCount);
-                                     DLOGI("%zu received frame %lld %d", idx, pFrame->presentationTs, pFrame->size);
-                                     if (idx - 1 >= 100) {
-                                         return;
-                                     }
-                                     UINT32 rxOffsets[128], rxLengths[128];
-                                     UINT32 rxCount = extractNaluInfo(pFrame->frameData, pFrame->size,
-                                                                             rxOffsets, rxLengths, 128);
-                                     const InputFrame& expected = (*ctx->inputFrames)[(UINT32) idx];
-                                     if (rxCount != expected.naluCount) {
-                                         ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
-                                         return;
-                                     }
-                                     for (UINT32 i = 0; i < rxCount; i++) {
-                                         if (rxLengths[i] != expected.naluLengths[i] ||
-                                             MEMCMP(pFrame->frameData + rxOffsets[i],
-                                                    expected.data.data() + expected.naluOffsets[i],
-                                                    rxLengths[i]) != 0) {
-                                             ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
-                                             return;
-                                         }
-                                     }
-                                 }));
+    EXPECT_EQ(STATUS_SUCCESS, transceiverOnFrame(answerVideoTransceiver, (UINT64) &rxCtx, [](UINT64 customData, PFrame pFrame) -> void {
+                  RxContext* ctx = (RxContext*) customData;
+                  SIZE_T idx = ATOMIC_INCREMENT((PSIZE_T) &ctx->receivedCount);
+                  DLOGI("%zu received frame %lld %d", idx, pFrame->presentationTs, pFrame->size);
+                  if (idx - 1 >= 100) {
+                      return;
+                  }
+                  UINT32 rxOffsets[128], rxLengths[128];
+                  UINT32 rxCount = extractNaluInfo(pFrame->frameData, pFrame->size, rxOffsets, rxLengths, 128);
+                  const InputFrame& expected = (*ctx->inputFrames)[(UINT32) idx];
+                  if (rxCount != expected.naluCount) {
+                      ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
+                      return;
+                  }
+                  for (UINT32 i = 0; i < rxCount; i++) {
+                      if (rxLengths[i] != expected.naluLengths[i] ||
+                          MEMCMP(pFrame->frameData + rxOffsets[i], expected.data.data() + expected.naluOffsets[i], rxLengths[i]) != 0) {
+                          ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
+                          return;
+                      }
+                  }
+              }));
 
     EXPECT_EQ(TRUE, connectTwoPeers(offerPc, answerPc));
 
@@ -2378,10 +2356,8 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
 
-    EXPECT_EQ((SIZE_T) NUM_FRAMES, ATOMIC_LOAD(&rxCtx.receivedCount))
-        << "Expected exactly " << NUM_FRAMES << " frames delivered end-to-end";
-    EXPECT_EQ((SIZE_T) 0, ATOMIC_LOAD(&rxCtx.mismatchCount))
-        << "One or more received frames had NAL count or content mismatch";
+    EXPECT_EQ((SIZE_T) NUM_FRAMES, ATOMIC_LOAD(&rxCtx.receivedCount)) << "Expected exactly " << NUM_FRAMES << " frames delivered end-to-end";
+    EXPECT_EQ((SIZE_T) 0, ATOMIC_LOAD(&rxCtx.mismatchCount)) << "One or more received frames had NAL count or content mismatch";
 
     EXPECT_EQ(stats.sent.packetsSent, statsRx.received.packetsReceived);
     EXPECT_LE(stats.sent.packetsSent, perfectWorldNumberOfPackets * 2);
@@ -2447,15 +2423,11 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &answerPc));
 
     addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
-                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                             MEDIA_STREAM_TRACK_KIND_VIDEO);
-    addTrackToPeerConnection(offerPc, &offerAudioTrack, &offerAudioTransceiver,
-                             RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(offerPc, &offerAudioTrack, &offerAudioTransceiver, RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
     addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver,
-                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                             MEDIA_STREAM_TRACK_KIND_VIDEO);
-    addTrackToPeerConnection(answerPc, &answerAudioTrack, &answerAudioTransceiver,
-                             RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+                             RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(answerPc, &answerAudioTrack, &answerAudioTransceiver, RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
 
     // --- Received frame storage ---
     struct RxContext {
@@ -2492,7 +2464,8 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     RxContext dcRx;
     auto dcOnMessageCallback = [](UINT64 customData, PRtcDataChannel pDataChannel, BOOL isBinary, PBYTE pMsg, UINT32 pMsgLen) {
         UNUSED_PARAM(pDataChannel);
-        if (!isBinary || pMsgLen != DC_MSG_SIZE) return;
+        if (!isBinary || pMsgLen != DC_MSG_SIZE)
+            return;
         RxContext* ctx = (RxContext*) customData;
         TestFrame rf;
         rf.data.assign(pMsg, pMsg + pMsgLen);
@@ -2522,7 +2495,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     std::thread dcSenderThread([&]() {
         BYTE dcMsgPayload[DC_MSG_SIZE];
         for (UINT32 i = 0; i < NUM_DC_MESSAGES; i++) {
-            MEMSET(dcMsgPayload, (BYTE)(i & 0xFF), DC_MSG_SIZE);
+            MEMSET(dcMsgPayload, (BYTE) (i & 0xFF), DC_MSG_SIZE);
             dataChannelSend(pAnswerRemoteDc, TRUE, dcMsgPayload, DC_MSG_SIZE);
             THREAD_SLEEP(8 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND); // ~120 msg/sec
         }
@@ -2561,11 +2534,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     audioSenderThread.join();
 
     // --- Drain: wait for all frames and messages to arrive ---
-    for (INT32 i = 0; i < 50 &&
-         (dcRx.count < NUM_DC_MESSAGES ||
-          videoRx.count < NUM_VIDEO_FRAMES ||
-          audioRx.count < NUM_AUDIO_FRAMES);
-         i++) {
+    for (INT32 i = 0; i < 50 && (dcRx.count < NUM_DC_MESSAGES || videoRx.count < NUM_VIDEO_FRAMES || audioRx.count < NUM_AUDIO_FRAMES); i++) {
         THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
@@ -2575,12 +2544,11 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     freePeerConnection(&answerPc);
 
     // --- Verify data channel messages ---
-    EXPECT_EQ((SIZE_T) NUM_DC_MESSAGES, dcRx.frames.size())
-        << "Expected " << NUM_DC_MESSAGES << " DC messages but got " << dcRx.frames.size();
+    EXPECT_EQ((SIZE_T) NUM_DC_MESSAGES, dcRx.frames.size()) << "Expected " << NUM_DC_MESSAGES << " DC messages but got " << dcRx.frames.size();
     for (UINT32 i = 0; i < dcRx.frames.size() && i < NUM_DC_MESSAGES; i++) {
         const auto& msg = dcRx.frames[i];
         EXPECT_EQ((UINT32) DC_MSG_SIZE, (UINT32) msg.data.size()) << "DC message " << i << " size mismatch";
-        BYTE expectedFill = (BYTE)(i & 0xFF);
+        BYTE expectedFill = (BYTE) (i & 0xFF);
         BYTE expectedPayload[DC_MSG_SIZE];
         MEMSET(expectedPayload, expectedFill, DC_MSG_SIZE);
         if (msg.data.size() == DC_MSG_SIZE) {
@@ -2599,7 +2567,8 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         const auto& expected = videoInputFrames[i];
         EXPECT_EQ(expected.sendPts, rx.receivePts) << "Video frame " << i << " pts mismatch";
         UINT32 expectedOffsets[128], expectedLengths[128], rxOffsets[128], rxLengths[128];
-        UINT32 expectedNaluCount = extractNaluInfo((PBYTE) expected.data.data(), (UINT32) expected.data.size(), expectedOffsets, expectedLengths, 128);
+        UINT32 expectedNaluCount =
+            extractNaluInfo((PBYTE) expected.data.data(), (UINT32) expected.data.size(), expectedOffsets, expectedLengths, 128);
         UINT32 rxNaluCount = extractNaluInfo((PBYTE) rx.data.data(), (UINT32) rx.data.size(), rxOffsets, rxLengths, 128);
         EXPECT_EQ(expectedNaluCount, rxNaluCount) << "Video frame " << i << " NALU count mismatch";
         if (rxNaluCount == expectedNaluCount) {
@@ -2621,34 +2590,32 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         EXPECT_EQ(audioInputFrames[i].sendPts, rx.receivePts) << "Audio frame " << i << " pts mismatch";
         EXPECT_EQ((UINT32) audioInputFrames[i].data.size(), (UINT32) rx.data.size()) << "Audio frame " << i << " size mismatch";
         if (rx.data.size() == audioInputFrames[i].data.size()) {
-            EXPECT_EQ(0, MEMCMP(rx.data.data(), audioInputFrames[i].data.data(), rx.data.size()))
-                << "Audio frame " << i << " content mismatch";
+            EXPECT_EQ(0, MEMCMP(rx.data.data(), audioInputFrames[i].data.data(), rx.data.size())) << "Audio frame " << i << " content mismatch";
         }
     }
 
     // --- Verify frame delivery latency ---
-    // Frame 0 has higher latency because the jitter buffer delays the first frame until the next
-    // frame's first packet arrives (firstFrameProcessed guard). This adds ~1 frame interval of latency
-    // to the very first frame only. All subsequent frames use marker-bit delivery with near-zero latency.
-    constexpr UINT64 FIRST_FRAME_LATENCY_LIMIT = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    // Video frame 0 has higher latency because the jitter buffer delays the first frame until the next
+    // frame's first packet arrives (firstFrameProcessed guard for codecs that fragment across packets).
+    // Audio (Opus) uses alwaysSinglePacketFrames so all frames including the first use marker-bit delivery.
+    constexpr UINT64 FIRST_VIDEO_FRAME_LATENCY_LIMIT = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     constexpr UINT64 STEADY_STATE_LATENCY_LIMIT = 5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
 
-    // Video latency
+    // Video latency: frame 0 may have extra latency
     for (UINT32 i = 0; i < videoRx.frames.size() && i < NUM_VIDEO_FRAMES; i++) {
         UINT64 latency = videoRx.frames[i].receiveTime - videoInputFrames[i].sendTime;
         DOUBLE latencyMs = (DOUBLE) latency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
         DLOGI("video frame %u latency: %.2f ms", i, latencyMs);
-        UINT64 limit = (i == 0) ? FIRST_FRAME_LATENCY_LIMIT : STEADY_STATE_LATENCY_LIMIT;
+        UINT64 limit = (i == 0) ? FIRST_VIDEO_FRAME_LATENCY_LIMIT : STEADY_STATE_LATENCY_LIMIT;
         EXPECT_LT(latency, limit) << "Video frame " << i << " latency " << latencyMs << " ms exceeded limit";
     }
 
-    // Audio latency
+    // Audio latency: all frames should have low latency (Opus never fragments)
     for (UINT32 i = 0; i < audioRx.frames.size() && i < NUM_AUDIO_FRAMES; i++) {
         UINT64 latency = audioRx.frames[i].receiveTime - audioInputFrames[i].sendTime;
         DOUBLE latencyMs = (DOUBLE) latency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
         DLOGI("audio frame %u latency: %.2f ms", i, latencyMs);
-        UINT64 limit = (i == 0) ? FIRST_FRAME_LATENCY_LIMIT : STEADY_STATE_LATENCY_LIMIT;
-        EXPECT_LT(latency, limit) << "Audio frame " << i << " latency " << latencyMs << " ms exceeded limit";
+        EXPECT_LT(latency, STEADY_STATE_LATENCY_LIMIT) << "Audio frame " << i << " latency " << latencyMs << " ms exceeded limit";
     }
 }
 } // namespace webrtcclient
