@@ -2599,7 +2599,12 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     // frame's first packet arrives (firstFrameProcessed guard for codecs that fragment across packets).
     // Audio (Opus) uses alwaysSinglePacketFrames so all frames including the first use marker-bit delivery.
     constexpr UINT64 FIRST_VIDEO_FRAME_LATENCY_LIMIT = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    // mbedTLS has higher per-packet DTLS/SRTP overhead than OpenSSL, especially for the first packet
+#ifdef KVS_USE_MBEDTLS
+    constexpr UINT64 STEADY_STATE_LATENCY_LIMIT = 10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+#else
     constexpr UINT64 STEADY_STATE_LATENCY_LIMIT = 5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+#endif
 
     // Video latency: frame 0 may have extra latency
     for (UINT32 i = 0; i < videoRx.frames.size() && i < NUM_VIDEO_FRAMES; i++) {
