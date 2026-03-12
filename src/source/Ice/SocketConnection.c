@@ -5,7 +5,7 @@
 #include "../Include_i.h"
 
 STATUS createSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, PKvsIpAddress pBindAddr, PKvsIpAddress pPeerIpAddr,
-                              UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize,
+                              UINT64 customData, ConnectionDataAvailableFunc dataAvailableFn, UINT32 sendBufSize, UINT32 recvBufSize,
                               PSocketConnection* ppSocketConnection)
 {
     ENTERS();
@@ -22,7 +22,7 @@ STATUS createSocketConnection(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL
     pSocketConnection->lock = MUTEX_CREATE(FALSE);
     CHK(pSocketConnection->lock != INVALID_MUTEX_VALUE, STATUS_INVALID_OPERATION);
 
-    CHK_STATUS(createSocket(familyType, protocol, sendBufSize, &pSocketConnection->localSocket));
+    CHK_STATUS(createSocket(familyType, protocol, sendBufSize, recvBufSize, &pSocketConnection->localSocket));
     if (pBindAddr) {
         CHK_STATUS(socketBind(pBindAddr, pSocketConnection->localSocket));
         pSocketConnection->hostIpAddr = *pBindAddr;

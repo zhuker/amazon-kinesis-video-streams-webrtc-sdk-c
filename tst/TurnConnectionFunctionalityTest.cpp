@@ -71,7 +71,7 @@ class TurnConnectionFunctionalityTest : public WebRtcClientTestBase {
         };
         EXPECT_EQ(STATUS_SUCCESS,
                   createSocketConnection((KVS_IP_FAMILY_TYPE) pTurnServer->ipAddresses.ipv4Address.family, KVS_ICE_DEFAULT_TURN_PROTOCOL, NULL,
-                                         &pTurnServer->ipAddresses.ipv4Address, (UINT64) this, onDataHandler, 0, &pTurnSocket));
+                                         &pTurnServer->ipAddresses.ipv4Address, (UINT64) this, onDataHandler, 0, 0, &pTurnSocket));
         EXPECT_EQ(STATUS_SUCCESS, connectionListenerAddConnection(pConnectionListener, pTurnSocket));
         ASSERT_EQ(STATUS_SUCCESS,
                   createTurnConnection(pTurnServer, timerQueueHandle, TURN_CONNECTION_DATA_TRANSFER_MODE_DATA_CHANNEL, KVS_ICE_DEFAULT_TURN_PROTOCOL,

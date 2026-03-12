@@ -1270,6 +1270,8 @@ typedef struct {
 
     UINT32 sendBufSize; //!< Socket send buffer length. Item larger then this size will get dropped. Use system default if 0.
 
+    UINT32 recvBufSize; //!< Socket receive buffer length. Use system default if 0.
+
     UINT64 filterCustomData; //!< Custom Data that can be populated by the developer while developing filter function
 
     IceSetInterfaceFilterFunc iceSetInterfaceFilterFunc; //!< Filter function callback to be set when the developer

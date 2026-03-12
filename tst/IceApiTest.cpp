@@ -26,7 +26,7 @@ TEST_F(IceApiTest, ConnectionListenerApiTest)
     localhost.port = 0;
 
     EXPECT_EQ(STATUS_SUCCESS,
-              createSocketConnection(KVS_IP_FAMILY_TYPE_IPV4, KVS_SOCKET_PROTOCOL_UDP, &localhost, NULL, 0, NULL, 0, &pDummySocketConnection));
+              createSocketConnection(KVS_IP_FAMILY_TYPE_IPV4, KVS_SOCKET_PROTOCOL_UDP, &localhost, NULL, 0, NULL, 0, 0, &pDummySocketConnection));
 
     EXPECT_NE(STATUS_SUCCESS, createConnectionListener(NULL));
     EXPECT_NE(STATUS_SUCCESS, freeConnectionListener(NULL));

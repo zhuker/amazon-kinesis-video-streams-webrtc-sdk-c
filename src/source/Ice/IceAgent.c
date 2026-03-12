@@ -526,7 +526,8 @@ STATUS iceAgentInitHostCandidate(PIceAgent pIceAgent)
 
         if (pDuplicatedIceCandidate == NULL &&
             STATUS_SUCCEEDED(createSocketConnection(pIpAddress->family, KVS_SOCKET_PROTOCOL_UDP, pIpAddress, NULL, (UINT64) pIceAgent,
-                                                    incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pSocketConnection))) {
+                                                    incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize,
+                                                    pIceAgent->kvsRtcConfiguration.recvBufSize, &pSocketConnection))) {
             pTmpIceCandidate = MEMCALLOC(1, SIZEOF(IceCandidate));
             generateJSONSafeString(pTmpIceCandidate->id, ARRAY_SIZE(pTmpIceCandidate->id));
             pTmpIceCandidate->isRemote = FALSE;
@@ -1828,7 +1829,8 @@ STATUS iceAgentInitSrflxCandidate(PIceAgent pIceAgent)
         // The new port will be stored in pNewCandidate->ipAddress.port. And the IP address will later be updated
         // with the correct IP address once the STUN response is received.
         CHK_STATUS(createSocketConnection(pCandidate->ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, &pCandidate->ipAddress, NULL, (UINT64) pIceAgent,
-                                          incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, &pCandidate->pSocketConnection));
+                                          incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize,
+                                          pIceAgent->kvsRtcConfiguration.recvBufSize, &pCandidate->pSocketConnection));
         ATOMIC_STORE_BOOL(&pCandidate->pSocketConnection->receiveData, TRUE);
         // connectionListener will free the pSocketConnection at the end.
         CHK_STATUS(connectionListenerAddConnection(pIceAgent->pConnectionListener, pCandidate->pSocketConnection));
@@ -1983,7 +1985,8 @@ STATUS iceAgentInitRelayCandidate(PIceAgent pIceAgent, UINT32 iceServerIndex, KV
     // with the correct relay IP address once the Allocation success response is received. Relay candidate's socket is managed
     // by TurnConnection struct.
     CHK_STATUS(createSocketConnection(turnServerIpFamily, protocol, NULL, pTurnServerAddress, (UINT64) pNewCandidate, incomingRelayedDataHandler,
-                                      pIceAgent->kvsRtcConfiguration.sendBufSize, &pNewCandidate->pSocketConnection));
+                                      pIceAgent->kvsRtcConfiguration.sendBufSize, pIceAgent->kvsRtcConfiguration.recvBufSize,
+                                      &pNewCandidate->pSocketConnection));
     // connectionListener will free the pSocketConnection at the end.
     CHK_STATUS(connectionListenerAddConnection(pIceAgent->pConnectionListener, pNewCandidate->pSocketConnection));
 
