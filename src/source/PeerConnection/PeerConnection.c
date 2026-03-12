@@ -1171,6 +1171,9 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection->MTU = pConfiguration->kvsRtcConfiguration.maximumTransmissionUnit == 0
         ? DEFAULT_MTU_SIZE_BYTES
         : pConfiguration->kvsRtcConfiguration.maximumTransmissionUnit;
+    pKvsPeerConnection->jitterBufferMaxLatency = pConfiguration->kvsRtcConfiguration.jitterBufferMaxLatency == 0
+        ? DEFAULT_JITTER_BUFFER_MAX_LATENCY
+        : pConfiguration->kvsRtcConfiguration.jitterBufferMaxLatency;
     ATOMIC_STORE_BOOL(&pKvsPeerConnection->sctpIsEnabled, FALSE);
     ATOMIC_STORE_BOOL(&pKvsPeerConnection->receiveEnabled, TRUE);
 
@@ -2001,7 +2004,7 @@ STATUS addTransceiver(PRtcPeerConnection pPeerConnection, PRtcMediaStreamTrack p
     // Audio codecs (Opus per RFC 7587, G.711) never fragment frames across RTP packets
     BOOL alwaysSinglePacketFrames = (pRtcMediaStreamTrack->codec == RTC_CODEC_OPUS || pRtcMediaStreamTrack->codec == RTC_CODEC_MULAW ||
                                      pRtcMediaStreamTrack->codec == RTC_CODEC_ALAW);
-    CHK_STATUS(createJitterBuffer(onFrameReadyFunc, onFrameDroppedFunc, depayFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY, clockRate,
+    CHK_STATUS(createJitterBuffer(onFrameReadyFunc, onFrameDroppedFunc, depayFunc, pKvsPeerConnection->jitterBufferMaxLatency, clockRate,
                                   (UINT64) pKvsRtpTransceiver, alwaysSinglePacketFrames, &pJitterBuffer));
     CHK_STATUS(kvsRtpTransceiverSetJitterBuffer(pKvsRtpTransceiver, pJitterBuffer));
 

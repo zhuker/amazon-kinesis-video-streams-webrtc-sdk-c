@@ -177,6 +177,8 @@ typedef struct {
 
     UINT64 iceConnectingStartTime;
     KvsPeerConnectionDiagnostics peerConnectionDiagnostics;
+
+    UINT32 jitterBufferMaxLatency; //!< Max latency for jitter buffer, from KvsRtcConfiguration
 } KvsPeerConnection, *PKvsPeerConnection;
 
 typedef struct {
