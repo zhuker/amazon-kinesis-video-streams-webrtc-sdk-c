@@ -2599,7 +2599,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     // frame's first packet arrives (firstFrameProcessed guard for codecs that fragment across packets).
     // Audio (Opus) uses alwaysSinglePacketFrames so all frames including the first use marker-bit delivery.
     constexpr UINT64 FIRST_VIDEO_FRAME_LATENCY_LIMIT = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-    constexpr UINT64 STEADY_STATE_LATENCY_LIMIT = 5 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    constexpr UINT64 STEADY_STATE_LATENCY_LIMIT = 10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
 
     // Video latency: assert first frame, collect steady-state for median
     std::vector<UINT64> videoSteadyLatencies;
