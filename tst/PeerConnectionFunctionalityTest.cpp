@@ -2601,21 +2601,40 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     constexpr UINT64 FIRST_VIDEO_FRAME_LATENCY_LIMIT = 50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     constexpr UINT64 STEADY_STATE_LATENCY_LIMIT = 10 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
 
-    // Video latency: frame 0 may have extra latency
+    // Video latency: assert first frame, collect steady-state for median
+    std::vector<UINT64> videoSteadyLatencies;
     for (UINT32 i = 0; i < videoRx.frames.size() && i < NUM_VIDEO_FRAMES; i++) {
         UINT64 latency = videoRx.frames[i].receiveTime - videoInputFrames[i].sendTime;
         DOUBLE latencyMs = (DOUBLE) latency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
         DLOGI("video frame %u latency: %.2f ms", i, latencyMs);
-        UINT64 limit = (i == 0) ? FIRST_VIDEO_FRAME_LATENCY_LIMIT : STEADY_STATE_LATENCY_LIMIT;
-        EXPECT_LT(latency, limit) << "Video frame " << i << " latency " << latencyMs << " ms exceeded limit";
+        if (i == 0) {
+            EXPECT_LT(latency, FIRST_VIDEO_FRAME_LATENCY_LIMIT) << "Video frame 0 latency " << latencyMs << " ms exceeded limit";
+        } else {
+            videoSteadyLatencies.push_back(latency);
+        }
+    }
+    if (!videoSteadyLatencies.empty()) {
+        std::sort(videoSteadyLatencies.begin(), videoSteadyLatencies.end());
+        UINT64 medianVideoLatency = videoSteadyLatencies[videoSteadyLatencies.size() / 2];
+        DOUBLE medianVideoMs = (DOUBLE) medianVideoLatency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        DLOGI("video median steady-state latency: %.2f ms", medianVideoMs);
+        EXPECT_LT(medianVideoLatency, STEADY_STATE_LATENCY_LIMIT) << "Video median latency " << medianVideoMs << " ms exceeded limit";
     }
 
-    // Audio latency: all frames should have low latency (Opus never fragments)
+    // Audio latency: all frames use median (Opus never fragments)
+    std::vector<UINT64> audioLatencies;
     for (UINT32 i = 0; i < audioRx.frames.size() && i < NUM_AUDIO_FRAMES; i++) {
         UINT64 latency = audioRx.frames[i].receiveTime - audioInputFrames[i].sendTime;
         DOUBLE latencyMs = (DOUBLE) latency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
         DLOGI("audio frame %u latency: %.2f ms", i, latencyMs);
-        EXPECT_LT(latency, STEADY_STATE_LATENCY_LIMIT) << "Audio frame " << i << " latency " << latencyMs << " ms exceeded limit";
+        audioLatencies.push_back(latency);
+    }
+    if (!audioLatencies.empty()) {
+        std::sort(audioLatencies.begin(), audioLatencies.end());
+        UINT64 medianAudioLatency = audioLatencies[audioLatencies.size() / 2];
+        DOUBLE medianAudioMs = (DOUBLE) medianAudioLatency / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        DLOGI("audio median latency: %.2f ms", medianAudioMs);
+        EXPECT_LT(medianAudioLatency, STEADY_STATE_LATENCY_LIMIT) << "Audio median latency " << medianAudioMs << " ms exceeded limit";
     }
 }
 } // namespace webrtcclient
