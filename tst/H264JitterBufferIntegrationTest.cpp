@@ -65,6 +65,7 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
     std::vector<std::vector<BYTE>> mReceivedFrames;
     std::vector<UINT32> mReceivedFrameTimestamps;
     std::vector<UINT32> mDroppedFrameTimestamps;
+    std::vector<DOUBLE> mFrameDelayMs; // delay in ms for each delivered/dropped frame
 
     // Storage for RTP packets (for simulation)
     struct RtpPacketInfo {
@@ -123,6 +124,7 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
         mReceivedFrames.clear();
         mReceivedFrameTimestamps.clear();
         mDroppedFrameTimestamps.clear();
+        mFrameDelayMs.clear();
 
         if (mJitterBuffer != NULL) {
             freeJitterBuffer(&mJitterBuffer);
@@ -303,7 +305,21 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
         H264JitterBufferIntegrationTest* pTest = (H264JitterBufferIntegrationTest*) customData;
         UINT32 filledSize = 0;
 
-        DLOGS("Frame ready callback: startIndex=%u, endIndex=%u, frameSize=%u", startIndex, endIndex, frameSize);
+        UINT32 frameTsReady = 0;
+        UINT32 tailTsReady = 0;
+        if (pTest->mJitterBuffer != NULL) {
+            tailTsReady = pTest->mJitterBuffer->tailTimestamp;
+            // Look up the frame timestamp from the start packet
+            UINT64 hashValue = 0;
+            if (STATUS_SUCCEEDED(hashTableGet(pTest->mJitterBuffer->pPkgBufferHashTable, startIndex, &hashValue))) {
+                frameTsReady = ((PRtpPacket) hashValue)->header.timestamp;
+            }
+        }
+        INT32 delayTs = (INT32)(tailTsReady - frameTsReady);
+        DOUBLE delayMs = (pTest->mClockRate > 0) ? (DOUBLE) delayTs * 1000.0 / pTest->mClockRate : 0.0;
+        pTest->mFrameDelayMs.push_back(delayMs);
+        DLOGI("Frame READY: startIndex=%u, endIndex=%u, frameSize=%u, frameTs=%u, tailTs=%u, delay=%d (%.1fms)",
+              startIndex, endIndex, frameSize, frameTsReady, tailTsReady, delayTs, delayMs);
 
         if (frameSize == 0) {
             DLOGW("Frame size is 0, skipping");
@@ -339,11 +355,16 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
 
     static STATUS h264FrameDroppedCallback(UINT64 customData, UINT16 startIndex, UINT16 endIndex, UINT32 timestamp)
     {
-        UNUSED_PARAM(startIndex);
-        UNUSED_PARAM(endIndex);
-        DLOGS("Frame dropped callback: startIndex=%u, endIndex=%u, timestamp=%u", startIndex, endIndex, timestamp);
-
         H264JitterBufferIntegrationTest* pTest = (H264JitterBufferIntegrationTest*) customData;
+        UINT32 tailTsDropped = 0;
+        if (pTest->mJitterBuffer != NULL) {
+            tailTsDropped = pTest->mJitterBuffer->tailTimestamp;
+        }
+        INT32 delayTs = (INT32)(tailTsDropped - timestamp);
+        DOUBLE delayMs = (pTest->mClockRate > 0) ? (DOUBLE) delayTs * 1000.0 / pTest->mClockRate : 0.0;
+        pTest->mFrameDelayMs.push_back(delayMs);
+        DLOGI("Frame DROPPED: startIndex=%u, endIndex=%u, frameTs=%u, tailTs=%u, delay=%d (%.1fms)",
+              startIndex, endIndex, timestamp, tailTsDropped, delayTs, delayMs);
         pTest->mTotalFramesDropped++;
         pTest->mDroppedFrameTimestamps.push_back(timestamp);
         return STATUS_SUCCESS;
@@ -826,8 +847,13 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
         freeJitterBuffer(&mJitterBuffer);
         mJitterBuffer = NULL;
 
-        DLOGI("reorder=%u: received=%u (flush added %u), dropped=%u (flush added %u), packets dropped=%zu", maxReorderDistance, mTotalFramesReceived,
-              mTotalFramesReceived - receivedBeforeFlush, mTotalFramesDropped, mTotalFramesDropped - droppedBeforeFlush, dropIndices.size());
+        DOUBLE avgDelayMs = 0.0;
+        if (!mFrameDelayMs.empty()) {
+            avgDelayMs = std::accumulate(mFrameDelayMs.begin(), mFrameDelayMs.end(), 0.0) / mFrameDelayMs.size();
+        }
+        DLOGI("reorder=%u: received=%u (flush added %u), dropped=%u (flush added %u), packets dropped=%zu, avgDelayMs=%.1f",
+              maxReorderDistance, mTotalFramesReceived, mTotalFramesReceived - receivedBeforeFlush, mTotalFramesDropped,
+              mTotalFramesDropped - droppedBeforeFlush, dropIndices.size(), avgDelayMs);
 
         // Count intact frames that were incorrectly dropped
         mIntactFramesDropped = countIntactFramesDropped(dropIndices);
@@ -853,6 +879,10 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
         DLOGI("Frame accounting: received=%u + dropped=%u = %u, expected=%u (NUM_FRAMES=%u - fullyDropped=%u)", mTotalFramesReceived,
               mTotalFramesDropped, accountedFrames, expectedAccountedFrames, numFrames, analysis.framesFullyDropped);
         EXPECT_EQ(expectedAccountedFrames, accountedFrames) << "Frame accounting mismatch: some frames are unaccounted for";
+
+        // Average delay must not exceed max latency
+        DOUBLE maxLatencyMs = (DOUBLE) H264_INTEGRATION_TEST_MAX_LATENCY / (DOUBLE) HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        EXPECT_LE(avgDelayMs, maxLatencyMs) << "Average frame delay " << avgDelayMs << "ms exceeds max latency " << maxLatencyMs << "ms";
     }
 };
 
@@ -962,6 +992,18 @@ TEST_F(H264JitterBufferIntegrationTest, markerPacketFirstAtTimestampZeroNoDouble
     // Verify frame 0 was received with correct timestamp
     ASSERT_GE(mReceivedFrameTimestamps.size(), 1u);
     EXPECT_EQ(0u, mReceivedFrameTimestamps[0]) << "Frame 0 should have timestamp 0";
+}
+
+// Test: Single dropped packet in first frame delays all subsequent frames
+TEST_F(H264JitterBufferIntegrationTest, singleDropInFirstFrameDelaysAll)
+{
+    // Drop only packet index 1 (second packet of first frame)
+    auto dropSecondPacket = [](UINT32 totalPackets) {
+        std::set<UINT32> drops;
+        drops.insert(1);
+        return drops;
+    };
+    runPacketLossTest("../samples/girH264", 1000, dropSecondPacket);
 }
 
 // Benchmark test: Records jitter buffer deficiency metrics

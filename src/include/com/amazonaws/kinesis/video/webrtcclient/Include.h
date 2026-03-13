@@ -1281,6 +1281,12 @@ typedef struct {
     BOOL disableSenderSideBandwidthEstimation; //!< Disable TWCC feedback based sender bandwidth estimation, enabled by default.
                                                //!< You want to set this to TRUE if you are on a very stable connection and want to save 1.2MB of
                                                //!< memory
+
+    UINT32 jitterBufferMaxLatency; //!< Maximum time in 100ns units that a frame can remain in the jitter buffer before being dropped.
+                                   //!< An incomplete frame at the head of the jitter buffer blocks delivery of all subsequent complete frames
+                                   //!< until this timeout expires. Lower values reduce head-of-line blocking latency but increase frame drops
+                                   //!< under packet loss. If 0, DEFAULT_JITTER_BUFFER_MAX_LATENCY (2000ms) is used.
+
 #ifdef ENABLE_STATS_CALCULATION_CONTROL
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined
                          //!< to use this member, else stats are enabled by default.
