@@ -68,12 +68,13 @@ typedef struct __SocketConnection* PSocketConnection;
  * @param - UINT64 - IN - data available callback custom data
  * @param - ConnectionDataAvailableFunc - IN - data available callback (OPTIONAL)
  * @param - UINT32 - IN - send buffer size in bytes
+ * @param - UINT32 - IN - receive buffer size in bytes
  * @param - PSocketConnection* - OUT - the resulting SocketConnection struct
  *
  * @return - STATUS - status of execution
  */
 STATUS createSocketConnection(KVS_IP_FAMILY_TYPE, KVS_SOCKET_PROTOCOL, PKvsIpAddress, PKvsIpAddress, UINT64, ConnectionDataAvailableFunc, UINT32,
-                              PSocketConnection*);
+                              UINT32, PSocketConnection*);
 
 /**
  * Free the SocketConnection struct

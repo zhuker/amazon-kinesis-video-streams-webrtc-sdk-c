@@ -138,7 +138,7 @@ PVOID connectionListenAddConnectionRoutine(PVOID arg)
     for (i = 0; i < pCustomData->connectionToAdd; ++i) {
         randomDelay = (UINT64) (RAND() % 300) * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
         THREAD_SLEEP(randomDelay);
-        CHECK(STATUS_SUCCEEDED(createSocketConnection((KVS_IP_FAMILY_TYPE) localhost.family, KVS_SOCKET_PROTOCOL_UDP, &localhost, NULL, 0, NULL, 0,
+        CHECK(STATUS_SUCCEEDED(createSocketConnection((KVS_IP_FAMILY_TYPE) localhost.family, KVS_SOCKET_PROTOCOL_UDP, &localhost, NULL, 0, NULL, 0, 0,
                                                       &pSocketConnection)));
         pCustomData->socketConnectionList[i] = pSocketConnection;
         CHECK(STATUS_SUCCEEDED(connectionListenerAddConnection(pCustomData->pConnectionListener, pSocketConnection)));
@@ -190,7 +190,7 @@ TEST_F(IceFunctionalityTest, connectionListenerFunctionalityTest)
     EXPECT_EQ(connectionCount, routine1CustomData.connectionToAdd + routine2CustomData.connectionToAdd);
 
     CHECK(STATUS_SUCCEEDED(
-        createSocketConnection((KVS_IP_FAMILY_TYPE) localhost.family, KVS_SOCKET_PROTOCOL_UDP, &localhost, NULL, 0, NULL, 0, &pSocketConnection)));
+        createSocketConnection((KVS_IP_FAMILY_TYPE) localhost.family, KVS_SOCKET_PROTOCOL_UDP, &localhost, NULL, 0, NULL, 0, 0, &pSocketConnection)));
     EXPECT_EQ(STATUS_SUCCESS, connectionListenerAddConnection(pConnectionListener, pSocketConnection));
 
     newConnectionCount = pConnectionListener->socketCount;

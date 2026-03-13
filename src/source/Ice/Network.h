@@ -73,11 +73,12 @@ STATUS createSocketPair(INT32 (*)[2]);
  * @param - KVS_IP_FAMILY_TYPE - IN - Family for the socket. Must be one of KVS_IP_FAMILY_TYPE
  * @param - KVS_SOCKET_PROTOCOL - IN - either tcp or udp
  * @param - UINT32 - IN - send buffer size in bytes
+ * @param - UINT32 - IN - receive buffer size in bytes
  * @param - PINT32 - OUT - PINT32 for the socketfd
  *
  * @return - STATUS status of execution
  */
-STATUS createSocket(KVS_IP_FAMILY_TYPE, KVS_SOCKET_PROTOCOL, UINT32, PINT32);
+STATUS createSocket(KVS_IP_FAMILY_TYPE, KVS_SOCKET_PROTOCOL, UINT32, UINT32, PINT32);
 
 /**
  * @param - INT32 - IN - INT32 for the socketfd

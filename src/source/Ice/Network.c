@@ -164,7 +164,7 @@ CleanUp:
 }
 #endif
 
-STATUS createSocket(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, UINT32 sendBufSize, PINT32 pOutSockFd)
+STATUS createSocket(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol, UINT32 sendBufSize, UINT32 recvBufSize, PINT32 pOutSockFd)
 {
     STATUS retStatus = STATUS_SUCCESS;
 
@@ -192,13 +192,8 @@ STATUS createSocket(KVS_IP_FAMILY_TYPE familyType, KVS_SOCKET_PROTOCOL protocol,
         CHK(FALSE, STATUS_SOCKET_SET_SEND_BUFFER_SIZE_FAILED);
     }
 
-    // Increase UDP receive buffer to handle burst traffic (e.g. a full video
-    // frame worth of RTP packets arriving before the reader thread drains them).
-    if (protocol == KVS_SOCKET_PROTOCOL_UDP) {
-        INT32 rcvBufSize = 512 * 1024;
-        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &rcvBufSize, SIZEOF(rcvBufSize)) < 0) {
-            DLOGD("setsockopt() SO_RCVBUF failed with errno %s", getErrorString(getErrorCode()));
-        }
+    if (recvBufSize > 0 && setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &recvBufSize, SIZEOF(recvBufSize)) < 0) {
+        DLOGW("setsockopt() SO_RCVBUF failed with errno %s", getErrorString(getErrorCode()));
     }
 
     *pOutSockFd = (INT32) sockfd;
