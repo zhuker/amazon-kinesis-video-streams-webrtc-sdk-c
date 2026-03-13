@@ -1829,8 +1829,8 @@ STATUS iceAgentInitSrflxCandidate(PIceAgent pIceAgent)
         // The new port will be stored in pNewCandidate->ipAddress.port. And the IP address will later be updated
         // with the correct IP address once the STUN response is received.
         CHK_STATUS(createSocketConnection(pCandidate->ipAddress.family, KVS_SOCKET_PROTOCOL_UDP, &pCandidate->ipAddress, NULL, (UINT64) pIceAgent,
-                                          incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize,
-                                          pIceAgent->kvsRtcConfiguration.recvBufSize, &pCandidate->pSocketConnection));
+                                          incomingDataHandler, pIceAgent->kvsRtcConfiguration.sendBufSize, pIceAgent->kvsRtcConfiguration.recvBufSize,
+                                          &pCandidate->pSocketConnection));
         ATOMIC_STORE_BOOL(&pCandidate->pSocketConnection->receiveData, TRUE);
         // connectionListener will free the pSocketConnection at the end.
         CHK_STATUS(connectionListenerAddConnection(pIceAgent->pConnectionListener, pCandidate->pSocketConnection));
