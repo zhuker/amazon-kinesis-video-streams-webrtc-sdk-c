@@ -430,14 +430,12 @@ STATUS onFrameReadyFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex, U
     PKvsRtpTransceiver pTransceiver = (PKvsRtpTransceiver) customData;
     PRtpPacket pPacket = NULL;
     Frame frame;
-    UINT64 hashValue;
     UINT32 filledSize = 0, index;
 
     CHK(pTransceiver != NULL, STATUS_NULL_ARG);
 
     // TODO: handle multi-packet frames
-    retStatus = hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, startIndex, &hashValue);
-    pPacket = (PRtpPacket) hashValue;
+    retStatus = jitterBufferGetPacket(pTransceiver->pJitterBuffer, startIndex, &pPacket);
     if (retStatus == STATUS_SUCCESS || retStatus == STATUS_HASH_KEY_NOT_PRESENT) {
         retStatus = STATUS_SUCCESS;
     } else {
@@ -487,24 +485,17 @@ STATUS onFrameDroppedFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex,
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
-    UINT64 hashValue = 0;
-    PRtpPacket pPacket = NULL;
     PRtpPacket pFirstPacket = NULL;
     PKvsRtpTransceiver pTransceiver = (PKvsRtpTransceiver) customData;
-    UINT16 index;
-    UINT32 partialFrameSize = 0;
     UINT32 totalPartialSize = 0;
     UINT32 filledSize = 0;
-    PBYTE pCurPtrInFrame = NULL;
     Frame frame;
-    BOOL hasEntry = FALSE;
 
     DLOGW("Frame with timestamp %u is dropped!", timestamp);
     CHK(pTransceiver != NULL, STATUS_NULL_ARG);
 
     // Get first available packet for stats and timestamp
-    retStatus = hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, startIndex, &hashValue);
-    pFirstPacket = (PRtpPacket) hashValue;
+    retStatus = jitterBufferGetPacket(pTransceiver->pJitterBuffer, startIndex, &pFirstPacket);
     if (retStatus == STATUS_SUCCESS || retStatus == STATUS_HASH_KEY_NOT_PRESENT) {
         retStatus = STATUS_SUCCESS;
     } else {
@@ -523,30 +514,8 @@ STATUS onFrameDroppedFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex,
     // If no partial frame callback registered, skip partial frame extraction
     CHK(pTransceiver->onPartialFrame != NULL, retStatus);
 
-    // Calculate total size of available packets
-    // NOTE: use local status instead of CHK_STATUS to avoid aborting the entire
-    // frame when a single packet's depay fails (e.g. truncated FU-A fragment).
-    BOOL isFirstInFrame = TRUE;
-    for (index = startIndex; UINT16_DEC(index) != endIndex; index++) {
-        if (STATUS_FAILED(hashTableContains(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hasEntry))) {
-            continue;
-        }
-        if (hasEntry) {
-            if (STATUS_FAILED(hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hashValue))) {
-                continue;
-            }
-            pPacket = (PRtpPacket) hashValue;
-            partialFrameSize = 0;
-            BOOL depayIsFirst = isFirstInFrame;
-            if (STATUS_FAILED(
-                    pTransceiver->pJitterBuffer->depayPayloadFn(pPacket->payload, pPacket->payloadLength, NULL, &partialFrameSize, &depayIsFirst))) {
-                DLOGW("depayPayloadFn size query failed for packet index %u, skipping", index);
-                continue;
-            }
-            totalPartialSize += partialFrameSize;
-            isFirstInFrame = FALSE;
-        }
-    }
+    // Calculate total size of available packets (size-query pass with NULL buffer)
+    jitterBufferFillPartialFrameData(pTransceiver->pJitterBuffer, NULL, 0, &totalPartialSize, startIndex, endIndex);
 
     // If no data available, skip callback
     CHK(totalPartialSize > 0, retStatus);
@@ -560,30 +529,7 @@ STATUS onFrameDroppedFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex,
     }
 
     // Fill partial frame data (skipping missing packets)
-    // NOTE: continue on failure — same rationale as the size calculation loop.
-    isFirstInFrame = TRUE;
-    pCurPtrInFrame = pTransceiver->peerFrameBuffer;
-    for (index = startIndex; UINT16_DEC(index) != endIndex; index++) {
-        if (STATUS_FAILED(hashTableContains(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hasEntry))) {
-            continue;
-        }
-        if (hasEntry) {
-            if (STATUS_FAILED(hashTableGet(pTransceiver->pJitterBuffer->pPkgBufferHashTable, index, &hashValue))) {
-                continue;
-            }
-            pPacket = (PRtpPacket) hashValue;
-            partialFrameSize = totalPartialSize - filledSize;
-            BOOL depayIsFirst = isFirstInFrame;
-            if (STATUS_FAILED(pTransceiver->pJitterBuffer->depayPayloadFn(pPacket->payload, pPacket->payloadLength, pCurPtrInFrame, &partialFrameSize,
-                                                                          &depayIsFirst))) {
-                DLOGW("depayPayloadFn fill failed for packet index %u, skipping", index);
-                continue;
-            }
-            pCurPtrInFrame += partialFrameSize;
-            filledSize += partialFrameSize;
-            isFirstInFrame = FALSE;
-        }
-    }
+    jitterBufferFillPartialFrameData(pTransceiver->pJitterBuffer, pTransceiver->peerFrameBuffer, totalPartialSize, &filledSize, startIndex, endIndex);
 
     // Build frame struct and invoke callback
     frame.version = FRAME_CURRENT_VERSION;
