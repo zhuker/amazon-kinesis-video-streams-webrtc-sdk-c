@@ -310,9 +310,9 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase {
         if (pTest->mJitterBuffer != NULL) {
             tailTsReady = pTest->mJitterBuffer->tailTimestamp;
             // Look up the frame timestamp from the start packet
-            UINT64 hashValue = 0;
-            if (STATUS_SUCCEEDED(hashTableGet(pTest->mJitterBuffer->pPkgBufferHashTable, startIndex, &hashValue))) {
-                frameTsReady = ((PRtpPacket) hashValue)->header.timestamp;
+            PRtpPacket pStartPacket = NULL;
+            if (STATUS_SUCCEEDED(jitterBufferGetPacket(pTest->mJitterBuffer, startIndex, &pStartPacket)) && pStartPacket != NULL) {
+                frameTsReady = pStartPacket->header.timestamp;
             }
         }
         INT32 delayTs = (INT32)(tailTsReady - frameTsReady);
