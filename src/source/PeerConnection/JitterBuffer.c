@@ -32,9 +32,10 @@ typedef struct {
 // forward declarations of default implementations
 static STATUS defaultPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL pPacketDiscarded);
 static STATUS defaultDestroy(PJitterBuffer* ppJitterBuffer);
-static STATUS defaultFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex, UINT16 endIndex);
+static STATUS defaultFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex,
+                                   UINT16 endIndex);
 static STATUS defaultFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex,
-                                           UINT16 endIndex);
+                                          UINT16 endIndex);
 static STATUS defaultGetPacket(PJitterBuffer pJitterBuffer, UINT16 seqNum, PRtpPacket* ppPacket);
 static STATUS defaultDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex, UINT16 endIndex, UINT32 nextTimestamp);
 static STATUS jitterBufferInternalParse(PJitterBufferInternal pInternal, BOOL bufferClosed);
@@ -74,7 +75,7 @@ STATUS jitterBufferFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT
 }
 
 STATUS jitterBufferFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex,
-                                         UINT16 endIndex)
+                                        UINT16 endIndex)
 {
     if (pJitterBuffer == NULL || pJitterBuffer->fillPartialFrameDataFn == NULL) {
         return STATUS_NULL_ARG;
@@ -152,8 +153,8 @@ STATUS createJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedFunc onFr
     pInternal->alwaysSinglePacketFrames = alwaysSinglePacketFrames;
 
     pInternal->customData = customData;
-    CHK_STATUS(hashTableCreateWithParams(JITTER_BUFFER_HASH_TABLE_BUCKET_COUNT, JITTER_BUFFER_HASH_TABLE_BUCKET_LENGTH,
-                                         &pInternal->pPkgBufferHashTable));
+    CHK_STATUS(
+        hashTableCreateWithParams(JITTER_BUFFER_HASH_TABLE_BUCKET_COUNT, JITTER_BUFFER_HASH_TABLE_BUCKET_LENGTH, &pInternal->pPkgBufferHashTable));
 
 CleanUp:
     if (STATUS_FAILED(retStatus) && pInternal != NULL) {
@@ -450,7 +451,7 @@ CleanUp:
 }
 
 static STATUS defaultFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex,
-                                           UINT16 endIndex)
+                                          UINT16 endIndex)
 {
     STATUS retStatus = STATUS_SUCCESS;
     PJitterBufferInternal pInternal = (PJitterBufferInternal) pJitterBuffer;
@@ -480,7 +481,8 @@ static STATUS defaultFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFr
                 partialFrameSize = 0;
             }
             BOOL depayIsFirst = isFirstInFrame;
-            if (STATUS_FAILED(pInternal->depayPayloadFn(pPacket->payload, pPacket->payloadLength, pCurPtrInFrame, &partialFrameSize, &depayIsFirst))) {
+            if (STATUS_FAILED(
+                    pInternal->depayPayloadFn(pPacket->payload, pPacket->payloadLength, pCurPtrInFrame, &partialFrameSize, &depayIsFirst))) {
                 DLOGW("depayPayloadFn failed for packet index %u, skipping", index);
                 continue;
             }
@@ -650,8 +652,7 @@ static STATUS jitterBufferInternalParse(PJitterBufferInternal pInternal, BOOL bu
                     lastHeadFrameSeqNum = index;
                     seenHeadFramePacket = TRUE;
                     headFrameEnded = pCurPacket->header.marker;
-                } else if (seenHeadFramePacket && startDropIndex != index &&
-                           (pInternal->headTimestamp < earliestAllowedTimestamp || bufferClosed)) {
+                } else if (seenHeadFramePacket && startDropIndex != index && (pInternal->headTimestamp < earliestAllowedTimestamp || bufferClosed)) {
                     pInternal->onFrameDroppedFn(pInternal->customData, startDropIndex, UINT16_DEC(index), pInternal->headTimestamp);
                     CHK_STATUS(defaultDropBufferData((PJitterBuffer) pInternal, startDropIndex, UINT16_DEC(index), curTimestamp));
                     pInternal->firstFrameProcessed = TRUE;
@@ -772,7 +773,7 @@ CleanUp:
 
 // Depay all packets containing sequence numbers between and including the startIndex and endIndex for the JitterBuffer.
 static STATUS defaultFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex,
-                                    UINT16 endIndex)
+                                   UINT16 endIndex)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
