@@ -464,15 +464,6 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
             pInternal->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         }
 
-        // A new timestamp proves all older frames are complete (sender moved on).
-        // Mark any older frames without hasEnd as ended.
-        for (i = 0; i < pInternal->frameCount; i++) {
-            if (pInternal->frames[i].timestamp != pRtpPacket->header.timestamp &&
-                !pInternal->frames[i].hasEnd &&
-                rtTimestampCompare(pInternal, pInternal->frames[i].timestamp, pRtpPacket->header.timestamp) < 0) {
-                pInternal->frames[i].hasEnd = TRUE;
-            }
-        }
     }
 
     pFrame = &pInternal->frames[frameIdx];
@@ -819,9 +810,15 @@ static STATUS rtDestroy(PJitterBuffer* ppJitterBuffer)
 
     // Flush remaining frames: deliver complete ones, drop incomplete ones
     if (pInternal->started && pInternal->frameCount > 0) {
-        // Buffer is closing — no more packets coming. Mark all frames as ended.
+        // Buffer closing — no more packets. Mark frames as ended if they
+        // have all packets in their sequence range.
         for (i = 0; i < pInternal->frameCount; i++) {
-            pInternal->frames[i].hasEnd = TRUE;
+            if (!pInternal->frames[i].hasEnd) {
+                UINT16 expectedCount = (UINT16)(pInternal->frames[i].lastSeqNum - pInternal->frames[i].firstSeqNum + 1);
+                if (pInternal->frames[i].packetCount == expectedCount) {
+                    pInternal->frames[i].hasEnd = TRUE;
+                }
+            }
         }
         // Process in timestamp order
         while (pInternal->frameCount > 0) {
