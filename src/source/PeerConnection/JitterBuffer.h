@@ -32,8 +32,9 @@ typedef struct JitterBuffer {
     STATUS (*dropBufferDataFn)(struct JitterBuffer*, UINT16, UINT16, UINT32);
 } JitterBuffer, *PJitterBuffer;
 
-// constructor
+// constructors
 STATUS createJitterBuffer(FrameReadyFunc, FrameDroppedFunc, DepayRtpPayloadFunc, UINT32, UINT32, UINT64, BOOL, PJitterBuffer*);
+STATUS createRealTimeJitterBuffer(FrameReadyFunc, FrameDroppedFunc, DepayRtpPayloadFunc, UINT32, UINT32, UINT64, BOOL, PJitterBuffer*);
 // destructor
 STATUS freeJitterBuffer(PJitterBuffer*);
 // dispatchers
