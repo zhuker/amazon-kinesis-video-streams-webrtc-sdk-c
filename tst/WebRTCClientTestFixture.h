@@ -340,8 +340,7 @@ class WebRtcClientTestBase : public ::testing::Test {
     virtual void SetUp();
     virtual void TearDown();
     PCHAR GetTestName();
-    VOID initializeJitterBuffer(UINT32, UINT32, UINT32);
-    VOID initializeJitterBuffer(UINT32, UINT32, UINT32, BOOL useRealTime);
+    VOID initializeJitterBuffer(UINT32, UINT32, UINT32, BOOL useRealTime = FALSE);
     VOID clearJitterBufferForTest();
     VOID setPayloadToFree();
 

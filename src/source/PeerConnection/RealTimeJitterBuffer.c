@@ -2,7 +2,7 @@
 
 #include "../Include_i.h"
 
-#define RT_MAX_FRAMES               2048
+#define RT_MAX_FRAMES            2048
 #define RT_HASH_TABLE_BUCKET_COUNT  3000
 #define RT_HASH_TABLE_BUCKET_LENGTH 2
 #define RT_PROCESSED_TS_RING_SIZE   512
@@ -30,11 +30,11 @@ typedef struct {
     UINT16 headSequenceNumber;
     UINT16 tailSequenceNumber;
     UINT32 headTimestamp;
-    BOOL hasDelivered; // whether any frame has been delivered
+    BOOL hasDelivered;             // whether any frame has been delivered
     PHashTable pPkgBufferHashTable;
     UINT32 processedTimestamps[RT_PROCESSED_TS_RING_SIZE]; // ring buffer of delivered/dropped timestamps
-    UINT32 processedTsHead;                                // next write index
-    UINT32 processedTsCount;                               // number of valid entries
+    UINT32 processedTsHead;                                 // next write index
+    UINT32 processedTsCount;                                // number of valid entries
     RtFrameEntry frames[RT_MAX_FRAMES];
     UINT32 frameCount;
 } RealTimeJitterBufferInternal, *PRealTimeJitterBufferInternal;
@@ -95,11 +95,16 @@ static UINT32 rtTimestampAge(PRealTimeJitterBufferInternal pInternal, UINT32 tim
 {
     if (pInternal->timestampOverFlowState) {
         // Overflow: tail has wrapped, head hasn't yet
-        if (timestamp <= pInternal->base.tailTimestamp) {
-            // Both on the wrapped side
-            return pInternal->base.tailTimestamp - timestamp;
+        BOOL tsWrapped = (timestamp < pInternal->headTimestamp);
+        BOOL tailWrapped = (pInternal->base.tailTimestamp < pInternal->headTimestamp);
+        if (tsWrapped == tailWrapped) {
+            // Both on the same side
+            if (pInternal->base.tailTimestamp >= timestamp) {
+                return pInternal->base.tailTimestamp - timestamp;
+            }
+            return 0;
         } else {
-            // timestamp is on the old side (before wrap)
+            // timestamp is on the old side (before wrap), tail is on new side
             return (MAX_RTP_TIMESTAMP - timestamp) + pInternal->base.tailTimestamp + 1;
         }
     } else {
@@ -119,9 +124,11 @@ static INT32 rtTimestampCompare(PRealTimeJitterBufferInternal pInternal, UINT32 
         return 0;
     }
     if (pInternal->timestampOverFlowState) {
-        // In overflow state, high timestamps are "older" (before wrap) and low are "newer" (after wrap)
-        BOOL aWrapped = (a <= pInternal->base.tailTimestamp);
-        BOOL bWrapped = (b <= pInternal->base.tailTimestamp);
+        // In overflow state, high timestamps are "older" (before wrap) and low are "newer" (after wrap).
+        // A value is on the wrapped (new) side if it's less than headTimestamp.
+        // headTimestamp is the earliest frame's timestamp, which is on the pre-wrap (old) side.
+        BOOL aWrapped = (a < pInternal->headTimestamp);
+        BOOL bWrapped = (b < pInternal->headTimestamp);
         if (aWrapped && !bWrapped) {
             return 1; // a is after wrap (newer)
         }
@@ -145,7 +152,7 @@ static STATUS rtFreePacketsInRange(PRealTimeJitterBufferInternal pInternal, UINT
     PRtpPacket pPacket;
     BOOL hasEntry;
 
-    for (seq = firstSeq;; seq++) {
+    for (seq = firstSeq; ; seq++) {
         if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
             if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashValue))) {
                 pPacket = (PRtpPacket) hashValue;
@@ -175,7 +182,7 @@ static STATUS rtCalcFrameSize(PRealTimeJitterBufferInternal pInternal, UINT16 fi
     UINT32 partialSize;
     BOOL isFirst = TRUE;
 
-    for (seq = firstSeq;; seq++) {
+    for (seq = firstSeq; ; seq++) {
         if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
             if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashValue))) {
                 pPacket = (PRtpPacket) hashValue;
@@ -206,7 +213,7 @@ static BOOL rtFrameIsComplete(PRealTimeJitterBufferInternal pInternal, PRtFrameE
     if (!pFrame->hasStart || !pFrame->hasEnd) {
         return FALSE;
     }
-    UINT16 expectedCount = (UINT16) (pFrame->lastSeqNum - pFrame->firstSeqNum + 1);
+    UINT16 expectedCount = (UINT16)(pFrame->lastSeqNum - pFrame->firstSeqNum + 1);
     return pFrame->packetCount == expectedCount;
 }
 
@@ -245,8 +252,8 @@ static VOID rtUpdateHead(PRealTimeJitterBufferInternal pInternal)
 //
 
 STATUS createRealTimeJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedFunc onFrameDroppedFunc, DepayRtpPayloadFunc depayRtpPayloadFunc,
-                                  UINT32 maxLatency, UINT32 clockRate, UINT64 customData, BOOL alwaysSinglePacketFrames,
-                                  PJitterBuffer* ppJitterBuffer)
+                                   UINT32 maxLatency, UINT32 clockRate, UINT64 customData, BOOL alwaysSinglePacketFrames,
+                                   PJitterBuffer* ppJitterBuffer)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -346,25 +353,32 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
         pInternal->base.tailTimestamp = pRtpPacket->header.timestamp;
     }
 
-    // Sequence number overflow tracking
+    // Sequence number overflow/underflow tracking
     if (!pInternal->sequenceNumberOverflowState) {
         UINT16 packetsUntilOverflow = MAX_RTP_SEQUENCE_NUM - pInternal->tailSequenceNumber;
         if (packetsUntilOverflow <= 512 && pRtpPacket->header.sequenceNumber < pInternal->tailSequenceNumber &&
             pRtpPacket->header.sequenceNumber <= 512 - packetsUntilOverflow) {
+            // Overflow: tail wraps to small values
             pInternal->sequenceNumberOverflowState = TRUE;
             pInternal->tailSequenceNumber = pRtpPacket->header.sequenceNumber;
+        } else if (pInternal->headSequenceNumber < 512 &&
+                   pRtpPacket->header.sequenceNumber >= (MAX_UINT16 - 512) &&
+                   pRtpPacket->header.sequenceNumber > pInternal->tailSequenceNumber) {
+            // Underflow: new packet has a large seq (near MAX) but is actually older.
+            // Head is near 0, new packet is near MAX — head moves to the large value.
+            pInternal->sequenceNumberOverflowState = TRUE;
+            pInternal->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         }
     }
 
     // Update tail sequence number
     if (pInternal->sequenceNumberOverflowState) {
-        if (pRtpPacket->header.sequenceNumber <= pInternal->tailSequenceNumber || pRtpPacket->header.sequenceNumber > pInternal->headSequenceNumber) {
-            // Could be new tail in wrapped space
-            // Use simple distance check
-            UINT16 distFromTail = pRtpPacket->header.sequenceNumber - pInternal->tailSequenceNumber;
-            if (distFromTail > 0 && distFromTail < 512) {
-                pInternal->tailSequenceNumber = pRtpPacket->header.sequenceNumber;
-            }
+        // In overflow state, tail is on the wrapped side (small values near 0),
+        // head is on the pre-wrap side (large values near MAX).
+        // Update tail if the new seq is ahead of current tail (on same side or further wrapped).
+        UINT16 distFromTail = (UINT16)(pRtpPacket->header.sequenceNumber - pInternal->tailSequenceNumber);
+        if (distFromTail > 0 && distFromTail < 512) {
+            pInternal->tailSequenceNumber = pRtpPacket->header.sequenceNumber;
         }
     } else {
         if (pRtpPacket->header.sequenceNumber > pInternal->tailSequenceNumber) {
@@ -372,26 +386,38 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
         }
     }
 
-    // Timestamp overflow tracking
+    // Timestamp overflow/underflow tracking
     if (!pInternal->timestampOverFlowState) {
-        if (pInternal->base.tailTimestamp > pRtpPacket->header.timestamp && pRtpPacket->header.timestamp < pInternal->headTimestamp) {
-            // Potential overflow: new packet timestamp is much smaller than tail
-            // Only if this packet advances the tail sequence
+        if (pInternal->base.tailTimestamp > pRtpPacket->header.timestamp &&
+            pRtpPacket->header.timestamp < pInternal->headTimestamp) {
+            // Overflow: new packet timestamp is much smaller than both head and tail.
+            // Tail has wrapped to small values.
             if (pRtpPacket->header.sequenceNumber == pInternal->tailSequenceNumber) {
                 pInternal->timestampOverFlowState = TRUE;
                 pInternal->base.tailTimestamp = pRtpPacket->header.timestamp;
+            }
+        } else if (pRtpPacket->header.timestamp > pInternal->headTimestamp &&
+                   pRtpPacket->header.timestamp > pInternal->base.tailTimestamp) {
+            // Underflow: new packet timestamp is much larger than both head and tail.
+            // This is an older packet from before the wrap (head moves to large value).
+            UINT16 distFromHead = (UINT16)(pInternal->headSequenceNumber - pRtpPacket->header.sequenceNumber);
+            if (distFromHead > 0 && distFromHead < 512) {
+                pInternal->timestampOverFlowState = TRUE;
+                pInternal->headTimestamp = pRtpPacket->header.timestamp;
+                pInternal->headSequenceNumber = pRtpPacket->header.sequenceNumber;
             }
         }
     }
 
     // Update tail timestamp
     if (pInternal->timestampOverFlowState) {
-        if (pRtpPacket->header.timestamp <= pInternal->base.tailTimestamp) {
-            UINT32 dist = pRtpPacket->header.timestamp - pInternal->base.tailTimestamp;
-            // Unsigned wraparound: small positive means just ahead
-            if (dist > 0 && dist < pInternal->maxLatency) {
-                pInternal->base.tailTimestamp = pRtpPacket->header.timestamp;
-            }
+        // In overflow state, tail is on the wrapped side (small values).
+        // Update if the new timestamp is on the wrapped side and ahead of tail.
+        // "On the wrapped side" means <= tail or slightly ahead of tail.
+        // "Pre-wrap side" means close to headTimestamp (large values).
+        // Use rtTimestampCompare: if new ts is newer than tail, update.
+        if (rtTimestampCompare(pInternal, pRtpPacket->header.timestamp, pInternal->base.tailTimestamp) > 0) {
+            pInternal->base.tailTimestamp = pRtpPacket->header.timestamp;
         }
     } else {
         if (pRtpPacket->header.timestamp > pInternal->base.tailTimestamp) {
@@ -402,8 +428,8 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
     // Latency tolerance check - discard if too old
     age = rtTimestampAge(pInternal, pRtpPacket->header.timestamp);
     if (age > pInternal->maxLatency) {
-        DLOGS("RealTimeJitterBuffer: discarding packet seq %u ts %u (age %u > maxLatency %llu)", pRtpPacket->header.sequenceNumber,
-              pRtpPacket->header.timestamp, age, pInternal->maxLatency);
+        DLOGS("RealTimeJitterBuffer: discarding packet seq %u ts %u (age %u > maxLatency %llu)",
+              pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp, age, pInternal->maxLatency);
         freeRtpPacket(&pRtpPacket);
         if (pPacketDiscarded != NULL) {
             *pPacketDiscarded = TRUE;
@@ -461,6 +487,55 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
             pInternal->headTimestamp = pRtpPacket->header.timestamp;
             pInternal->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         }
+
+        // A new timestamp means the sender moved on. For older frames without
+        // a marker bit, use the new packet's sequence number as a fence: all
+        // sequence numbers from firstSeqNum to fence-1 should belong to the
+        // older frame. If every slot in that range is present and matches the
+        // older frame's timestamp, the frame is complete.
+        for (i = 0; i < pInternal->frameCount; i++) {
+            PRtFrameEntry pOlder = &pInternal->frames[i];
+            if (pOlder->timestamp != pRtpPacket->header.timestamp && !pOlder->hasEnd &&
+                rtTimestampCompare(pInternal, pOlder->timestamp, pRtpPacket->header.timestamp) < 0) {
+                UINT16 fence = pRtpPacket->header.sequenceNumber;
+                UINT16 slotsInRange = (UINT16)(fence - pOlder->firstSeqNum); // UINT16 wraparound-safe
+                if (slotsInRange == 0 || slotsInRange > 1000) {
+                    continue; // degenerate — skip
+                }
+                // Scan from firstSeqNum toward fence. Stop at first missing packet or
+                // foreign-timestamp packet — that's the actual frame boundary.
+                // A foreign-timestamp packet is NOT an error; it means the frame ended there.
+                UINT16 seq = pOlder->firstSeqNum;
+                UINT16 present = 0;
+                BOOL gapFound = FALSE;
+                BOOL hasEntry = FALSE;
+                UINT64 hashVal = 0;
+                PRtpPacket pPkt = NULL;
+                for (; seq != fence; seq++) {
+                    if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) || !hasEntry) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashVal))) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    pPkt = (PRtpPacket) hashVal;
+                    if (pPkt == NULL) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    if (pPkt->header.timestamp != pOlder->timestamp) {
+                        break; // hit next frame's packet — frame boundary found, not a gap
+                    }
+                    present++;
+                }
+                if (!gapFound && present == pOlder->packetCount) {
+                    pOlder->hasEnd = TRUE;
+                    pOlder->lastSeqNum = (UINT16)(fence - 1);
+                }
+            }
+        }
     }
 
     pFrame = &pInternal->frames[frameIdx];
@@ -468,10 +543,10 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
 
     // Update seq range
     // Use UINT16 arithmetic for wraparound-safe comparison
-    if ((UINT16) (pRtpPacket->header.sequenceNumber - pFrame->firstSeqNum) > (UINT16) (pFrame->lastSeqNum - pFrame->firstSeqNum)) {
+    if ((UINT16)(pRtpPacket->header.sequenceNumber - pFrame->firstSeqNum) > (UINT16)(pFrame->lastSeqNum - pFrame->firstSeqNum)) {
         // Check if it's before firstSeqNum or after lastSeqNum
-        UINT16 distFromFirst = (UINT16) (pFrame->firstSeqNum - pRtpPacket->header.sequenceNumber);
-        UINT16 distFromLast = (UINT16) (pRtpPacket->header.sequenceNumber - pFrame->lastSeqNum);
+        UINT16 distFromFirst = (UINT16)(pFrame->firstSeqNum - pRtpPacket->header.sequenceNumber);
+        UINT16 distFromLast = (UINT16)(pRtpPacket->header.sequenceNumber - pFrame->lastSeqNum);
         if (distFromFirst < distFromLast) {
             pFrame->firstSeqNum = pRtpPacket->header.sequenceNumber;
         } else {
@@ -490,9 +565,129 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
         pFrame->hasEnd = TRUE;
     }
 
+    // Re-evaluate frame completion after adding a late packet to an existing frame.
+    // Find the next frame in timestamp order and use its firstSeqNum as fence.
+    if (!pFrame->hasEnd && pFrame->hasStart && pInternal->frameCount > 1) {
+        UINT16 fence = 0;
+        BOOL foundFence = FALSE;
+        UINT32 bestTs = 0;
+        // Find the frame with the smallest timestamp that is still greater than pFrame->timestamp
+        for (i = 0; i < pInternal->frameCount; i++) {
+            if (pInternal->frames[i].timestamp != pFrame->timestamp &&
+                rtTimestampCompare(pInternal, pInternal->frames[i].timestamp, pFrame->timestamp) > 0) {
+                if (!foundFence || rtTimestampCompare(pInternal, pInternal->frames[i].timestamp, bestTs) < 0) {
+                    fence = pInternal->frames[i].firstSeqNum;
+                    bestTs = pInternal->frames[i].timestamp;
+                    foundFence = TRUE;
+                }
+            }
+        }
+        if (foundFence) {
+            UINT16 slotsInRange = (UINT16)(fence - pFrame->firstSeqNum);
+            if (slotsInRange > 0 && slotsInRange <= 1000) {
+                UINT16 seq = pFrame->firstSeqNum;
+                UINT16 present = 0;
+                BOOL gapFound = FALSE;
+                BOOL hasEntry = FALSE;
+                UINT64 hashVal = 0;
+                PRtpPacket pPkt = NULL;
+                for (; seq != fence; seq++) {
+                    if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) || !hasEntry) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashVal))) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    pPkt = (PRtpPacket) hashVal;
+                    if (pPkt == NULL) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    if (pPkt->header.timestamp != pFrame->timestamp) {
+                        break;
+                    }
+                    present++;
+                }
+                if (!gapFound && present == pFrame->packetCount) {
+                    pFrame->hasEnd = TRUE;
+                    pFrame->lastSeqNum = (UINT16)(fence - 1);
+                }
+            }
+        }
+    }
+
+    // A late packet may have shifted this frame's firstSeqNum, changing the fence
+    // for older frames. Re-scan older frames using this frame's firstSeqNum as fence.
+    if (pInternal->frameCount > 1) {
+        UINT16 myFirstSeq = pFrame->firstSeqNum;
+        UINT32 myTimestamp = pFrame->timestamp;
+        for (i = 0; i < pInternal->frameCount; i++) {
+            PRtFrameEntry pOlder = &pInternal->frames[i];
+            if (pOlder->timestamp == myTimestamp || pOlder->hasEnd) {
+                continue;
+            }
+            if (rtTimestampCompare(pInternal, pOlder->timestamp, myTimestamp) >= 0) {
+                continue; // not older
+            }
+            // Check if this frame is the immediate next after pOlder
+            // (i.e., no other frame sits between pOlder and pFrame in timestamp order)
+            BOOL isNextFrame = TRUE;
+            UINT32 k;
+            for (k = 0; k < pInternal->frameCount; k++) {
+                if (k == i || pInternal->frames[k].timestamp == myTimestamp) {
+                    continue;
+                }
+                if (rtTimestampCompare(pInternal, pInternal->frames[k].timestamp, pOlder->timestamp) > 0 &&
+                    rtTimestampCompare(pInternal, pInternal->frames[k].timestamp, myTimestamp) < 0) {
+                    isNextFrame = FALSE;
+                    break;
+                }
+            }
+            if (!isNextFrame) {
+                continue;
+            }
+            UINT16 fence = myFirstSeq;
+            UINT16 slotsInRange = (UINT16)(fence - pOlder->firstSeqNum);
+            if (slotsInRange == 0 || slotsInRange > 1000) {
+                continue;
+            }
+            UINT16 seq = pOlder->firstSeqNum;
+            UINT16 present = 0;
+            BOOL gapFound = FALSE;
+            BOOL hasEntry = FALSE;
+            UINT64 hashVal = 0;
+            PRtpPacket pPkt = NULL;
+            for (; seq != fence; seq++) {
+                if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) || !hasEntry) {
+                    gapFound = TRUE;
+                    break;
+                }
+                if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashVal))) {
+                    gapFound = TRUE;
+                    break;
+                }
+                pPkt = (PRtpPacket) hashVal;
+                if (pPkt == NULL) {
+                    gapFound = TRUE;
+                    break;
+                }
+                if (pPkt->header.timestamp != pOlder->timestamp) {
+                    break;
+                }
+                present++;
+            }
+            if (!gapFound && present == pOlder->packetCount) {
+                pOlder->hasEnd = TRUE;
+                pOlder->lastSeqNum = (UINT16)(fence - 1);
+            }
+        }
+    }
+
     // Update head sequence number if this frame is the head
     if (pFrame->timestamp == pInternal->headTimestamp) {
-        UINT16 distNew = (UINT16) (pInternal->headSequenceNumber - pRtpPacket->header.sequenceNumber);
+        UINT16 distNew = (UINT16)(pInternal->headSequenceNumber - pRtpPacket->header.sequenceNumber);
         if (distNew > 0 && distNew < 512) {
             pInternal->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         }
@@ -596,7 +791,7 @@ static STATUS rtFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 
 
     CHK(pInternal != NULL && pFrame != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
 
-    for (index = startIndex;; index++) {
+    for (index = startIndex; ; index++) {
         hashValue = 0;
         CHK_STATUS(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue));
         pCurPacket = (PRtpPacket) hashValue;
@@ -625,7 +820,7 @@ CleanUp:
 //
 
 static STATUS rtFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex,
-                                     UINT16 endIndex)
+                                      UINT16 endIndex)
 {
     STATUS retStatus = STATUS_SUCCESS;
     PRealTimeJitterBufferInternal pInternal = (PRealTimeJitterBufferInternal) pJitterBuffer;
@@ -640,16 +835,14 @@ static STATUS rtFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, 
 
     CHK(pInternal != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
 
-    for (index = startIndex;; index++) {
+    for (index = startIndex; ; index++) {
         if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, index, &hasEntry))) {
-            if (index == endIndex)
-                break;
+            if (index == endIndex) break;
             continue;
         }
         if (hasEntry) {
             if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue))) {
-                if (index == endIndex)
-                    break;
+                if (index == endIndex) break;
                 continue;
             }
             pPacket = (PRtpPacket) hashValue;
@@ -660,8 +853,7 @@ static STATUS rtFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, 
             }
             BOOL depayIsFirst = isFirst;
             if (STATUS_FAILED(pInternal->depayPayloadFn(pPacket->payload, pPacket->payloadLength, pCurPtr, &partialSize, &depayIsFirst))) {
-                if (index == endIndex)
-                    break;
+                if (index == endIndex) break;
                 continue;
             }
             if (pCurPtr != NULL) {
@@ -723,12 +915,17 @@ static STATUS rtDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex, U
 
     CHK(pInternal != NULL, STATUS_NULL_ARG);
 
-    // Free packets in range
-    for (index = startIndex;; index++) {
+    // Free packets in range and update frame packet counts
+    for (index = startIndex; ; index++) {
         if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, index, &hasEntry)) && hasEntry) {
             if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue))) {
                 pPacket = (PRtpPacket) hashValue;
                 if (pPacket != NULL) {
+                    // Decrement packet count for the owning frame
+                    UINT32 fi = rtFindFrame(pInternal, pPacket->header.timestamp);
+                    if (fi < pInternal->frameCount && pInternal->frames[fi].packetCount > 0) {
+                        pInternal->frames[fi].packetCount--;
+                    }
                     freeRtpPacket(&pPacket);
                 }
             }
@@ -739,26 +936,25 @@ static STATUS rtDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex, U
         }
     }
 
-    // Remove any frame entries that overlap this seq range
-    // We identify by checking if the frame's seq range overlaps [startIndex, endIndex]
-    for (i = 0; i < pInternal->frameCount;) {
+    // Remove frame entries whose packets were entirely within the dropped range.
+    // Frames with remaining packets outside the range are kept for destroy to handle.
+    for (i = 0; i < pInternal->frameCount; ) {
         PRtFrameEntry pEntry = &pInternal->frames[i];
-        // Check if frame's seq range overlaps the dropped range
-        // Simple check: if the frame's firstSeqNum is in the dropped range
-        BOOL overlaps = FALSE;
-        UINT16 seq;
-        for (seq = startIndex;; seq++) {
-            if (seq == pEntry->firstSeqNum || seq == pEntry->lastSeqNum) {
-                overlaps = TRUE;
+        // Check if ANY of this frame's packets still exist in the hash table
+        UINT16 seq = pEntry->firstSeqNum;
+        BOOL hasRemaining = FALSE;
+        for (; ; seq++) {
+            BOOL hasEntry = FALSE;
+            if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
+                hasRemaining = TRUE;
                 break;
             }
-            if (seq == endIndex) {
+            if (seq == pEntry->lastSeqNum) {
                 break;
             }
         }
-        if (overlaps) {
+        if (!hasRemaining) {
             rtRemoveFrame(pInternal, i);
-            // don't increment i, the swapped entry is now at i
         } else {
             i++;
         }
@@ -810,11 +1006,61 @@ static STATUS rtDestroy(PJitterBuffer* ppJitterBuffer)
 
     // Flush remaining frames: deliver complete ones, drop incomplete ones
     if (pInternal->started && pInternal->frameCount > 0) {
-        // Buffer closing — no more packets. Mark frames as ended if they
-        // have all packets in their sequence range.
+        // Buffer closing — no more packets. Use fence scan between consecutive
+        // frames (by timestamp order) to mark complete ones as ended.
+        // For the last frame, there's no fence so use packetCount == seq range.
         for (i = 0; i < pInternal->frameCount; i++) {
-            if (!pInternal->frames[i].hasEnd) {
-                UINT16 expectedCount = (UINT16) (pInternal->frames[i].lastSeqNum - pInternal->frames[i].firstSeqNum + 1);
+            if (pInternal->frames[i].hasEnd) {
+                continue;
+            }
+            // Find the next frame in timestamp order to use as fence
+            UINT16 fence = 0;
+            BOOL foundFence = FALSE;
+            UINT32 bestTs = 0;
+            UINT32 j;
+            for (j = 0; j < pInternal->frameCount; j++) {
+                if (j != i && rtTimestampCompare(pInternal, pInternal->frames[j].timestamp, pInternal->frames[i].timestamp) > 0) {
+                    if (!foundFence || rtTimestampCompare(pInternal, pInternal->frames[j].timestamp, bestTs) < 0) {
+                        fence = pInternal->frames[j].firstSeqNum;
+                        bestTs = pInternal->frames[j].timestamp;
+                        foundFence = TRUE;
+                    }
+                }
+            }
+            if (foundFence) {
+                // Fence scan: check contiguous same-timestamp packets from firstSeqNum to fence
+                UINT16 seq = pInternal->frames[i].firstSeqNum;
+                UINT16 present = 0;
+                BOOL gapFound = FALSE;
+                BOOL hasEntry = FALSE;
+                UINT64 hashVal = 0;
+                PRtpPacket pPkt = NULL;
+                for (; seq != fence; seq++) {
+                    if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) || !hasEntry) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashVal))) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    pPkt = (PRtpPacket) hashVal;
+                    if (pPkt == NULL) {
+                        gapFound = TRUE;
+                        break;
+                    }
+                    if (pPkt->header.timestamp != pInternal->frames[i].timestamp) {
+                        break;
+                    }
+                    present++;
+                }
+                if (!gapFound && present == pInternal->frames[i].packetCount) {
+                    pInternal->frames[i].hasEnd = TRUE;
+                    pInternal->frames[i].lastSeqNum = (UINT16)(pInternal->frames[i].firstSeqNum + present - 1);
+                }
+            } else {
+                // Last frame — no fence. Use packetCount == seq range.
+                UINT16 expectedCount = (UINT16)(pInternal->frames[i].lastSeqNum - pInternal->frames[i].firstSeqNum + 1);
                 if (pInternal->frames[i].packetCount == expectedCount) {
                     pInternal->frames[i].hasEnd = TRUE;
                 }
