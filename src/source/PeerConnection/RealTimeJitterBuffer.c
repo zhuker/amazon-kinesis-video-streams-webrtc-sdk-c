@@ -2,7 +2,7 @@
 
 #include "../Include_i.h"
 
-#define RT_MAX_FRAMES            2048
+#define RT_MAX_FRAMES               2048
 #define RT_HASH_TABLE_BUCKET_COUNT  3000
 #define RT_HASH_TABLE_BUCKET_LENGTH 2
 #define RT_PROCESSED_TS_RING_SIZE   512
@@ -30,11 +30,11 @@ typedef struct {
     UINT16 headSequenceNumber;
     UINT16 tailSequenceNumber;
     UINT32 headTimestamp;
-    BOOL hasDelivered;             // whether any frame has been delivered
+    BOOL hasDelivered; // whether any frame has been delivered
     PHashTable pPkgBufferHashTable;
     UINT32 processedTimestamps[RT_PROCESSED_TS_RING_SIZE]; // ring buffer of delivered/dropped timestamps
-    UINT32 processedTsHead;                                 // next write index
-    UINT32 processedTsCount;                                // number of valid entries
+    UINT32 processedTsHead;                                // next write index
+    UINT32 processedTsCount;                               // number of valid entries
     RtFrameEntry frames[RT_MAX_FRAMES];
     UINT32 frameCount;
 } RealTimeJitterBufferInternal, *PRealTimeJitterBufferInternal;
@@ -145,7 +145,7 @@ static STATUS rtFreePacketsInRange(PRealTimeJitterBufferInternal pInternal, UINT
     PRtpPacket pPacket;
     BOOL hasEntry;
 
-    for (seq = firstSeq; ; seq++) {
+    for (seq = firstSeq;; seq++) {
         if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
             if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashValue))) {
                 pPacket = (PRtpPacket) hashValue;
@@ -175,7 +175,7 @@ static STATUS rtCalcFrameSize(PRealTimeJitterBufferInternal pInternal, UINT16 fi
     UINT32 partialSize;
     BOOL isFirst = TRUE;
 
-    for (seq = firstSeq; ; seq++) {
+    for (seq = firstSeq;; seq++) {
         if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
             if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashValue))) {
                 pPacket = (PRtpPacket) hashValue;
@@ -206,7 +206,7 @@ static BOOL rtFrameIsComplete(PRealTimeJitterBufferInternal pInternal, PRtFrameE
     if (!pFrame->hasStart || !pFrame->hasEnd) {
         return FALSE;
     }
-    UINT16 expectedCount = (UINT16)(pFrame->lastSeqNum - pFrame->firstSeqNum + 1);
+    UINT16 expectedCount = (UINT16) (pFrame->lastSeqNum - pFrame->firstSeqNum + 1);
     return pFrame->packetCount == expectedCount;
 }
 
@@ -245,8 +245,8 @@ static VOID rtUpdateHead(PRealTimeJitterBufferInternal pInternal)
 //
 
 STATUS createRealTimeJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedFunc onFrameDroppedFunc, DepayRtpPayloadFunc depayRtpPayloadFunc,
-                                   UINT32 maxLatency, UINT32 clockRate, UINT64 customData, BOOL alwaysSinglePacketFrames,
-                                   PJitterBuffer* ppJitterBuffer)
+                                  UINT32 maxLatency, UINT32 clockRate, UINT64 customData, BOOL alwaysSinglePacketFrames,
+                                  PJitterBuffer* ppJitterBuffer)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -358,8 +358,7 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
 
     // Update tail sequence number
     if (pInternal->sequenceNumberOverflowState) {
-        if (pRtpPacket->header.sequenceNumber <= pInternal->tailSequenceNumber ||
-            pRtpPacket->header.sequenceNumber > pInternal->headSequenceNumber) {
+        if (pRtpPacket->header.sequenceNumber <= pInternal->tailSequenceNumber || pRtpPacket->header.sequenceNumber > pInternal->headSequenceNumber) {
             // Could be new tail in wrapped space
             // Use simple distance check
             UINT16 distFromTail = pRtpPacket->header.sequenceNumber - pInternal->tailSequenceNumber;
@@ -375,8 +374,7 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
 
     // Timestamp overflow tracking
     if (!pInternal->timestampOverFlowState) {
-        if (pInternal->base.tailTimestamp > pRtpPacket->header.timestamp &&
-            pRtpPacket->header.timestamp < pInternal->headTimestamp) {
+        if (pInternal->base.tailTimestamp > pRtpPacket->header.timestamp && pRtpPacket->header.timestamp < pInternal->headTimestamp) {
             // Potential overflow: new packet timestamp is much smaller than tail
             // Only if this packet advances the tail sequence
             if (pRtpPacket->header.sequenceNumber == pInternal->tailSequenceNumber) {
@@ -404,8 +402,8 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
     // Latency tolerance check - discard if too old
     age = rtTimestampAge(pInternal, pRtpPacket->header.timestamp);
     if (age > pInternal->maxLatency) {
-        DLOGS("RealTimeJitterBuffer: discarding packet seq %u ts %u (age %u > maxLatency %llu)",
-              pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp, age, pInternal->maxLatency);
+        DLOGS("RealTimeJitterBuffer: discarding packet seq %u ts %u (age %u > maxLatency %llu)", pRtpPacket->header.sequenceNumber,
+              pRtpPacket->header.timestamp, age, pInternal->maxLatency);
         freeRtpPacket(&pRtpPacket);
         if (pPacketDiscarded != NULL) {
             *pPacketDiscarded = TRUE;
@@ -463,7 +461,6 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
             pInternal->headTimestamp = pRtpPacket->header.timestamp;
             pInternal->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         }
-
     }
 
     pFrame = &pInternal->frames[frameIdx];
@@ -471,10 +468,10 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
 
     // Update seq range
     // Use UINT16 arithmetic for wraparound-safe comparison
-    if ((UINT16)(pRtpPacket->header.sequenceNumber - pFrame->firstSeqNum) > (UINT16)(pFrame->lastSeqNum - pFrame->firstSeqNum)) {
+    if ((UINT16) (pRtpPacket->header.sequenceNumber - pFrame->firstSeqNum) > (UINT16) (pFrame->lastSeqNum - pFrame->firstSeqNum)) {
         // Check if it's before firstSeqNum or after lastSeqNum
-        UINT16 distFromFirst = (UINT16)(pFrame->firstSeqNum - pRtpPacket->header.sequenceNumber);
-        UINT16 distFromLast = (UINT16)(pRtpPacket->header.sequenceNumber - pFrame->lastSeqNum);
+        UINT16 distFromFirst = (UINT16) (pFrame->firstSeqNum - pRtpPacket->header.sequenceNumber);
+        UINT16 distFromLast = (UINT16) (pRtpPacket->header.sequenceNumber - pFrame->lastSeqNum);
         if (distFromFirst < distFromLast) {
             pFrame->firstSeqNum = pRtpPacket->header.sequenceNumber;
         } else {
@@ -495,7 +492,7 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
 
     // Update head sequence number if this frame is the head
     if (pFrame->timestamp == pInternal->headTimestamp) {
-        UINT16 distNew = (UINT16)(pInternal->headSequenceNumber - pRtpPacket->header.sequenceNumber);
+        UINT16 distNew = (UINT16) (pInternal->headSequenceNumber - pRtpPacket->header.sequenceNumber);
         if (distNew > 0 && distNew < 512) {
             pInternal->headSequenceNumber = pRtpPacket->header.sequenceNumber;
         }
@@ -599,7 +596,7 @@ static STATUS rtFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 
 
     CHK(pInternal != NULL && pFrame != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
 
-    for (index = startIndex; ; index++) {
+    for (index = startIndex;; index++) {
         hashValue = 0;
         CHK_STATUS(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue));
         pCurPacket = (PRtpPacket) hashValue;
@@ -628,7 +625,7 @@ CleanUp:
 //
 
 static STATUS rtFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 frameSize, PUINT32 pFilledSize, UINT16 startIndex,
-                                      UINT16 endIndex)
+                                     UINT16 endIndex)
 {
     STATUS retStatus = STATUS_SUCCESS;
     PRealTimeJitterBufferInternal pInternal = (PRealTimeJitterBufferInternal) pJitterBuffer;
@@ -643,14 +640,16 @@ static STATUS rtFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, 
 
     CHK(pInternal != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
 
-    for (index = startIndex; ; index++) {
+    for (index = startIndex;; index++) {
         if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, index, &hasEntry))) {
-            if (index == endIndex) break;
+            if (index == endIndex)
+                break;
             continue;
         }
         if (hasEntry) {
             if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue))) {
-                if (index == endIndex) break;
+                if (index == endIndex)
+                    break;
                 continue;
             }
             pPacket = (PRtpPacket) hashValue;
@@ -661,7 +660,8 @@ static STATUS rtFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, 
             }
             BOOL depayIsFirst = isFirst;
             if (STATUS_FAILED(pInternal->depayPayloadFn(pPacket->payload, pPacket->payloadLength, pCurPtr, &partialSize, &depayIsFirst))) {
-                if (index == endIndex) break;
+                if (index == endIndex)
+                    break;
                 continue;
             }
             if (pCurPtr != NULL) {
@@ -724,7 +724,7 @@ static STATUS rtDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex, U
     CHK(pInternal != NULL, STATUS_NULL_ARG);
 
     // Free packets in range
-    for (index = startIndex; ; index++) {
+    for (index = startIndex;; index++) {
         if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, index, &hasEntry)) && hasEntry) {
             if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue))) {
                 pPacket = (PRtpPacket) hashValue;
@@ -741,13 +741,13 @@ static STATUS rtDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex, U
 
     // Remove any frame entries that overlap this seq range
     // We identify by checking if the frame's seq range overlaps [startIndex, endIndex]
-    for (i = 0; i < pInternal->frameCount; ) {
+    for (i = 0; i < pInternal->frameCount;) {
         PRtFrameEntry pEntry = &pInternal->frames[i];
         // Check if frame's seq range overlaps the dropped range
         // Simple check: if the frame's firstSeqNum is in the dropped range
         BOOL overlaps = FALSE;
         UINT16 seq;
-        for (seq = startIndex; ; seq++) {
+        for (seq = startIndex;; seq++) {
             if (seq == pEntry->firstSeqNum || seq == pEntry->lastSeqNum) {
                 overlaps = TRUE;
                 break;
@@ -814,7 +814,7 @@ static STATUS rtDestroy(PJitterBuffer* ppJitterBuffer)
         // have all packets in their sequence range.
         for (i = 0; i < pInternal->frameCount; i++) {
             if (!pInternal->frames[i].hasEnd) {
-                UINT16 expectedCount = (UINT16)(pInternal->frames[i].lastSeqNum - pInternal->frames[i].firstSeqNum + 1);
+                UINT16 expectedCount = (UINT16) (pInternal->frames[i].lastSeqNum - pInternal->frames[i].firstSeqNum + 1);
                 if (pInternal->frames[i].packetCount == expectedCount) {
                     pInternal->frames[i].hasEnd = TRUE;
                 }
