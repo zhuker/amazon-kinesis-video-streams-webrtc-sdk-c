@@ -6,16 +6,11 @@ namespace kinesis {
 namespace video {
 namespace webrtcclient {
 
-class JitterBufferFunctionalityTest : public WebRtcClientTestBase, public ::testing::WithParamInterface<bool> {
-  protected:
-    void initJitterBuffer(UINT32 expectedFrameCount, UINT32 expectedDroppedFrameCount, UINT32 rtpPacketCount)
-    {
-        initializeJitterBuffer(expectedFrameCount, expectedDroppedFrameCount, rtpPacketCount, GetParam() ? TRUE : FALSE);
-    }
+class JitterBufferFunctionalityTest : public WebRtcClientTestBase {
 };
 
 // Also works as closeBufferWithSingleContinousPacket
-TEST_P(JitterBufferFunctionalityTest, continousPacketsComeInOrder)
+TEST_F(JitterBufferFunctionalityTest, continousPacketsComeInOrder)
 {
     UINT32 i;
     UINT32 pktCount = 5;
@@ -23,7 +18,7 @@ TEST_P(JitterBufferFunctionalityTest, continousPacketsComeInOrder)
     srand(time(0));
     startingSequenceNumber = rand()%UINT16_MAX;
 
-    initJitterBuffer(3, 0, pktCount);
+    initializeJitterBuffer(3, 0, pktCount);
 
     // First frame "1" at timestamp 100 - rtp packet #0
     mPRtpPackets[0]->payloadLength = 1;
@@ -108,7 +103,7 @@ TEST_P(JitterBufferFunctionalityTest, continousPacketsComeInOrder)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, continousPacketsComeOutOfOrder)
+TEST_F(JitterBufferFunctionalityTest, continousPacketsComeOutOfOrder)
 {
     UINT32 i;
     UINT32 pktCount = 5;
@@ -117,7 +112,7 @@ TEST_P(JitterBufferFunctionalityTest, continousPacketsComeOutOfOrder)
     //seeding with the current time
     srand(time(0));
     startingSequenceNumber = rand()%UINT16_MAX;
-    initJitterBuffer(3, 0, pktCount);
+    initializeJitterBuffer(3, 0, pktCount);
 
     DLOGI("Starting sequence number: %u\n", startingSequenceNumber);
     // First frame "1" at timestamp 100 - rtp packet #0
@@ -201,11 +196,11 @@ TEST_P(JitterBufferFunctionalityTest, continousPacketsComeOutOfOrder)
 }
 
 // This also serves as closeBufferWithMultipleImcompletePackets
-TEST_P(JitterBufferFunctionalityTest, gapBetweenTwoContinousPackets)
+TEST_F(JitterBufferFunctionalityTest, gapBetweenTwoContinousPackets)
 {
     UINT32 i;
     UINT32 pktCount = 4;
-    initJitterBuffer(1, 2, pktCount);
+    initializeJitterBuffer(1, 2, pktCount);
 
     // First frame "1" "2" "3" at timestamp 100 - rtp packet #0 #1 #2, not receiving #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -260,11 +255,11 @@ TEST_P(JitterBufferFunctionalityTest, gapBetweenTwoContinousPackets)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, expiredCompleteFrameGotReadyFunc)
+TEST_F(JitterBufferFunctionalityTest, expiredCompleteFrameGotReadyFunc)
 {
     UINT32 i;
     UINT32 pktCount = 2;
-    initJitterBuffer(2, 0, pktCount);
+    initializeJitterBuffer(2, 0, pktCount);
 
     // First frame "1" at timestamp 100 - rtp packet #0
     mPRtpPackets[0]->payloadLength = 1;
@@ -310,11 +305,11 @@ TEST_P(JitterBufferFunctionalityTest, expiredCompleteFrameGotReadyFunc)
 }
 
 // This also serves as closeBufferWithImcompletePacketsAndSingleContinousPacket
-TEST_P(JitterBufferFunctionalityTest, expiredIncompleteFrameGotDropFunc)
+TEST_F(JitterBufferFunctionalityTest, expiredIncompleteFrameGotDropFunc)
 {
     UINT32 i;
     UINT32 pktCount = 2;
-    initJitterBuffer(1, 1, pktCount);
+    initializeJitterBuffer(1, 1, pktCount);
 
     // First frame "1" "2" at timestamp 100 - rtp packet #0 #1, not receiving #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -360,11 +355,11 @@ TEST_P(JitterBufferFunctionalityTest, expiredIncompleteFrameGotDropFunc)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, closeBufferWithSingleImcompletePacket)
+TEST_F(JitterBufferFunctionalityTest, closeBufferWithSingleImcompletePacket)
 {
     UINT32 i;
     UINT32 pktCount = 2;
-    initJitterBuffer(0, 1, pktCount);
+    initializeJitterBuffer(0, 1, pktCount);
 
     // First frame "1" "2" "3" at timestamp 100 - rtp packet #0 #1 #2, not receiving #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -395,12 +390,12 @@ TEST_P(JitterBufferFunctionalityTest, closeBufferWithSingleImcompletePacket)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, fillDataGiveExpectedData)
+TEST_F(JitterBufferFunctionalityTest, fillDataGiveExpectedData)
 {
     PBYTE buffer = (PBYTE) MEMALLOC(2);
     UINT32 filledSize = 0, i = 0;
     BYTE expectedBuffer[] = {1, 2};
-    initJitterBuffer(1, 0, 2);
+    initializeJitterBuffer(1, 0, 2);
 
     // First frame "1" "2" at timestamp 100 - rtp packet #0 #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -434,11 +429,11 @@ TEST_P(JitterBufferFunctionalityTest, fillDataGiveExpectedData)
     MEMFREE(buffer);
 }
 
-TEST_P(JitterBufferFunctionalityTest, fillDataReturnErrorWithImcompleteFrame)
+TEST_F(JitterBufferFunctionalityTest, fillDataReturnErrorWithImcompleteFrame)
 {
     PBYTE buffer = (PBYTE) MEMALLOC(2);
     UINT32 filledSize = 0, i = 0;
-    initJitterBuffer(0, 1, 2);
+    initializeJitterBuffer(0, 1, 2);
 
     // First frame "1" "2" at timestamp 100 - rtp packet #0 #2
     mPRtpPackets[0]->payloadLength = 1;
@@ -469,11 +464,11 @@ TEST_P(JitterBufferFunctionalityTest, fillDataReturnErrorWithImcompleteFrame)
     MEMFREE(buffer);
 }
 
-TEST_P(JitterBufferFunctionalityTest, fillDataReturnErrorWithNotEnoughOutputBuffer)
+TEST_F(JitterBufferFunctionalityTest, fillDataReturnErrorWithNotEnoughOutputBuffer)
 {
     PBYTE buffer = (PBYTE) MEMALLOC(1);
     UINT32 filledSize = 0, i = 0;
-    initJitterBuffer(1, 0, 2);
+    initializeJitterBuffer(1, 0, 2);
 
     // First frame "1" "2" at timestamp 100 - rtp packet #0 #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -505,10 +500,10 @@ TEST_P(JitterBufferFunctionalityTest, fillDataReturnErrorWithNotEnoughOutputBuff
     MEMFREE(buffer);
 }
 
-TEST_P(JitterBufferFunctionalityTest, dropDataGivenSmallStartAndLargeEnd)
+TEST_F(JitterBufferFunctionalityTest, dropDataGivenSmallStartAndLargeEnd)
 {
     UINT32 i = 0;
-    initJitterBuffer(0, 1, 2);
+    initializeJitterBuffer(0, 1, 2);
 
     // First frame "1" "2" at timestamp 100 - rtp packet #0 #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -536,10 +531,10 @@ TEST_P(JitterBufferFunctionalityTest, dropDataGivenSmallStartAndLargeEnd)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, dropDataGivenLargeStartAndSmallEnd)
+TEST_F(JitterBufferFunctionalityTest, dropDataGivenLargeStartAndSmallEnd)
 {
     UINT32 i = 0;
-    initJitterBuffer(0, 0, 2);
+    initializeJitterBuffer(0, 0, 2);
 
     // First frame "1" "2" at timestamp 100 - rtp packet #0 #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -565,11 +560,11 @@ TEST_P(JitterBufferFunctionalityTest, dropDataGivenLargeStartAndSmallEnd)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, continousPacketsComeInCycling)
+TEST_F(JitterBufferFunctionalityTest, continousPacketsComeInCycling)
 {
     UINT32 i;
     UINT32 pktCount = 4;
-    initJitterBuffer(4, 0, pktCount);
+    initializeJitterBuffer(4, 0, pktCount);
 
     // First frame "1" at timestamp 100 - rtp packet #65534
     mPRtpPackets[0]->payloadLength = 1;
@@ -649,10 +644,10 @@ TEST_P(JitterBufferFunctionalityTest, continousPacketsComeInCycling)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, getFrameReadyAfterDroppedFrame)
+TEST_F(JitterBufferFunctionalityTest, getFrameReadyAfterDroppedFrame)
 {
     UINT32 i = 0;
-    initJitterBuffer(3, 1, 5);
+    initializeJitterBuffer(3, 1, 5);
 
     // First frame "1" "2" at timestamp 100 - rtp packet #0 #1, dropped #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -744,10 +739,10 @@ TEST_P(JitterBufferFunctionalityTest, getFrameReadyAfterDroppedFrame)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, pushFrameArrivingLate)
+TEST_F(JitterBufferFunctionalityTest, pushFrameArrivingLate)
 {
     UINT32 i = 0;
-    initJitterBuffer(1, 0, 2);
+    initializeJitterBuffer(1, 0, 2);
 
     // First frame "1" at timestamp 3000 - rtp packet #1
     mPRtpPackets[0]->payloadLength = 1;
@@ -793,11 +788,11 @@ TEST_P(JitterBufferFunctionalityTest, pushFrameArrivingLate)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, missingSecondPacketInSecondFrame)
+TEST_F(JitterBufferFunctionalityTest, missingSecondPacketInSecondFrame)
 {
     UINT32 i;
     UINT32 pktCount = 7;
-    initJitterBuffer(2, 1, pktCount);
+    initializeJitterBuffer(2, 1, pktCount);
 
     // First frame "1273" at timestamp 100 
     mPRtpPackets[0]->payloadLength = 1;
@@ -893,11 +888,11 @@ TEST_P(JitterBufferFunctionalityTest, missingSecondPacketInSecondFrame)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, incompleteFirstFrame)
+TEST_F(JitterBufferFunctionalityTest, incompleteFirstFrame)
 {
     UINT32 i;
     UINT32 pktCount = 5;
-    initJitterBuffer(2, 1, pktCount);
+    initializeJitterBuffer(2, 1, pktCount);
 
     // First frame "1" at timestamp 100, has no start - rtp packet #0
     mPRtpPackets[0]->payloadLength = 1;
@@ -959,11 +954,11 @@ TEST_P(JitterBufferFunctionalityTest, incompleteFirstFrame)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, outOfOrderFirstFrame)
+TEST_F(JitterBufferFunctionalityTest, outOfOrderFirstFrame)
 {
     UINT32 i;
     UINT32 pktCount = 7;
-    initJitterBuffer(3, 0, pktCount);
+    initializeJitterBuffer(3, 0, pktCount);
 
     // First frame "1" at timestamp 100, has no start - rtp packet #0
     mPRtpPackets[0]->payloadLength = 1;
@@ -1064,11 +1059,11 @@ TEST_P(JitterBufferFunctionalityTest, outOfOrderFirstFrame)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, latePacketsOfAlreadyDroppedFrame)
+TEST_F(JitterBufferFunctionalityTest, latePacketsOfAlreadyDroppedFrame)
 {
     UINT32 i = 0;
     UINT32 pktCount = 4;
-    initJitterBuffer(1, 1, pktCount);
+    initializeJitterBuffer(1, 1, pktCount);
 
     mPRtpPackets[0]->payloadLength = 1;
     mPRtpPackets[0]->payload = (PBYTE) MEMALLOC(mPRtpPackets[0]->payloadLength + 1);
@@ -1136,13 +1131,13 @@ TEST_P(JitterBufferFunctionalityTest, latePacketsOfAlreadyDroppedFrame)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, timestampOverflowTest)
+TEST_F(JitterBufferFunctionalityTest, timestampOverflowTest)
 {
     UINT32 i;
     UINT32 pktCount = 7;
     UINT32 startingSequenceNumber = 0;
     UINT32 missingSequenceNumber = 0;
-    initJitterBuffer(4, 0, pktCount);
+    initializeJitterBuffer(4, 0, pktCount);
     srand(time(0));
     startingSequenceNumber = rand()%UINT16_MAX;
 
@@ -1248,7 +1243,7 @@ TEST_P(JitterBufferFunctionalityTest, timestampOverflowTest)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, timestampUnderflowTest)
+TEST_F(JitterBufferFunctionalityTest, timestampUnderflowTest)
 {
     UINT32 i;
     UINT32 pktCount = 8;
@@ -1259,7 +1254,7 @@ TEST_P(JitterBufferFunctionalityTest, timestampUnderflowTest)
     startingSequenceNumber = rand()%UINT16_MAX;
     firstSequenceNumber = startingSequenceNumber - 1;
 
-    initJitterBuffer(5, 0, pktCount);
+    initializeJitterBuffer(5, 0, pktCount);
 
     // Second frame "1234" at timestamp 0 -- first frame comes later
     // The "4" will come late
@@ -1383,11 +1378,11 @@ TEST_P(JitterBufferFunctionalityTest, timestampUnderflowTest)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, SequenceNumberOverflowTest)
+TEST_F(JitterBufferFunctionalityTest, SequenceNumberOverflowTest)
 {
     UINT32 i;
     UINT32 pktCount = 7;
-    initJitterBuffer(4, 0, pktCount);
+    initializeJitterBuffer(4, 0, pktCount);
 
     // First frame "1" at timestamp 100 - rtp packet #65534
     mPRtpPackets[0]->payloadLength = 1;
@@ -1490,7 +1485,7 @@ TEST_P(JitterBufferFunctionalityTest, SequenceNumberOverflowTest)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, SequenceNumberUnderflowTest)
+TEST_F(JitterBufferFunctionalityTest, SequenceNumberUnderflowTest)
 {
     UINT32 i;
     UINT32 pktCount = 8;
@@ -1501,7 +1496,7 @@ TEST_P(JitterBufferFunctionalityTest, SequenceNumberUnderflowTest)
     srand(time(0));
     UINT32 startingTimestamp = rand()%UINT32_MAX;
 
-    initJitterBuffer(5, 0, pktCount);
+    initializeJitterBuffer(5, 0, pktCount);
 
     // Fourth frame "1234", first frame comes later
     // The "4" will come late
@@ -1627,11 +1622,11 @@ TEST_P(JitterBufferFunctionalityTest, SequenceNumberUnderflowTest)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, DoubleOverflowTest)
+TEST_F(JitterBufferFunctionalityTest, DoubleOverflowTest)
 {
     UINT32 i;
     UINT32 pktCount = 7;
-    initJitterBuffer(4, 0, pktCount);
+    initializeJitterBuffer(4, 0, pktCount);
 
     // First frame "1" at timestamp 100 - rtp packet #65534
     mPRtpPackets[0]->payloadLength = 1;
@@ -1736,7 +1731,7 @@ TEST_P(JitterBufferFunctionalityTest, DoubleOverflowTest)
 
 #if 0
 //TODO complete this test
-TEST_P(JitterBufferFunctionalityTest, LongRunningWithDroppedPacketsTest)
+TEST_F(JitterBufferFunctionalityTest, LongRunningWithDroppedPacketsTest)
 {
     UINT32 timeStep = 100;
     UINT16 startingSequenceNumber = 0;
@@ -1800,7 +1795,7 @@ TEST_P(JitterBufferFunctionalityTest, LongRunningWithDroppedPacketsTest)
         dropped = FALSE;
     }
 
-    initJitterBuffer(readyFrameCount, droppedFrameCount, totalPackets);
+    initializeJitterBuffer(readyFrameCount, droppedFrameCount, totalPackets);
 
     dropped = FALSE;
     packetCount = 0;
@@ -1856,7 +1851,7 @@ TEST_P(JitterBufferFunctionalityTest, LongRunningWithDroppedPacketsTest)
 }
 #endif
 
-TEST_P(JitterBufferFunctionalityTest, markerBitTriggersImmediateDelivery)
+TEST_F(JitterBufferFunctionalityTest, markerBitTriggersImmediateDelivery)
 {
     UINT32 i;
     UINT32 pktCount = 4;
@@ -1865,7 +1860,7 @@ TEST_P(JitterBufferFunctionalityTest, markerBitTriggersImmediateDelivery)
     srand(time(0));
     startingSequenceNumber = rand() % UINT16_MAX;
 
-    initJitterBuffer(2, 0, pktCount);
+    initializeJitterBuffer(2, 0, pktCount);
 
     // First frame: 3 packets with marker on last one, timestamp 100
     // Packet 0: start packet
@@ -1943,12 +1938,12 @@ TEST_P(JitterBufferFunctionalityTest, markerBitTriggersImmediateDelivery)
     clearJitterBufferForTest();
 }
 
-TEST_P(JitterBufferFunctionalityTest, markerBitOutOfOrderWaitsForCompletion)
+TEST_F(JitterBufferFunctionalityTest, markerBitOutOfOrderWaitsForCompletion)
 {
     UINT32 i;
     UINT32 pktCount = 3;
 
-    initJitterBuffer(1, 0, pktCount);
+    initializeJitterBuffer(1, 0, pktCount);
 
     // Frame with 3 packets, but marker arrives before middle packet
     // Push order: packet 0 (seq 0), packet 1 (seq 2, marker), packet 2 (seq 1)
@@ -2001,18 +1996,6 @@ TEST_P(JitterBufferFunctionalityTest, markerBitOutOfOrderWaitsForCompletion)
     // clearJitterBufferForTest verifies mReadyFrameIndex == mExpectedFrameCount.
     clearJitterBufferForTest();
 }
-
-INSTANTIATE_TEST_SUITE_P(DefaultJitterBuffer, JitterBufferFunctionalityTest, ::testing::Values(false));
-// 15/25 tests pass with RealTimeJitterBuffer. 10 fail:
-// - 1 timing difference: continousPacketsComeOutOfOrder (RT delivers earlier — design choice)
-// - 9 real bugs: wrong frame content or behavior with gaps, overflow, and edge cases
-//   (gapBetweenTwoContinousPackets, expiredIncompleteFrameGotDropFunc,
-//    dropDataGivenSmallStartAndLargeEnd, getFrameReadyAfterDroppedFrame,
-//    latePacketsOfAlreadyDroppedFrame, timestampOverflowTest, timestampUnderflowTest,
-//    SequenceNumberOverflowTest, SequenceNumberUnderflowTest, DoubleOverflowTest)
-// Disabled until these are fixed. Test process crashes on unexpected drop callbacks
-// (testFrameDroppedFunc dereferences NULL mExpectedDroppedFrameTimestampArr).
-// INSTANTIATE_TEST_SUITE_P(RealTimeJitterBuffer, JitterBufferFunctionalityTest, ::testing::Values(true));
 
 } // namespace webrtcclient
 } // namespace video
