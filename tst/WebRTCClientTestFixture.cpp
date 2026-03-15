@@ -130,10 +130,22 @@ void WebRtcClientTestBase::TearDown()
 
 VOID WebRtcClientTestBase::initializeJitterBuffer(UINT32 expectedFrameCount, UINT32 expectedDroppedFrameCount, UINT32 rtpPacketCount)
 {
+    initializeJitterBuffer(expectedFrameCount, expectedDroppedFrameCount, rtpPacketCount, FALSE);
+}
+
+VOID WebRtcClientTestBase::initializeJitterBuffer(UINT32 expectedFrameCount, UINT32 expectedDroppedFrameCount, UINT32 rtpPacketCount,
+                                                   BOOL useRealTime)
+{
     UINT32 i, timestamp;
-    EXPECT_EQ(STATUS_SUCCESS,
-              createJitterBuffer(testFrameReadyFunc, testFrameDroppedFunc, testDepayRtpFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY,
-                                 TEST_JITTER_BUFFER_CLOCK_RATE, (UINT64) this, FALSE, &mJitterBuffer));
+    if (useRealTime) {
+        EXPECT_EQ(STATUS_SUCCESS,
+                  createRealTimeJitterBuffer(testFrameReadyFunc, testFrameDroppedFunc, testDepayRtpFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY,
+                                             TEST_JITTER_BUFFER_CLOCK_RATE, (UINT64) this, FALSE, &mJitterBuffer));
+    } else {
+        EXPECT_EQ(STATUS_SUCCESS,
+                  createJitterBuffer(testFrameReadyFunc, testFrameDroppedFunc, testDepayRtpFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY,
+                                     TEST_JITTER_BUFFER_CLOCK_RATE, (UINT64) this, FALSE, &mJitterBuffer));
+    }
     mExpectedFrameCount = expectedFrameCount;
     mFrame = NULL;
     if (expectedFrameCount > 0) {
