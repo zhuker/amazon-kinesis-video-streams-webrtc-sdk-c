@@ -247,6 +247,9 @@ struct __IceAgent {
     UINT64 stateEndTime;
     UINT64 candidateGatheringEndTime;
     PIceCandidatePair pDataSendingIceCandidatePair;
+    // Old data-sending pair deferred for cleanup after the state machine
+    // lock is released (to avoid deadlocking with the connection listener).
+    PIceCandidatePair pDeferredOldPairCleanup;
 
     IceAgentCallbacks iceAgentCallbacks;
 

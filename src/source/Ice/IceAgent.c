@@ -78,6 +78,7 @@ STATUS createIceAgent(PCHAR username, PCHAR password, PIceAgentCallbacks pIceAge
     pIceAgent->disconnectionGracePeriodEndTime = INVALID_TIMESTAMP_VALUE;
     pIceAgent->pConnectionListener = pConnectionListener;
     pIceAgent->pDataSendingIceCandidatePair = NULL;
+    pIceAgent->pDeferredOldPairCleanup = NULL;
     pIceAgent->iceAgentState = ICE_AGENT_STATE_NEW;
     CHK_STATUS(createTransactionIdStore(DEFAULT_MAX_STORED_TRANSACTION_ID_COUNT, &pIceAgent->pStunBindingRequestTransactionIdStore));
 
@@ -243,6 +244,18 @@ STATUS freeIceAgent(PIceAgent* ppIceAgent)
         CHK_LOG_ERR(freeIceCandidatePair(&pIceAgent->pDataSendingIceCandidatePair));
 
         pIceAgent->pDataSendingIceCandidatePair = NULL;
+    }
+
+    /* Clean up deferred old pair if it was never cleaned up */
+    if (pIceAgent->pDeferredOldPairCleanup != NULL) {
+        if (IS_CANN_PAIR_SENDING_FROM_RELAYED(pIceAgent->pDeferredOldPairCleanup)) {
+            CHK_LOG_ERR(freeTurnConnection(&pIceAgent->pDeferredOldPairCleanup->local->pTurnConnection));
+        } else {
+            CHK_LOG_ERR(freeSocketConnection(&pIceAgent->pDeferredOldPairCleanup->local->pSocketConnection));
+        }
+        MEMFREE(pIceAgent->pDeferredOldPairCleanup->local);
+        CHK_LOG_ERR(freeIceCandidatePair(&pIceAgent->pDeferredOldPairCleanup));
+        pIceAgent->pDeferredOldPairCleanup = NULL;
     }
 
     if (pIceAgent->remoteCandidates != NULL) {
@@ -1423,6 +1436,26 @@ STATUS iceAgentStateTransitionTimerCallback(UINT32 timerId, UINT64 currentTime, 
     // Drive the state machine
     CHK_STATUS(stepIceAgentStateMachine(pIceAgent));
 
+    // Perform deferred cleanup of the old data-sending pair from ICE restart.
+    // This must happen after stepIceAgentStateMachine releases pIceAgent->lock,
+    // because freeSocketConnection needs the connection listener thread to
+    // release its inUse flag, and that thread needs pIceAgent->lock.
+    if (pIceAgent->pDeferredOldPairCleanup != NULL) {
+        PIceCandidatePair pOldPair = pIceAgent->pDeferredOldPairCleanup;
+        pIceAgent->pDeferredOldPairCleanup = NULL;
+
+        if (IS_CANN_PAIR_SENDING_FROM_RELAYED(pOldPair)) {
+            CHK_STATUS(turnConnectionShutdown(pOldPair->local->pTurnConnection, KVS_ICE_TURN_CONNECTION_SHUTDOWN_TIMEOUT));
+            CHK_STATUS(freeTurnConnection(&pOldPair->local->pTurnConnection));
+        } else {
+            CHK_STATUS(connectionListenerRemoveConnection(pIceAgent->pConnectionListener, pOldPair->local->pSocketConnection));
+            CHK_STATUS(freeSocketConnection(&pOldPair->local->pSocketConnection));
+        }
+
+        MEMFREE(pOldPair->local);
+        CHK_STATUS(freeIceCandidatePair(&pOldPair));
+    }
+
 CleanUp:
 
     CHK_LOG_ERR(retStatus);
@@ -2169,40 +2202,23 @@ STATUS iceAgentConnectedStateSetup(PIceAgent pIceAgent)
 {
     STATUS retStatus = STATUS_SUCCESS;
     PDoubleListNode pCurNode = NULL;
-    PIceCandidatePair pIceCandidatePair = NULL, pLastDataSendingIceCandidatePair = NULL;
+    PIceCandidatePair pIceCandidatePair = NULL;
     BOOL locked = FALSE;
 
     CHK(pIceAgent != NULL, STATUS_NULL_ARG);
     if (pIceAgent->pDataSendingIceCandidatePair != NULL) {
-        MUTEX_LOCK(pIceAgent->lock);
-        locked = TRUE;
-
-        /* at this point ice restart is complete */
+        // This function is called from stepIceAgentStateMachine which holds
+        // pIceAgent->lock. Freeing the old socket here would deadlock because
+        // freeSocketConnection spins on inUse which is released by the
+        // connection listener thread, and that thread needs pIceAgent->lock in
+        // its data callback. Defer the cleanup to after the lock is released.
         ATOMIC_STORE_BOOL(&pIceAgent->restart, FALSE);
-        pLastDataSendingIceCandidatePair = pIceAgent->pDataSendingIceCandidatePair;
+        pIceAgent->pDeferredOldPairCleanup = pIceAgent->pDataSendingIceCandidatePair;
         pIceAgent->pDataSendingIceCandidatePair = NULL;
-
-        MUTEX_UNLOCK(pIceAgent->lock);
-        locked = FALSE;
-
-        /* If pDataSendingIceCandidatePair is not NULL, then it must be the data sending pair before ice restart.
-         * Free its resource here since not there is a new connected pair to replace it. */
-        if (IS_CANN_PAIR_SENDING_FROM_RELAYED(pLastDataSendingIceCandidatePair)) {
-            CHK_STATUS(turnConnectionShutdown(pLastDataSendingIceCandidatePair->local->pTurnConnection, KVS_ICE_TURN_CONNECTION_SHUTDOWN_TIMEOUT));
-            CHK_STATUS(freeTurnConnection(&pLastDataSendingIceCandidatePair->local->pTurnConnection));
-
-        } else {
-            CHK_STATUS(
-                connectionListenerRemoveConnection(pIceAgent->pConnectionListener, pLastDataSendingIceCandidatePair->local->pSocketConnection));
-            CHK_STATUS(freeSocketConnection(&pLastDataSendingIceCandidatePair->local->pSocketConnection));
-        }
-
-        MEMFREE(pLastDataSendingIceCandidatePair->local);
-        CHK_STATUS(freeIceCandidatePair(&pLastDataSendingIceCandidatePair));
     }
 
-    MUTEX_LOCK(pIceAgent->lock);
-    locked = TRUE;
+    // Caller (stepIceAgentStateMachine) already holds pIceAgent->lock.
+    // Do not lock/unlock here — the caller manages the lock.
 
     // use the first connected pair as the data sending pair
     CHK_STATUS(doubleListGetHeadNode(pIceAgent->iceCandidatePairs, &pCurNode));
