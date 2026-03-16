@@ -2,10 +2,9 @@
 
 #include "../Include_i.h"
 
-#define RT_MAX_FRAMES               2048
-#define RT_HASH_TABLE_BUCKET_COUNT  3000
-#define RT_HASH_TABLE_BUCKET_LENGTH 2
-#define RT_PROCESSED_TS_RING_SIZE   512
+#define RT_MAX_FRAMES             2048
+#define RT_PKT_RING_SIZE          4096
+#define RT_PROCESSED_TS_RING_SIZE 512
 
 typedef struct {
     UINT32 timestamp;
@@ -31,7 +30,7 @@ typedef struct {
     UINT16 tailSequenceNumber;
     UINT32 headTimestamp;
     BOOL hasDelivered; // whether any frame has been delivered
-    PHashTable pPkgBufferHashTable;
+    PRtpPacket pktRing[RT_PKT_RING_SIZE];
     UINT32 processedTimestamps[RT_PROCESSED_TS_RING_SIZE]; // ring buffer of delivered/dropped timestamps
     UINT32 processedTsHead;                                // next write index
     UINT32 processedTsCount;                               // number of valid entries
@@ -143,31 +142,22 @@ static INT32 rtTimestampCompare(PRealTimeJitterBufferInternal pInternal, UINT32 
     return 1;
 }
 
-// Free all packets in the hash table for a given seq range [first, last] inclusive
-static STATUS rtFreePacketsInRange(PRealTimeJitterBufferInternal pInternal, UINT16 firstSeq, UINT16 lastSeq)
+// Free all packets in the ring buffer for a given seq range [first, last] inclusive
+static VOID rtFreePacketsInRange(PRealTimeJitterBufferInternal pInternal, UINT16 firstSeq, UINT16 lastSeq)
 {
-    STATUS retStatus = STATUS_SUCCESS;
     UINT16 seq;
-    UINT64 hashValue;
     PRtpPacket pPacket;
-    BOOL hasEntry;
 
     for (seq = firstSeq;; seq++) {
-        if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
-            if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashValue))) {
-                pPacket = (PRtpPacket) hashValue;
-                if (pPacket != NULL) {
-                    freeRtpPacket(&pPacket);
-                }
-            }
-            hashTableRemove(pInternal->pPkgBufferHashTable, seq);
+        pPacket = pInternal->pktRing[seq % RT_PKT_RING_SIZE];
+        if (pPacket != NULL && pPacket->header.sequenceNumber == seq) {
+            freeRtpPacket(&pPacket);
+            pInternal->pktRing[seq % RT_PKT_RING_SIZE] = NULL;
         }
         if (seq == lastSeq) {
             break;
         }
     }
-
-    return retStatus;
 }
 
 // Calculate frame size by iterating packets and calling depay with NULL output
@@ -175,25 +165,19 @@ static STATUS rtCalcFrameSize(PRealTimeJitterBufferInternal pInternal, UINT16 fi
 {
     STATUS retStatus = STATUS_SUCCESS;
     UINT16 seq;
-    UINT64 hashValue;
     PRtpPacket pPacket;
-    BOOL hasEntry;
     UINT32 totalSize = 0;
     UINT32 partialSize;
     BOOL isFirst = TRUE;
 
     for (seq = firstSeq;; seq++) {
-        if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
-            if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashValue))) {
-                pPacket = (PRtpPacket) hashValue;
-                if (pPacket != NULL) {
-                    partialSize = 0;
-                    BOOL depayIsFirst = isFirst;
-                    pInternal->depayPayloadFn(pPacket->payload, pPacket->payloadLength, NULL, &partialSize, &depayIsFirst);
-                    totalSize += partialSize;
-                    isFirst = FALSE;
-                }
-            }
+        pPacket = pInternal->pktRing[seq % RT_PKT_RING_SIZE];
+        if (pPacket != NULL && pPacket->header.sequenceNumber == seq) {
+            partialSize = 0;
+            BOOL depayIsFirst = isFirst;
+            pInternal->depayPayloadFn(pPacket->payload, pPacket->payloadLength, NULL, &partialSize, &depayIsFirst);
+            totalSize += partialSize;
+            isFirst = FALSE;
         }
         if (seq == lastSeq) {
             break;
@@ -258,21 +242,11 @@ static VOID rtFenceScan(PRealTimeJitterBufferInternal pInternal, UINT16 startSeq
     UINT16 seq;
     UINT16 present = 0;
     BOOL gapFound = FALSE;
-    BOOL hasEntry = FALSE;
-    UINT64 hashVal = 0;
     PRtpPacket pPkt = NULL;
 
     for (seq = startSeq; seq != fenceSeq; seq++) {
-        if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) || !hasEntry) {
-            gapFound = TRUE;
-            break;
-        }
-        if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, seq, &hashVal))) {
-            gapFound = TRUE;
-            break;
-        }
-        pPkt = (PRtpPacket) hashVal;
-        if (pPkt == NULL) {
+        pPkt = pInternal->pktRing[seq % RT_PKT_RING_SIZE];
+        if (pPkt == NULL || pPkt->header.sequenceNumber != seq) {
             gapFound = TRUE;
             break;
         }
@@ -385,16 +359,11 @@ STATUS createRealTimeJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedF
     pInternal->sequenceNumberOverflowState = FALSE;
     pInternal->alwaysSinglePacketFrames = alwaysSinglePacketFrames;
     pInternal->frameCount = 0;
-
-    CHK_STATUS(hashTableCreateWithParams(RT_HASH_TABLE_BUCKET_COUNT, RT_HASH_TABLE_BUCKET_LENGTH, &pInternal->pPkgBufferHashTable));
     pInternal->processedTsHead = 0;
     pInternal->processedTsCount = 0;
 
 CleanUp:
     if (STATUS_FAILED(retStatus) && pInternal != NULL) {
-        if (pInternal->pPkgBufferHashTable != NULL) {
-            hashTableFree(pInternal->pPkgBufferHashTable);
-        }
         SAFE_MEMFREE(pInternal);
     }
 
@@ -417,9 +386,7 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
     PRealTimeJitterBufferInternal pInternal = (PRealTimeJitterBufferInternal) pJitterBuffer;
     UINT32 frameIdx;
     PRtFrameEntry pFrame;
-    UINT64 hashValue;
     PRtpPacket pExisting;
-    BOOL hasEntry = FALSE;
     UINT32 partialSize;
     BOOL isStart;
     UINT32 age;
@@ -520,15 +487,10 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
     }
 
     // Check for duplicate - if exists, replace but don't increment packetCount
-    CHK_STATUS(hashTableContains(pInternal->pPkgBufferHashTable, pRtpPacket->header.sequenceNumber, &hasEntry));
-    if (hasEntry) {
-        hashTableGet(pInternal->pPkgBufferHashTable, pRtpPacket->header.sequenceNumber, &hashValue);
-        pExisting = (PRtpPacket) hashValue;
-        if (pExisting != NULL) {
-            freeRtpPacket(&pExisting);
-        }
-        hashTableRemove(pInternal->pPkgBufferHashTable, pRtpPacket->header.sequenceNumber);
-        CHK_STATUS(hashTablePut(pInternal->pPkgBufferHashTable, pRtpPacket->header.sequenceNumber, (UINT64) pRtpPacket));
+    pExisting = pInternal->pktRing[pRtpPacket->header.sequenceNumber % RT_PKT_RING_SIZE];
+    if (pExisting != NULL && pExisting->header.sequenceNumber == pRtpPacket->header.sequenceNumber) {
+        freeRtpPacket(&pExisting);
+        pInternal->pktRing[pRtpPacket->header.sequenceNumber % RT_PKT_RING_SIZE] = pRtpPacket;
         // Don't update frame entry for duplicates
         goto EvictAndDeliver;
     }
@@ -547,8 +509,8 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
         }
     }
 
-    // Store packet
-    CHK_STATUS(hashTablePut(pInternal->pPkgBufferHashTable, pRtpPacket->header.sequenceNumber, (UINT64) pRtpPacket));
+    // Store packet in ring buffer
+    pInternal->pktRing[pRtpPacket->header.sequenceNumber % RT_PKT_RING_SIZE] = pRtpPacket;
 
     if (frameIdx == pInternal->frameCount) {
         // Create new frame entry
@@ -722,7 +684,6 @@ static STATUS rtFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 
     STATUS retStatus = STATUS_SUCCESS;
     PRealTimeJitterBufferInternal pInternal = (PRealTimeJitterBufferInternal) pJitterBuffer;
     UINT16 index;
-    UINT64 hashValue;
     PRtpPacket pCurPacket;
     PBYTE pCurPtr = pFrame;
     UINT32 remaining = frameSize;
@@ -732,10 +693,10 @@ static STATUS rtFillFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, UINT32 
     CHK(pInternal != NULL && pFrame != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
 
     for (index = startIndex;; index++) {
-        hashValue = 0;
-        CHK_STATUS(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue));
-        pCurPacket = (PRtpPacket) hashValue;
-        CHK(pCurPacket != NULL, STATUS_NULL_ARG);
+        pCurPacket = pInternal->pktRing[index % RT_PKT_RING_SIZE];
+        if (pCurPacket == NULL || pCurPacket->header.sequenceNumber != index) {
+            CHK(FALSE, STATUS_HASH_KEY_NOT_PRESENT);
+        }
         partialSize = remaining;
         CHK_STATUS(pInternal->depayPayloadFn(pCurPacket->payload, pCurPacket->payloadLength, pCurPtr, &partialSize, &isFirst));
         pCurPtr += partialSize;
@@ -765,29 +726,17 @@ static STATUS rtFillPartialFrameData(PJitterBuffer pJitterBuffer, PBYTE pFrame, 
     STATUS retStatus = STATUS_SUCCESS;
     PRealTimeJitterBufferInternal pInternal = (PRealTimeJitterBufferInternal) pJitterBuffer;
     UINT16 index;
-    UINT64 hashValue;
     PRtpPacket pPacket;
     PBYTE pCurPtr = pFrame;
     UINT32 filledSize = 0;
     UINT32 partialSize;
-    BOOL hasEntry;
     BOOL isFirst = TRUE;
 
     CHK(pInternal != NULL && pFilledSize != NULL, STATUS_NULL_ARG);
 
     for (index = startIndex;; index++) {
-        if (STATUS_FAILED(hashTableContains(pInternal->pPkgBufferHashTable, index, &hasEntry))) {
-            if (index == endIndex)
-                break;
-            continue;
-        }
-        if (hasEntry) {
-            if (STATUS_FAILED(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue))) {
-                if (index == endIndex)
-                    break;
-                continue;
-            }
-            pPacket = (PRtpPacket) hashValue;
+        pPacket = pInternal->pktRing[index % RT_PKT_RING_SIZE];
+        if (pPacket != NULL && pPacket->header.sequenceNumber == index) {
             if (pFrame != NULL) {
                 partialSize = frameSize - filledSize;
             } else {
@@ -825,17 +774,16 @@ static STATUS rtGetPacket(PJitterBuffer pJitterBuffer, UINT16 seqNum, PRtpPacket
 {
     STATUS retStatus = STATUS_SUCCESS;
     PRealTimeJitterBufferInternal pInternal = (PRealTimeJitterBufferInternal) pJitterBuffer;
-    UINT64 hashValue = 0;
+    PRtpPacket pPacket;
 
     CHK(pInternal != NULL && ppPacket != NULL, STATUS_NULL_ARG);
 
-    retStatus = hashTableGet(pInternal->pPkgBufferHashTable, seqNum, &hashValue);
-    if (retStatus == STATUS_HASH_KEY_NOT_PRESENT) {
+    pPacket = pInternal->pktRing[seqNum % RT_PKT_RING_SIZE];
+    if (pPacket == NULL || pPacket->header.sequenceNumber != seqNum) {
         *ppPacket = NULL;
-        CHK(FALSE, retStatus);
+        CHK(FALSE, STATUS_HASH_KEY_NOT_PRESENT);
     }
-    CHK_STATUS(retStatus);
-    *ppPacket = (PRtpPacket) hashValue;
+    *ppPacket = pPacket;
 
 CleanUp:
     return retStatus;
@@ -851,28 +799,22 @@ static STATUS rtDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex, U
     STATUS retStatus = STATUS_SUCCESS;
     PRealTimeJitterBufferInternal pInternal = (PRealTimeJitterBufferInternal) pJitterBuffer;
     UINT16 index;
-    UINT64 hashValue;
     PRtpPacket pPacket;
-    BOOL hasEntry;
     UINT32 i;
 
     CHK(pInternal != NULL, STATUS_NULL_ARG);
 
     // Free packets in range and update frame packet counts
     for (index = startIndex;; index++) {
-        if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, index, &hasEntry)) && hasEntry) {
-            if (STATUS_SUCCEEDED(hashTableGet(pInternal->pPkgBufferHashTable, index, &hashValue))) {
-                pPacket = (PRtpPacket) hashValue;
-                if (pPacket != NULL) {
-                    // Decrement packet count for the owning frame
-                    UINT32 fi = rtFindFrame(pInternal, pPacket->header.timestamp);
-                    if (fi < pInternal->frameCount && pInternal->frames[fi].packetCount > 0) {
-                        pInternal->frames[fi].packetCount--;
-                    }
-                    freeRtpPacket(&pPacket);
-                }
+        pPacket = pInternal->pktRing[index % RT_PKT_RING_SIZE];
+        if (pPacket != NULL && pPacket->header.sequenceNumber == index) {
+            // Decrement packet count for the owning frame
+            UINT32 fi = rtFindFrame(pInternal, pPacket->header.timestamp);
+            if (fi < pInternal->frameCount && pInternal->frames[fi].packetCount > 0) {
+                pInternal->frames[fi].packetCount--;
             }
-            hashTableRemove(pInternal->pPkgBufferHashTable, index);
+            freeRtpPacket(&pPacket);
+            pInternal->pktRing[index % RT_PKT_RING_SIZE] = NULL;
         }
         if (index == endIndex) {
             break;
@@ -880,15 +822,13 @@ static STATUS rtDropBufferData(PJitterBuffer pJitterBuffer, UINT16 startIndex, U
     }
 
     // Remove frame entries whose packets were entirely within the dropped range.
-    // Frames with remaining packets outside the range are kept for destroy to handle.
     for (i = 0; i < pInternal->frameCount;) {
         PRtFrameEntry pEntry = &pInternal->frames[i];
-        // Check if ANY of this frame's packets still exist in the hash table
         UINT16 seq = pEntry->firstSeqNum;
         BOOL hasRemaining = FALSE;
         for (;; seq++) {
-            BOOL hasEntry = FALSE;
-            if (STATUS_SUCCEEDED(hashTableContains(pInternal->pPkgBufferHashTable, seq, &hasEntry)) && hasEntry) {
+            PRtpPacket pPkt = pInternal->pktRing[seq % RT_PKT_RING_SIZE];
+            if (pPkt != NULL && pPkt->header.sequenceNumber == seq) {
                 hasRemaining = TRUE;
                 break;
             }
@@ -989,7 +929,6 @@ static STATUS rtDestroy(PJitterBuffer* ppJitterBuffer)
         }
     }
 
-    hashTableFree(pInternal->pPkgBufferHashTable);
     SAFE_MEMFREE(*ppJitterBuffer);
 
 CleanUp:
