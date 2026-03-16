@@ -1289,6 +1289,10 @@ typedef struct {
                                    //!< until this timeout expires. Lower values reduce head-of-line blocking latency but increase frame drops
                                    //!< under packet loss. If 0, DEFAULT_JITTER_BUFFER_MAX_LATENCY (2000ms) is used.
 
+    BOOL useRealTimeJitterBuffer; //!< Use the real-time jitter buffer implementation which tracks frames independently by timestamp,
+                                  //!< aggressively evicts stale incomplete frames, and delivers complete frames without head-of-line blocking.
+                                  //!< Frames are still delivered in RTP timestamp order.
+
 #ifdef ENABLE_STATS_CALCULATION_CONTROL
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined
                          //!< to use this member, else stats are enabled by default.

@@ -457,6 +457,7 @@ file(
   "src/source/Crypto/*.c"
   "src/source/Ice/*.c"
   "src/source/PeerConnection/JitterBuffer.c"
+  "src/source/PeerConnection/RealTimeJitterBuffer.c"
   "src/source/PeerConnection/jsmn.c"
   "src/source/PeerConnection/PeerConnection.c"
   "src/source/PeerConnection/Retransmitter.c"
