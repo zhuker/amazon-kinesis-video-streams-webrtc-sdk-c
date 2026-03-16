@@ -327,6 +327,11 @@ void WebRtcClientTestBase::initRtcConfiguration(PRtcConfiguration pRtcConfigurat
     pRtcConfiguration->kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
     pRtcConfiguration->kvsRtcConfiguration.iceConnectionCheckTimeout = KVS_CONVERT_TIMESCALE(1000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
     pRtcConfiguration->kvsRtcConfiguration.iceCandidateNominationTimeout = KVS_CONVERT_TIMESCALE(2000, 1000, HUNDREDS_OF_NANOS_IN_A_SECOND);
+    // Low-end Android devices we run tests on have small default socket
+    // receive buffers, causing packet drops under burst traffic.
+#ifdef __ANDROID__
+    pRtcConfiguration->kvsRtcConfiguration.recvBufSize = 512 * 1024;
+#endif
 }
 
 PCHAR WebRtcClientTestBase::GetTestName()
