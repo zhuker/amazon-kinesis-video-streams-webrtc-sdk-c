@@ -252,8 +252,8 @@ static BOOL rtFindNextFrameFence(PRealTimeJitterBufferInternal pInternal, UINT32
 
 // Scan from startSeq to fenceSeq (exclusive), counting contiguous packets with expectedTimestamp.
 // Sets *pPresentCount and *pGapFound.
-static VOID rtFenceScan(PRealTimeJitterBufferInternal pInternal, UINT16 startSeq, UINT16 fenceSeq, UINT32 expectedTimestamp,
-                        PUINT16 pPresentCount, PBOOL pGapFound)
+static VOID rtFenceScan(PRealTimeJitterBufferInternal pInternal, UINT16 startSeq, UINT16 fenceSeq, UINT32 expectedTimestamp, PUINT16 pPresentCount,
+                        PBOOL pGapFound)
 {
     UINT16 seq;
     UINT16 present = 0;
