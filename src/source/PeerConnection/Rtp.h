@@ -35,6 +35,8 @@ typedef struct {
     UINT8 payloadType;
     UINT8 rtxPayloadType;
     UINT16 sequenceNumber;
+    UINT16 initialSequenceNumber;
+    BOOL seqInitialized;
     UINT16 rtxSequenceNumber;
     UINT32 ssrc;
     UINT32 rtxSsrc;
