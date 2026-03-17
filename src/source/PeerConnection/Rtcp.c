@@ -70,6 +70,9 @@ static STATUS onRtcpSenderReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKv
         UINT32 packetCnt = getUnalignedInt32BigEndian(pRtcpPacket->payload + 16);
         UINT32 octetCnt = getUnalignedInt32BigEndian(pRtcpPacket->payload + 20);
         DLOGV("RTCP_PACKET_TYPE_SENDER_REPORT %d %" PRIu64 " rtpTs: %u %u pkts %u bytes", senderSSRC, ntpTime, rtpTs, packetCnt, octetCnt);
+        // Store for LSR/DLSR in outgoing RR
+        pTransceiver->lastSRNtpMid = (UINT32) ((ntpTime >> 16U) & 0xffffffffULL);
+        pTransceiver->lastSRReceivedTime = GETTIME();
     } else {
         DLOGW("Received sender report for non existing ssrc: %u", senderSSRC);
     }
@@ -91,9 +94,6 @@ static STATUS onRtcpReceiverReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection p
     UNUSED_PARAM(rttPropDelay);
     UNUSED_PARAM(delaySinceLastSR);
     UNUSED_PARAM(lastSR);
-    UNUSED_PARAM(interarrivalJitter);
-    UNUSED_PARAM(extHiSeqNumReceived);
-    UNUSED_PARAM(cumulativeLost);
     UNUSED_PARAM(senderSSRC);
 
     CHK(pKvsPeerConnection != NULL && pRtcpPacket != NULL, STATUS_NULL_ARG);
@@ -139,6 +139,10 @@ static STATUS onRtcpReceiverReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection p
     pTransceiver->remoteInboundStats.roundTripTimeMeasurements++;
     pTransceiver->remoteInboundStats.totalRoundTripTime += rttPropDelayMsec;
     pTransceiver->remoteInboundStats.roundTripTime = rttPropDelayMsec;
+    // Sign-extend 24-bit cumulativeLost to INT64
+    pTransceiver->remoteInboundStats.received.packetsLost =
+        (cumulativeLost & 0x800000u) ? (INT64) (cumulativeLost | 0xFF000000u) : (INT64) cumulativeLost;
+    pTransceiver->remoteInboundStats.received.jitter = (DOUBLE) interarrivalJitter / (DOUBLE) pTransceiver->pJitterBuffer->clockRate;
     MUTEX_UNLOCK(pTransceiver->statsLock);
 
 CleanUp:

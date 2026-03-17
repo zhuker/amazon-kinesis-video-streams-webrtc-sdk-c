@@ -408,26 +408,12 @@ typedef struct {
     RTC_QUALITY_LIMITATION_REASON qualityLimitationReason;       //!< Only valid for video.
 } RtcOutboundRtpStreamStats, *PRtcOutboundRtpStreamStats;
 
-/**
- * @brief RTCRemoteInboundRtpStreamStats Represents the remote endpoint's measurement metrics for a particular incoming RTP stream
- *
- * Reference: https://www.w3.org/TR/webrtc-stats/#remoteinboundrtpstats-dict*
- */
-typedef struct {
-    DOMString localId;                //!< Used to look up RTCOutboundRtpStreamStats for the SSRC
-    UINT64 roundTripTime;             //!< Estimated round trip time (milliseconds) for this SSRC based on the RTCP timestamps
-    UINT64 totalRoundTripTime;        //!< The cumulative sum of all round trip time measurements in seconds since the beginning of the session
-    DOUBLE fractionLost;              //!< The fraction packet loss reported for this SSRC
-    UINT64 reportsReceived;           //!< Total number of RTCP RR blocks received for this SSRC
-    UINT64 roundTripTimeMeasurements; //!< Total number of RTCP RR blocks received for this SSRC that contain a valid round trip time
-} RtcRemoteInboundRtpStreamStats, *PRtcRemoteInboundRtpStreamStats;
-
 typedef struct {
     RTCRtpStreamStats rtpStream;
-    UINT64 packetsReceived; //!< Total number of RTP packets received for this SSRC.
-    INT64 packetsLost; //!< TODO Total number of RTP packets lost for this SSRC. Calculated as defined in [RFC3550] section 6.4.1. Note that because
-                       //!< of how this is estimated, it can be negative if more packets are received than sent.
-    DOUBLE jitter;     //!< Packet Jitter measured in seconds for this SSRC. Calculated as defined in section 6.4.1. of [RFC3550].
+    UINT64 packetsReceived;  //!< Total number of RTP packets received for this SSRC.
+    INT64 packetsLost;       //!< Total number of RTP packets lost for this SSRC. Calculated as defined in [RFC3550] section 6.4.1. Note that because
+                             //!< of how this is estimated, it can be negative if more packets are received than sent.
+    DOUBLE jitter;           //!< Packet Jitter measured in seconds for this SSRC. Calculated as defined in section 6.4.1. of [RFC3550].
     UINT64 packetsDiscarded; //!< The cumulative number of RTP packets discarded by the jitter buffer due to late or early-arrival, i.e., these
                              //!< packets are not played out. RTP packets discarded due to packet duplication are not reported in this metric
                              //!< [XRBLOCK-STATS]. Calculated as defined in [RFC7002] section 3.2 and Appendix A.a.
@@ -455,6 +441,21 @@ typedef struct {
     UINT32 fullFramesLost; //!< Only valid for video. The cumulative number of full frames lost. The measurement begins when the receiver is created
                            //!< and is a cumulative metric as defined in Appendix A (i) of [RFC7004].
 } RtcReceivedRtpStreamStats, *PRtcReceivedRtpStreamStats;
+
+/**
+ * @brief RTCRemoteInboundRtpStreamStats Represents the remote endpoint's measurement metrics for a particular incoming RTP stream
+ *
+ * Reference: https://www.w3.org/TR/webrtc-stats/#remoteinboundrtpstats-dict*
+ */
+typedef struct {
+    RtcReceivedRtpStreamStats received; //!< Inherited from RTCReceivedRtpStreamStats (packetsReceived, packetsLost, jitter)
+    DOMString localId;                  //!< Used to look up RTCOutboundRtpStreamStats for the SSRC
+    UINT64 roundTripTime;               //!< Estimated round trip time (milliseconds) for this SSRC based on the RTCP timestamps
+    UINT64 totalRoundTripTime;          //!< The cumulative sum of all round trip time measurements in seconds since the beginning of the session
+    DOUBLE fractionLost;                //!< The fraction packet loss reported for this SSRC
+    UINT64 reportsReceived;             //!< Total number of RTCP RR blocks received for this SSRC
+    UINT64 roundTripTimeMeasurements;   //!< Total number of RTCP RR blocks received for this SSRC that contain a valid round trip time
+} RtcRemoteInboundRtpStreamStats, *PRtcRemoteInboundRtpStreamStats;
 
 /**
  * @brief The RTCInboundRtpStreamStats dictionary represents the measurement metrics for the incoming RTP media stream. The timestamp reported in the

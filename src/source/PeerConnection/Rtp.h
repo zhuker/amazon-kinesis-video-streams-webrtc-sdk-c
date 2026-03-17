@@ -26,6 +26,11 @@ extern "C" {
 // Huge frames, by definition, are frames that have an encoded size at least 2.5 times the average size of the frames.
 #define HUGE_FRAME_MULTIPLIER 2.5
 
+// RFC 3550 Appendix A.1 constants
+#define RTP_SEQ_MOD  (1 << 16)
+#define MAX_DROPOUT  3000
+#define MAX_MISORDER 100
+
 typedef struct {
     UINT8 payloadType;
     UINT8 rtxPayloadType;
@@ -85,6 +90,19 @@ typedef struct {
     RtcOutboundRtpStreamStats outboundStats;
     RtcRemoteInboundRtpStreamStats remoteInboundStats;
     RtcInboundRtpStreamStats inboundStats;
+
+    // RFC 3550 A.1/A.3 — receiver sequence number state for RR and packetsLost
+    UINT16 rrMaxSeq;        // highest seq number seen
+    UINT32 rrCycles;        // shifted count of seq number cycles (wraps)
+    UINT32 rrBaseSeq;       // first seq number received
+    UINT32 rrBadSeq;        // last 'bad' seq number + 1
+    UINT32 rrExpectedPrior; // expected at last RR interval
+    UINT32 rrReceivedPrior; // received at last RR interval
+    BOOL rrSeqInitialized;  // whether first packet has been seen
+
+    // For LSR/DLSR in outgoing RR
+    UINT32 lastSRNtpMid;       // middle 32 bits of last received SR NTP timestamp
+    UINT64 lastSRReceivedTime; // wallclock (100ns) when last SR was received
 
     UINT8 firSequenceNumber;
 } KvsRtpTransceiver, *PKvsRtpTransceiver;
