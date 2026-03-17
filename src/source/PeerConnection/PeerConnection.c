@@ -1812,7 +1812,7 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
                 STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, space + 1, CERTIFICATE_FINGERPRINT_LENGTH);
             } else {
                 DLOGW("Skipping session-level fingerprint with unsupported hash algorithm: %.*s",
-                       space != NULL ? (INT32)(space - attrValue) : (INT32) STRLEN(attrValue), attrValue);
+                      space != NULL ? (INT32) (space - attrValue) : (INT32) STRLEN(attrValue), attrValue);
             }
         } else if (pKvsPeerConnection->isOffer && STRCMP(pSessionDescription->sdpAttributes[i].attributeName, "setup") == 0) {
             // possible values are actpass, passive and active. If the incoming SDP has active, it indicates it is taking up a client role
@@ -1849,7 +1849,7 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
                     STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, space + 1, CERTIFICATE_FINGERPRINT_LENGTH);
                 } else {
                     DLOGW("Skipping media-level fingerprint with unsupported hash algorithm: %.*s",
-                           space != NULL ? (INT32)(space - attrValue) : (INT32) STRLEN(attrValue), attrValue);
+                          space != NULL ? (INT32) (space - attrValue) : (INT32) STRLEN(attrValue), attrValue);
                 }
             } else if (pKvsPeerConnection->isOffer &&
                        STRCMP(pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeName, "setup") == 0) {
