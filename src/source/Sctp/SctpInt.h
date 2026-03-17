@@ -209,6 +209,7 @@ typedef struct {
     // Cookie state (for handshake)
     SctpCookie cookie;
     BYTE cookieEchoData[SCTP_COOKIE_SIZE]; // raw cookie bytes for retransmit
+    UINT32 cookieEchoLen;                  // actual cookie length from INIT-ACK
     BOOL cookieEchoValid;
 
     // Tie tag for simultaneous open

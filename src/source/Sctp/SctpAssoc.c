@@ -191,6 +191,7 @@ static STATUS sctpHandleInitAck(PSctpAssociation pAssoc, PBYTE pValue, UINT32 va
             UINT32 cookieDataLen = paramLen - 4;
             if (cookieDataLen <= SCTP_COOKIE_SIZE && paramOffset + paramLen <= valueLen) {
                 MEMCPY(pAssoc->cookieEchoData, pValue + paramOffset + 4, cookieDataLen);
+                pAssoc->cookieEchoLen = cookieDataLen;
                 pAssoc->cookieEchoValid = TRUE;
                 cookieFound = TRUE;
             }
@@ -207,7 +208,7 @@ static STATUS sctpHandleInitAck(PSctpAssociation pAssoc, PBYTE pValue, UINT32 va
 
     // Send COOKIE-ECHO
     offset = sctpWriteCommonHeader(pAssoc->outPacket, pAssoc->localPort, pAssoc->remotePort, pAssoc->peerVerificationTag);
-    offset += sctpWriteCookieEchoChunk(pAssoc->outPacket + offset, pAssoc->cookieEchoData, SCTP_COOKIE_SIZE);
+    offset += sctpWriteCookieEchoChunk(pAssoc->outPacket + offset, pAssoc->cookieEchoData, pAssoc->cookieEchoLen);
 
     sctpSendPacket(pAssoc, offset, outboundFn, outboundCustomData);
 
@@ -1022,7 +1023,7 @@ STATUS sctpAssocCheckTimers(PSctpAssociation pAssoc, UINT64 nowMs, SctpAssocOutb
         } else if (pAssoc->state == SCTP_ASSOC_COOKIE_ECHOED && pAssoc->cookieEchoValid) {
             // Retransmit COOKIE-ECHO
             offset = sctpWriteCommonHeader(pAssoc->outPacket, pAssoc->localPort, pAssoc->remotePort, pAssoc->peerVerificationTag);
-            offset += sctpWriteCookieEchoChunk(pAssoc->outPacket + offset, pAssoc->cookieEchoData, SCTP_COOKIE_SIZE);
+            offset += sctpWriteCookieEchoChunk(pAssoc->outPacket + offset, pAssoc->cookieEchoData, pAssoc->cookieEchoLen);
             sctpSendPacket(pAssoc, offset, outboundFn, outboundCustomData);
             DLOGD("SCTP: Retransmitting COOKIE-ECHO (%u)", pAssoc->initRetransmitCount);
         }
