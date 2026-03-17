@@ -93,6 +93,8 @@ STATUS allocateSctpSortDataChannelsDataCallback(UINT64 customData, PHashEntry pH
     CHK(customData != 0, STATUS_NULL_ARG);
 
     pKvsDataChannel->channelId = data->currentDataChannelId;
+    pKvsDataChannel->dataChannel.id = data->currentDataChannelId;
+    pKvsDataChannel->rtcDataChannelDiagnostics.dataChannelIdentifier = data->currentDataChannelId;
     CHK_STATUS(hashTablePut(data->pKvsPeerConnection->pDataChannels, pKvsDataChannel->channelId, (UINT64) pKvsDataChannel));
 
     data->currentDataChannelId += 2;

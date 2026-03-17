@@ -143,6 +143,14 @@ static STATUS onRtcpReceiverReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection p
     pTransceiver->remoteInboundStats.received.packetsLost =
         (cumulativeLost & 0x800000u) ? (INT64) (cumulativeLost | 0xFF000000u) : (INT64) cumulativeLost;
     pTransceiver->remoteInboundStats.received.jitter = (DOUBLE) interarrivalJitter / (DOUBLE) pTransceiver->pJitterBuffer->clockRate;
+    // RFC 3550 §6.4.1: expected = extHiSeqNum - initial_seq + 1; received = expected - lost
+    // The upper 16 bits of extHiSeqNumReceived carry the sequence number cycle count from the remote receiver
+    if (pTransceiver->sender.seqInitialized) {
+        UINT32 expected = extHiSeqNumReceived - (UINT32) pTransceiver->sender.initialSequenceNumber + 1;
+        if (expected >= cumulativeLost) {
+            pTransceiver->remoteInboundStats.received.packetsReceived = (UINT64) (expected - cumulativeLost);
+        }
+    }
     MUTEX_UNLOCK(pTransceiver->statsLock);
 
 CleanUp:
