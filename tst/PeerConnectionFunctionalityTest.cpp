@@ -2538,6 +2538,131 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
     }
 
+    // --- Verify RTP stats on the offer (sender) side ---
+    {
+        RtcStats rtcMetrics{};
+
+        // Outbound video stats
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_OUTBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerVideoTransceiver, &rtcMetrics));
+        auto& videoOut = rtcMetrics.rtcStatsObject.outboundRtpStreamStats;
+
+        // Each video frame produces at least ceil(frameSize / MTU) packets
+        UINT64 minVideoPackets = 0;
+        UINT64 totalNaluBytes = 0;
+        for (UINT32 i = 0; i < NUM_VIDEO_FRAMES; i++) {
+            minVideoPackets += (videoInputFrames[i].data.size() + DEFAULT_MTU_SIZE_BYTES - 1) / DEFAULT_MTU_SIZE_BYTES;
+            UINT32 naluOffsets[128], naluLengths[128];
+            UINT32 naluCount = extractNaluInfo((PBYTE) videoInputFrames[i].data.data(), (UINT32) videoInputFrames[i].data.size(),
+                                               naluOffsets, naluLengths, 128);
+            for (UINT32 j = 0; j < naluCount; j++) {
+                totalNaluBytes += naluLengths[j];
+            }
+        }
+        EXPECT_GE(videoOut.sent.packetsSent, minVideoPackets)
+            << "Video packetsSent " << videoOut.sent.packetsSent << " below minimum " << minVideoPackets;
+        EXPECT_GE(videoOut.sent.bytesSent, totalNaluBytes)
+            << "Video bytesSent " << videoOut.sent.bytesSent << " below total NALU payload " << totalNaluBytes;
+
+        // Outbound audio stats: one Opus frame = one RTP packet
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_OUTBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerAudioTransceiver, &rtcMetrics));
+        auto& audioOut = rtcMetrics.rtcStatsObject.outboundRtpStreamStats;
+        EXPECT_EQ(audioOut.sent.packetsSent, (UINT64) NUM_AUDIO_FRAMES)
+            << "Audio packetsSent " << audioOut.sent.packetsSent << " expected " << NUM_AUDIO_FRAMES;
+        UINT64 totalAudioBytes = 0;
+        for (UINT32 i = 0; i < NUM_AUDIO_FRAMES; i++) {
+            totalAudioBytes += audioInputFrames[i].data.size();
+        }
+        EXPECT_GE(audioOut.sent.bytesSent, totalAudioBytes)
+            << "Audio bytesSent " << audioOut.sent.bytesSent << " below total payload " << totalAudioBytes;
+
+        // Data channel stats on offer (receiver of DC messages)
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_DATA_CHANNEL;
+        rtcMetrics.rtcStatsObject.rtcDataChannelStats.dataChannelIdentifier = pOfferDataChannel->id;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, NULL, &rtcMetrics));
+        auto& dcRxStats = rtcMetrics.rtcStatsObject.rtcDataChannelStats;
+        EXPECT_EQ(dcRxStats.messagesReceived, NUM_DC_MESSAGES)
+            << "DC messagesReceived " << dcRxStats.messagesReceived << " expected " << NUM_DC_MESSAGES;
+        EXPECT_EQ(dcRxStats.bytesReceived, (UINT64) NUM_DC_MESSAGES * DC_MSG_SIZE);
+    }
+
+    // --- Verify inbound RTP stats on the answer (receiver) side ---
+    {
+        RtcStats rtcMetrics{};
+
+        // Inbound video stats
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_INBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerVideoTransceiver, &rtcMetrics));
+        auto& videoIn = rtcMetrics.rtcStatsObject.inboundRtpStreamStats;
+        EXPECT_GE(videoIn.received.packetsReceived, (UINT64) NUM_VIDEO_FRAMES)
+            << "Inbound video packetsReceived " << videoIn.received.packetsReceived << " below frame count";
+        EXPECT_EQ(videoIn.received.packetsLost, 0) << "Inbound video packetsLost " << videoIn.received.packetsLost;
+
+        // Inbound audio stats
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_INBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerAudioTransceiver, &rtcMetrics));
+        auto& audioIn = rtcMetrics.rtcStatsObject.inboundRtpStreamStats;
+        EXPECT_EQ(audioIn.received.packetsReceived, (UINT64) NUM_AUDIO_FRAMES)
+            << "Inbound audio packetsReceived " << audioIn.received.packetsReceived << " expected " << NUM_AUDIO_FRAMES;
+        EXPECT_EQ(audioIn.received.packetsLost, 0) << "Inbound audio packetsLost " << audioIn.received.packetsLost;
+
+        // Data channel stats on answer (sender of DC messages)
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_DATA_CHANNEL;
+        rtcMetrics.rtcStatsObject.rtcDataChannelStats.dataChannelIdentifier = pAnswerRemoteDc->id;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, NULL, &rtcMetrics));
+        auto& dcTxStats = rtcMetrics.rtcStatsObject.rtcDataChannelStats;
+        EXPECT_EQ(dcTxStats.messagesSent, NUM_DC_MESSAGES)
+            << "DC messagesSent " << dcTxStats.messagesSent << " expected " << NUM_DC_MESSAGES;
+        EXPECT_EQ(dcTxStats.bytesSent, (UINT64) NUM_DC_MESSAGES * DC_MSG_SIZE);
+    }
+
+    // --- Verify remote inbound RTP stats on the offer (from RTCP RR) ---
+    {
+        RtcStats rtcMetrics{};
+
+        // Wait for at least one RTCP RR to arrive (first SR at 3s, RR follows ~200ms later)
+        for (INT32 i = 0; i < 50; i++) {
+            rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_INBOUND_RTP;
+            ASSERT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerVideoTransceiver, &rtcMetrics));
+            if (rtcMetrics.rtcStatsObject.remoteInboundRtpStreamStats.reportsReceived > 0) {
+                break;
+            }
+            THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        }
+
+        // Video remote inbound — compare against what we actually sent
+        RtcStats outMetrics{};
+        outMetrics.requestedTypeOfStats = RTC_STATS_TYPE_OUTBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerVideoTransceiver, &outMetrics));
+        UINT64 videoPacketsSent = outMetrics.rtcStatsObject.outboundRtpStreamStats.sent.packetsSent;
+
+        auto& videoRemote = rtcMetrics.rtcStatsObject.remoteInboundRtpStreamStats;
+        EXPECT_GT(videoRemote.reportsReceived, (UINT64) 0) << "No RTCP RR received for video";
+        EXPECT_GE(videoRemote.received.packetsReceived, videoPacketsSent)
+            << "Remote inbound video packetsReceived " << videoRemote.received.packetsReceived
+            << " expected ~" << videoPacketsSent;
+        EXPECT_EQ(videoRemote.received.packetsLost, 0) << "Remote inbound video packetsLost " << videoRemote.received.packetsLost;
+        EXPECT_GE(videoRemote.received.jitter, 0.0) << "Remote inbound video jitter is negative";
+        EXPECT_EQ(videoRemote.fractionLost, 0.0) << "Remote inbound video fractionLost " << videoRemote.fractionLost;
+
+        // Audio remote inbound
+        outMetrics.requestedTypeOfStats = RTC_STATS_TYPE_OUTBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerAudioTransceiver, &outMetrics));
+        UINT64 audioPacketsSent = outMetrics.rtcStatsObject.outboundRtpStreamStats.sent.packetsSent;
+
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_INBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerAudioTransceiver, &rtcMetrics));
+        auto& audioRemote = rtcMetrics.rtcStatsObject.remoteInboundRtpStreamStats;
+        EXPECT_GT(audioRemote.reportsReceived, (UINT64) 0) << "No RTCP RR received for audio";
+        EXPECT_GE(audioRemote.received.packetsReceived, audioPacketsSent)
+            << "Remote inbound audio packetsReceived " << audioRemote.received.packetsReceived
+            << " expected ~" << audioPacketsSent;
+        EXPECT_EQ(audioRemote.received.packetsLost, 0) << "Remote inbound audio packetsLost " << audioRemote.received.packetsLost;
+        EXPECT_GE(audioRemote.received.jitter, 0.0) << "Remote inbound audio jitter is negative";
+        EXPECT_EQ(audioRemote.fractionLost, 0.0) << "Remote inbound audio fractionLost " << audioRemote.fractionLost;
+    }
+
     closePeerConnection(offerPc);
     closePeerConnection(answerPc);
     freePeerConnection(&offerPc);
