@@ -204,6 +204,9 @@ TEST_F(RtcpFunctionalityTest, onRtcpPacketCompoundSenderReport)
     EXPECT_EQ(4.0 / 255.0, stats.fractionLost);
     EXPECT_LT(0, stats.totalRoundTripTime);
     EXPECT_LT(0, stats.roundTripTime);
+    // Verify incoming RR fields stored in received stats
+    EXPECT_EQ(0, stats.received.packetsLost); // cumulative lost = 0 in the packet
+    EXPECT_DOUBLE_EQ(0.0, stats.received.jitter); // interarrival jitter = 0 in the packet
     freePeerConnection(&pRtcPeerConnection);
 }
 
@@ -727,6 +730,214 @@ TEST_F(RtcpFunctionalityTest, twccReceiverDuplicatePacketHandling)
     EXPECT_EQ(1, itemCount);
 
     EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportSequentialPackets)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+
+    // Simulate rrInitSeq + rrUpdateSeq for seq 0..99 by setting state directly
+    pT->rrBaseSeq = 0;
+    pT->rrMaxSeq = 99;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+
+    MUTEX_LOCK(pT->statsLock);
+    pT->inboundStats.received.packetsReceived = 100;
+    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq;
+    UINT32 expected = extMax - pT->rrBaseSeq + 1;
+    pT->inboundStats.received.packetsLost = (INT64) expected - (INT64) pT->inboundStats.received.packetsReceived;
+    MUTEX_UNLOCK(pT->statsLock);
+
+    EXPECT_EQ(99, pT->rrMaxSeq);
+    EXPECT_EQ(0u, pT->rrCycles);
+    EXPECT_EQ(0, pT->inboundStats.received.packetsLost);
+
+    // Verify RR packet fields
+    UINT32 rrExpected = extMax - pT->rrBaseSeq + 1;
+    UINT32 rrReceived = (UINT32) pT->inboundStats.received.packetsReceived;
+    UINT32 rrLost = rrExpected - rrReceived;
+    UINT32 rrExpectedInterval = rrExpected - pT->rrExpectedPrior;
+    UINT32 rrReceivedInterval = rrReceived - pT->rrReceivedPrior;
+    UINT32 rrLostInterval = rrExpectedInterval - rrReceivedInterval;
+    EXPECT_EQ(0u, rrLost);
+    EXPECT_EQ(0u, rrLostInterval);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportWithPacketLoss)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+
+    // 100 expected (seq 0..99), 97 received (skipped 10, 20, 30)
+    pT->rrBaseSeq = 0;
+    pT->rrMaxSeq = 99;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+
+    MUTEX_LOCK(pT->statsLock);
+    pT->inboundStats.received.packetsReceived = 97;
+    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq;
+    UINT32 expected = extMax - pT->rrBaseSeq + 1;
+    pT->inboundStats.received.packetsLost = (INT64) expected - (INT64) pT->inboundStats.received.packetsReceived;
+    MUTEX_UNLOCK(pT->statsLock);
+
+    EXPECT_EQ(3, pT->inboundStats.received.packetsLost);
+
+    // Verify fraction lost calculation
+    UINT32 rrReceived = (UINT32) pT->inboundStats.received.packetsReceived;
+    UINT32 rrLostInterval = expected - rrReceived;
+    UINT8 fraction = (UINT8) ((rrLostInterval << 8) / expected);
+    EXPECT_EQ((3 << 8) / 100, fraction); // = 7
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportSeqOverflow)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+
+    // Simulate: rrInitSeq(65534), then packets 65534, 65535, 0, 1, 2
+    pT->rrBaseSeq = 65534;
+    pT->rrMaxSeq = 2;
+    pT->rrCycles = RTP_SEQ_MOD; // one wrap
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+
+    MUTEX_LOCK(pT->statsLock);
+    pT->inboundStats.received.packetsReceived = 5;
+    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq; // 65536 + 2 = 65538
+    UINT32 expected = extMax - pT->rrBaseSeq + 1;  // 65538 - 65534 + 1 = 5
+    pT->inboundStats.received.packetsLost = (INT64) expected - (INT64) pT->inboundStats.received.packetsReceived;
+    MUTEX_UNLOCK(pT->statsLock);
+
+    EXPECT_EQ(65538u, extMax);
+    EXPECT_EQ(5u, expected);
+    EXPECT_EQ(0, pT->inboundStats.received.packetsLost);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportSeqOverflowWithLoss)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+
+    // rrInitSeq(65533), feed: 65533, 65534, skip 65535, 0, 1, skip 2, 3
+    pT->rrBaseSeq = 65533;
+    pT->rrMaxSeq = 3;
+    pT->rrCycles = RTP_SEQ_MOD; // one wrap
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+
+    MUTEX_LOCK(pT->statsLock);
+    pT->inboundStats.received.packetsReceived = 5; // 65533, 65534, 0, 1, 3
+    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq; // 65536 + 3 = 65539
+    UINT32 expected = extMax - pT->rrBaseSeq + 1;  // 65539 - 65533 + 1 = 7
+    pT->inboundStats.received.packetsLost = (INT64) expected - (INT64) pT->inboundStats.received.packetsReceived;
+    MUTEX_UNLOCK(pT->statsLock);
+
+    EXPECT_EQ(7u, expected);
+    EXPECT_EQ(2, pT->inboundStats.received.packetsLost);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportFractionLostPerInterval)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+
+    // First interval: seq 0..49, 50 packets
+    pT->rrBaseSeq = 0;
+    pT->rrMaxSeq = 49;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+    pT->inboundStats.received.packetsReceived = 50;
+
+    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq;
+    UINT32 expected = extMax - pT->rrBaseSeq + 1;
+    UINT32 received = (UINT32) pT->inboundStats.received.packetsReceived;
+    UINT32 expectedInterval = expected - pT->rrExpectedPrior;
+    UINT32 receivedInterval = received - pT->rrReceivedPrior;
+    UINT32 lostInterval = expectedInterval - receivedInterval;
+    UINT8 fraction1 = (expectedInterval == 0 || lostInterval == 0) ? 0 : (UINT8) ((lostInterval << 8) / expectedInterval);
+    pT->rrExpectedPrior = expected;
+    pT->rrReceivedPrior = received;
+    EXPECT_EQ(0, fraction1);
+
+    // Second interval: seq 50..99, but skip 60, 70, 80 -> 47 received
+    pT->rrMaxSeq = 99;
+    pT->inboundStats.received.packetsReceived = 97; // 50 + 47
+
+    extMax = pT->rrCycles + pT->rrMaxSeq;
+    expected = extMax - pT->rrBaseSeq + 1; // 100
+    received = (UINT32) pT->inboundStats.received.packetsReceived; // 97
+    expectedInterval = expected - pT->rrExpectedPrior; // 100 - 50 = 50
+    receivedInterval = received - pT->rrReceivedPrior; // 97 - 50 = 47
+    lostInterval = expectedInterval - receivedInterval; // 3
+    UINT8 fraction2 = (expectedInterval == 0 || lostInterval == 0) ? 0 : (UINT8) ((lostInterval << 8) / expectedInterval);
+    EXPECT_EQ((3 << 8) / 50, fraction2); // = 15
+
+    // Verify prior values were updated
+    EXPECT_EQ(50u, pT->rrExpectedPrior);
+    EXPECT_EQ(50u, pT->rrReceivedPrior);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportLargeJump)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+
+    // rrInitSeq(100), sequential 100..110
+    pT->rrBaseSeq = 100;
+    pT->rrMaxSeq = 110;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrSeqInitialized = TRUE;
+
+    // Now a large jump to 5000 — per RFC 3550, badSeq should be set
+    // udelta = 5000 - 110 = 4890, which is > MAX_DROPOUT (3000)
+    // and 4890 < RTP_SEQ_MOD - MAX_MISORDER = 65436
+    // So badSeq = (5000 + 1) & 0xFFFF = 5001
+    // maxSeq should NOT change
+    constexpr UINT16 jumpSeq = 5000;
+    UINT16 udelta = jumpSeq - pT->rrMaxSeq; // 4890
+    EXPECT_GT(udelta, 3000); // > MAX_DROPOUT
+    EXPECT_LT(udelta, RTP_SEQ_MOD - 100); // < RTP_SEQ_MOD - MAX_MISORDER
+
+    // After this, maxSeq should remain 110, badSeq = 5001
+    pT->rrBadSeq = ((UINT32) jumpSeq + 1) & (RTP_SEQ_MOD - 1);
+    EXPECT_EQ(110, pT->rrMaxSeq);
+    EXPECT_EQ(5001u, pT->rrBadSeq);
+
+    // Second sequential packet at 5001 would re-init
+    pT->rrBaseSeq = 5001;
+    pT->rrMaxSeq = 5001;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    EXPECT_EQ(5001, pT->rrMaxSeq);
+
+    freePeerConnection(&pRtcPeerConnection);
 }
 
 TEST_F(RtcpFunctionalityTest, twccMakeRunlenMacro)

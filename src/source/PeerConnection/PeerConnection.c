@@ -254,6 +254,41 @@ CleanUp:
     LEAVES();
 }
 
+static VOID rrInitSeq(PKvsRtpTransceiver pTransceiver, UINT16 seq)
+{
+    pTransceiver->rrBaseSeq = seq;
+    pTransceiver->rrMaxSeq = seq;
+    pTransceiver->rrBadSeq = RTP_SEQ_MOD + 1;
+    pTransceiver->rrCycles = 0;
+    pTransceiver->rrExpectedPrior = 0;
+    pTransceiver->rrReceivedPrior = 0;
+    pTransceiver->rrSeqInitialized = TRUE;
+}
+
+static VOID rrUpdateSeq(PKvsRtpTransceiver pTransceiver, UINT16 seq)
+{
+    // RFC 3550 Appendix A.1
+    UINT16 udelta = seq - pTransceiver->rrMaxSeq;
+
+    if (udelta < MAX_DROPOUT) {
+        // in order, with permissible gap
+        if (seq < pTransceiver->rrMaxSeq) {
+            // sequence number wrapped
+            pTransceiver->rrCycles += RTP_SEQ_MOD;
+        }
+        pTransceiver->rrMaxSeq = seq;
+    } else if (udelta <= RTP_SEQ_MOD - MAX_MISORDER) {
+        // the sequence number made a very large jump
+        if ((UINT32) seq == pTransceiver->rrBadSeq) {
+            // two sequential packets -- assume that the other side restarted
+            rrInitSeq(pTransceiver, seq);
+        } else {
+            pTransceiver->rrBadSeq = ((UINT32) seq + 1) & (RTP_SEQ_MOD - 1);
+        }
+    }
+    // else duplicate or reordered packet — ignore for max tracking
+}
+
 STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuffer, UINT32 bufferLen)
 {
     ENTERS();
@@ -319,6 +354,11 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
         if (pTransceiver->jitterBufferSsrc == ssrc) {
             packetsReceived++;
 
+            if (!pTransceiver->rrSeqInitialized) {
+                rrInitSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
+            }
+            rrUpdateSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
+
             // https://tools.ietf.org/html/rfc3550#section-6.4.1
             // https://tools.ietf.org/html/rfc3550#appendix-A.8
             // interarrival jitter
@@ -357,6 +397,12 @@ CleanUp:
         pTransceiver->inboundStats.bytesReceived += bytesReceived;
         pTransceiver->inboundStats.received.jitter = pTransceiver->pJitterBuffer->jitter / pTransceiver->pJitterBuffer->clockRate;
         pTransceiver->inboundStats.received.packetsDiscarded += packetsDiscarded;
+        if (pTransceiver->rrSeqInitialized) {
+            UINT32 extMax = pTransceiver->rrCycles + pTransceiver->rrMaxSeq;
+            UINT32 expected = extMax - pTransceiver->rrBaseSeq + 1;
+            pTransceiver->inboundStats.received.packetsLost =
+                (INT64) expected - (INT64) pTransceiver->inboundStats.received.packetsReceived;
+        }
         MUTEX_UNLOCK(pTransceiver->statsLock);
     }
     if (!ownedByJitterBuffer) {
@@ -862,6 +908,82 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         putUnalignedInt32BigEndian(rawPacket + 24, octetCount);
         CHK_STATUS(encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
         CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen));
+    }
+
+    // Send RTCP Receiver Report if we are receiving media on this transceiver
+    if (pKvsPeerConnection->pSrtpSession != NULL && pKvsRtpTransceiver->jitterBufferSsrc != 0 && pKvsRtpTransceiver->rrSeqInitialized) {
+        UINT32 rrExtMax, rrExpected, rrReceived, rrLost, rrExpectedInterval, rrReceivedInterval, rrLostInterval;
+        UINT8 rrFraction;
+        INT32 rrCumulativeLost;
+        UINT32 rrPacketLen;
+        BYTE rrPacket[RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN]; // header + sender SSRC + 1 report block
+
+        MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+        rrExtMax = pKvsRtpTransceiver->rrCycles + pKvsRtpTransceiver->rrMaxSeq;
+        rrExpected = rrExtMax - pKvsRtpTransceiver->rrBaseSeq + 1;
+        rrReceived = (UINT32) pKvsRtpTransceiver->inboundStats.received.packetsReceived;
+
+        rrLost = rrExpected - rrReceived;
+
+        rrExpectedInterval = rrExpected - pKvsRtpTransceiver->rrExpectedPrior;
+        pKvsRtpTransceiver->rrExpectedPrior = rrExpected;
+        rrReceivedInterval = rrReceived - pKvsRtpTransceiver->rrReceivedPrior;
+        pKvsRtpTransceiver->rrReceivedPrior = rrReceived;
+        rrLostInterval = rrExpectedInterval - rrReceivedInterval;
+
+        if (rrExpectedInterval == 0 || rrLostInterval == 0) {
+            rrFraction = 0;
+        } else {
+            rrFraction = (UINT8) ((rrLostInterval << 8) / rrExpectedInterval);
+        }
+
+        // Clamp cumulative lost to 24-bit signed range [-0x800000, 0x7FFFFF]
+        if ((INT32) rrLost > 0x7FFFFF) {
+            rrCumulativeLost = 0x7FFFFF;
+        } else if ((INT32) rrLost < -0x800000) {
+            rrCumulativeLost = -0x800000;
+        } else {
+            rrCumulativeLost = (INT32) rrLost;
+        }
+        MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
+
+        rrPacketLen = sizeof(rrPacket);
+        MEMSET(rrPacket, 0, rrPacketLen);
+        rrPacket[0] = (RTCP_PACKET_VERSION_VAL << 6) | 1; // V=2, RC=1
+        rrPacket[RTCP_PACKET_TYPE_OFFSET] = RTCP_PACKET_TYPE_RECEIVER_REPORT;
+        putUnalignedInt16BigEndian(rrPacket + RTCP_PACKET_LEN_OFFSET, (rrPacketLen / RTCP_PACKET_LEN_WORD_SIZE) - 1);
+        putUnalignedInt32BigEndian(rrPacket + 4, ssrc); // sender SSRC (our SSRC)
+        // Report block
+        putUnalignedInt32BigEndian(rrPacket + 8, pKvsRtpTransceiver->jitterBufferSsrc); // SSRC_1 (source)
+        rrPacket[12] = rrFraction;
+        rrPacket[13] = (rrCumulativeLost >> 16) & 0xFF;
+        rrPacket[14] = (rrCumulativeLost >> 8) & 0xFF;
+        rrPacket[15] = rrCumulativeLost & 0xFF;
+        putUnalignedInt32BigEndian(rrPacket + 16, rrExtMax); // extended highest sequence number
+        putUnalignedInt32BigEndian(rrPacket + 20, (UINT32) (pKvsRtpTransceiver->pJitterBuffer->jitter)); // interarrival jitter
+        putUnalignedInt32BigEndian(rrPacket + 24, pKvsRtpTransceiver->lastSRNtpMid); // LSR
+
+        // DLSR: delay since last SR in 1/65536 sec units
+        if (pKvsRtpTransceiver->lastSRReceivedTime != 0) {
+            UINT64 dlsrTime = currentTime - pKvsRtpTransceiver->lastSRReceivedTime;
+            UINT32 dlsr = (UINT32) KVS_CONVERT_TIMESCALE(dlsrTime, HUNDREDS_OF_NANOS_IN_A_SECOND, DLSR_TIMESCALE);
+            putUnalignedInt32BigEndian(rrPacket + 28, dlsr);
+        }
+
+        DLOGV("receiver report ssrc: %u src: %u frac: %u lost: %d seq: %u", ssrc, pKvsRtpTransceiver->jitterBufferSsrc, rrFraction, rrCumulativeLost,
+              rrExtMax);
+        {
+            UINT32 rrAllocSize = rrPacketLen + SRTP_AUTH_TAG_OVERHEAD + SRTP_MAX_TRAILER_LEN + 4;
+            PBYTE rrRawPacket = (PBYTE) MEMALLOC(rrAllocSize);
+            CHK(rrRawPacket != NULL, STATUS_NOT_ENOUGH_MEMORY);
+            MEMCPY(rrRawPacket, rrPacket, rrPacketLen);
+            retStatus = encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, rrRawPacket, (PINT32) &rrPacketLen);
+            if (STATUS_SUCCEEDED(retStatus)) {
+                retStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rrRawPacket, rrPacketLen);
+            }
+            SAFE_MEMFREE(rrRawPacket);
+            CHK_STATUS(retStatus);
+        }
     }
 
     delay = 100 + (RAND() % 200);
