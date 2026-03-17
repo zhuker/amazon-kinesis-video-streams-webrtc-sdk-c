@@ -140,9 +140,9 @@ static STATUS onRtcpReceiverReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection p
     pTransceiver->remoteInboundStats.totalRoundTripTime += rttPropDelayMsec;
     pTransceiver->remoteInboundStats.roundTripTime = rttPropDelayMsec;
     // Sign-extend 24-bit cumulativeLost to INT64
-    pTransceiver->remoteInboundStats.received.packetsLost = (cumulativeLost & 0x800000u) ? (INT64) (cumulativeLost | 0xFF000000u) : (INT64) cumulativeLost;
-    pTransceiver->remoteInboundStats.received.jitter =
-        (DOUBLE) interarrivalJitter / (DOUBLE) pTransceiver->pJitterBuffer->clockRate;
+    pTransceiver->remoteInboundStats.received.packetsLost =
+        (cumulativeLost & 0x800000u) ? (INT64) (cumulativeLost | 0xFF000000u) : (INT64) cumulativeLost;
+    pTransceiver->remoteInboundStats.received.jitter = (DOUBLE) interarrivalJitter / (DOUBLE) pTransceiver->pJitterBuffer->clockRate;
     MUTEX_UNLOCK(pTransceiver->statsLock);
 
 CleanUp:

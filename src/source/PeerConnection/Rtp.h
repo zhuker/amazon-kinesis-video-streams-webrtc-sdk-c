@@ -27,9 +27,9 @@ extern "C" {
 #define HUGE_FRAME_MULTIPLIER 2.5
 
 // RFC 3550 Appendix A.1 constants
-#define RTP_SEQ_MOD   (1 << 16)
-#define MAX_DROPOUT   3000
-#define MAX_MISORDER  100
+#define RTP_SEQ_MOD  (1 << 16)
+#define MAX_DROPOUT  3000
+#define MAX_MISORDER 100
 
 typedef struct {
     UINT8 payloadType;

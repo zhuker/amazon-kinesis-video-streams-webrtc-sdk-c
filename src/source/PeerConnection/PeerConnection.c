@@ -400,8 +400,7 @@ CleanUp:
         if (pTransceiver->rrSeqInitialized) {
             UINT32 extMax = pTransceiver->rrCycles + pTransceiver->rrMaxSeq;
             UINT32 expected = extMax - pTransceiver->rrBaseSeq + 1;
-            pTransceiver->inboundStats.received.packetsLost =
-                (INT64) expected - (INT64) pTransceiver->inboundStats.received.packetsReceived;
+            pTransceiver->inboundStats.received.packetsLost = (INT64) expected - (INT64) pTransceiver->inboundStats.received.packetsReceived;
         }
         MUTEX_UNLOCK(pTransceiver->statsLock);
     }
@@ -959,9 +958,9 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         rrPacket[13] = (rrCumulativeLost >> 16) & 0xFF;
         rrPacket[14] = (rrCumulativeLost >> 8) & 0xFF;
         rrPacket[15] = rrCumulativeLost & 0xFF;
-        putUnalignedInt32BigEndian(rrPacket + 16, rrExtMax); // extended highest sequence number
+        putUnalignedInt32BigEndian(rrPacket + 16, rrExtMax);                                             // extended highest sequence number
         putUnalignedInt32BigEndian(rrPacket + 20, (UINT32) (pKvsRtpTransceiver->pJitterBuffer->jitter)); // interarrival jitter
-        putUnalignedInt32BigEndian(rrPacket + 24, pKvsRtpTransceiver->lastSRNtpMid); // LSR
+        putUnalignedInt32BigEndian(rrPacket + 24, pKvsRtpTransceiver->lastSRNtpMid);                     // LSR
 
         // DLSR: delay since last SR in 1/65536 sec units
         if (pKvsRtpTransceiver->lastSRReceivedTime != 0) {
