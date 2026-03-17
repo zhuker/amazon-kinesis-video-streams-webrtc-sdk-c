@@ -903,7 +903,7 @@ STATUS dtlsSessionVerifyRemoteCertificateFingerprint(PDtlsSession pDtlsSession, 
     CHK((pRemoteCertificate = SSL_get_peer_certificate(pDtlsSession->pSsl)) != NULL, STATUS_INTERNAL_ERROR);
     CHK_STATUS(dtlsCertificateFingerprint(pRemoteCertificate, actualFingerprint));
 
-    CHK(STRCMP(pExpectedFingerprint, actualFingerprint) == 0, STATUS_SSL_REMOTE_CERTIFICATE_VERIFICATION_FAILED);
+    CHK(STRCMPI(pExpectedFingerprint, actualFingerprint) == 0, STATUS_SSL_REMOTE_CERTIFICATE_VERIFICATION_FAILED);
 
 CleanUp:
     if (pRemoteCertificate != NULL) {

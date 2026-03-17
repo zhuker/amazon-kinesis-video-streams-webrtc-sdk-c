@@ -1806,8 +1806,14 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
 
     for (i = 0; i < pSessionDescription->sessionAttributesCount; i++) {
         if (STRCMP(pSessionDescription->sdpAttributes[i].attributeName, "fingerprint") == 0) {
-            STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, pSessionDescription->sdpAttributes[i].attributeValue + 8,
-                    CERTIFICATE_FINGERPRINT_LENGTH);
+            PCHAR attrValue = pSessionDescription->sdpAttributes[i].attributeValue;
+            PCHAR space = STRCHR(attrValue, ' ');
+            if (space != NULL && (space - attrValue) == 7 && STRNCMP(attrValue, "sha-256", 7) == 0) {
+                STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, space + 1, CERTIFICATE_FINGERPRINT_LENGTH);
+            } else {
+                DLOGW("Skipping session-level fingerprint with unsupported hash algorithm: %.*s",
+                      space != NULL ? (INT32) (space - attrValue) : (INT32) STRLEN(attrValue), attrValue);
+            }
         } else if (pKvsPeerConnection->isOffer && STRCMP(pSessionDescription->sdpAttributes[i].attributeName, "setup") == 0) {
             // possible values are actpass, passive and active. If the incoming SDP has active, it indicates it is taking up a client role
             // In case of actpass and passive, the other peer is taking up a server role and is waiting for incoming connection
@@ -1837,8 +1843,14 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
                 // Ignore the return value, we have candidates we don't support yet like TURN
                 iceAgentAddRemoteCandidate(pKvsPeerConnection->pIceAgent, pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue);
             } else if (STRCMP(pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeName, "fingerprint") == 0) {
-                STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint,
-                        pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue + 8, CERTIFICATE_FINGERPRINT_LENGTH);
+                PCHAR attrValue = pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue;
+                PCHAR space = STRCHR(attrValue, ' ');
+                if (space != NULL && (space - attrValue) == 7 && STRNCMP(attrValue, "sha-256", 7) == 0) {
+                    STRNCPY(pKvsPeerConnection->remoteCertificateFingerprint, space + 1, CERTIFICATE_FINGERPRINT_LENGTH);
+                } else {
+                    DLOGW("Skipping media-level fingerprint with unsupported hash algorithm: %.*s",
+                          space != NULL ? (INT32) (space - attrValue) : (INT32) STRLEN(attrValue), attrValue);
+                }
             } else if (pKvsPeerConnection->isOffer &&
                        STRCMP(pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeName, "setup") == 0) {
                 pKvsPeerConnection->dtlsIsServer = STRCMP(pSessionDescription->mediaDescriptions[i].sdpAttributes[j].attributeValue, "active") == 0;
@@ -1855,6 +1867,9 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
     }
 
     CHK(remoteIceUfrag != NULL && remoteIcePwd != NULL, STATUS_SESSION_DESCRIPTION_MISSING_ICE_VALUES);
+    if (pKvsPeerConnection->remoteCertificateFingerprint[0] == '\0') {
+        DLOGE("No sha-256 fingerprint found in remote SDP. Only sha-256 is supported.");
+    }
     CHK(pKvsPeerConnection->remoteCertificateFingerprint[0] != '\0', STATUS_SESSION_DESCRIPTION_MISSING_CERTIFICATE_FINGERPRINT);
 
     if (!IS_EMPTY_STRING(pKvsPeerConnection->remoteIceUfrag) && !IS_EMPTY_STRING(pKvsPeerConnection->remoteIcePwd) &&
