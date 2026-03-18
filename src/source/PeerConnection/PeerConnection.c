@@ -230,6 +230,10 @@ VOID onInboundPacket(UINT64 customData, PBYTE buff, UINT32 buffLen)
                 }
 
                 if (signedBuffLen > 0) {
+                    // PCAP: capture decrypted inbound SCTP
+                    if (pKvsPeerConnection->pPcapDump != NULL) {
+                        pcapDumpWriteSctpPacket(pKvsPeerConnection->pPcapDump, buff, signedBuffLen, PCAP_PACKET_DIRECTION_RECV);
+                    }
                     CHK_STATUS(putSctpPacket(pKvsPeerConnection->pSctpSession, buff, signedBuffLen));
                 }
             }
@@ -741,6 +745,12 @@ VOID onSctpSessionOutboundPacket(UINT64 customData, PBYTE pPacket, UINT32 packet
     }
 
     pKvsPeerConnection = (PKvsPeerConnection) customData;
+
+    // PCAP: capture plaintext outbound SCTP
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWriteSctpPacket(pKvsPeerConnection->pPcapDump, pPacket, packetLen, PCAP_PACKET_DIRECTION_SEND);
+    }
+
     CHK_STATUS(dtlsSessionPutApplicationData(pKvsPeerConnection->pDtlsSession, pPacket, packetLen));
 
 CleanUp:
