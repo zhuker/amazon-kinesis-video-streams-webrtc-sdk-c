@@ -878,6 +878,7 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
 
     // check if ice agent is connected, reschedule in 200msec if not
     ready = pKvsPeerConnection->pSrtpSession != NULL &&
+        pKvsRtpTransceiver->sender.firstFrameWallClockTime != 0 &&
         currentTime - pKvsRtpTransceiver->sender.firstFrameWallClockTime >= 2500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     if (!ready) {
         DLOGV("sender report no frames sent %u", ssrc);
@@ -1267,6 +1268,10 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
         CHK(pKvsPeerConnection->pTwccManager != NULL, STATUS_NOT_ENOUGH_MEMORY);
         CHK_STATUS(hashTableCreateWithParams(TWCC_HASH_TABLE_BUCKET_COUNT, TWCC_HASH_TABLE_BUCKET_LENGTH,
                                              &pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable));
+        // Set default TWCC extension ID so the offer SDP includes the extmap.
+        // If the remote peer offers a different ID, it will be overwritten
+        // during setRemoteDescription.
+        pKvsPeerConnection->twccExtId = TWCC_DEFAULT_EXT_ID;
     }
 
     // TWCC feedback generation (receiver side)

@@ -33,6 +33,7 @@ extern "C" {
 #define RTX_HASH_TABLE_BUCKET_LENGTH   2
 #define TWCC_HASH_TABLE_BUCKET_COUNT   100
 #define TWCC_HASH_TABLE_BUCKET_LENGTH  2
+#define TWCC_DEFAULT_EXT_ID            5 // Default RTP header extension ID for transport-wide-cc
 
 #define DATA_CHANNEL_HASH_TABLE_BUCKET_COUNT  200
 #define DATA_CHANNEL_HASH_TABLE_BUCKET_LENGTH 2

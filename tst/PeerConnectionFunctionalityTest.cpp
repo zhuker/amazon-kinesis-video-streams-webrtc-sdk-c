@@ -851,7 +851,8 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     EXPECT_EQ(246790, stats.sent.bytesSent);
 #endif
     EXPECT_EQ(2, stats.framesSent);
-    EXPECT_EQ(2472, stats.headerBytesSent);
+    // Each RTP packet header: 12 bytes base + 8 bytes TWCC extension = 20 bytes
+    EXPECT_EQ(4120, stats.headerBytesSent);
     EXPECT_LT(0, stats.lastPacketSentTimestamp);
 
     RtcInboundRtpStreamStats answerStats{};
