@@ -2420,9 +2420,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver, offerAudioTransceiver, answerAudioTransceiver;
 
     initRtcConfiguration(&configuration);
-    STRCPY(configuration.kvsRtcConfiguration.pcapFilePath, "/tmp/webrtc-offer.pcap");
     ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &offerPc));
-    STRCPY(configuration.kvsRtcConfiguration.pcapFilePath, "/tmp/webrtc-answer.pcap");
     ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &answerPc));
 
     addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
