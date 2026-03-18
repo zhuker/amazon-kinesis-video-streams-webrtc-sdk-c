@@ -877,8 +877,7 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
     DLOGS("rtcpReportsCallback %" PRIu64 " ssrc: %u rtxssrc: %u", currentTime, ssrc, pKvsRtpTransceiver->sender.rtxSsrc);
 
     // check if ice agent is connected, reschedule in 200msec if not
-    ready = pKvsPeerConnection->pSrtpSession != NULL &&
-        pKvsRtpTransceiver->sender.firstFrameWallClockTime != 0 &&
+    ready = pKvsPeerConnection->pSrtpSession != NULL && pKvsRtpTransceiver->sender.firstFrameWallClockTime != 0 &&
         currentTime - pKvsRtpTransceiver->sender.firstFrameWallClockTime >= 2500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     if (!ready) {
         DLOGV("sender report no frames sent %u", ssrc);
