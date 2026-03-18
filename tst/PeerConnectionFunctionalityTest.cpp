@@ -2701,9 +2701,16 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         EXPECT_GT(videoRemoteOut.remoteTimestamp, nowMs - 60000) << "Remote outbound video remoteTimestamp too old";
         EXPECT_LE(videoRemoteOut.remoteTimestamp, nowMs + 1000) << "Remote outbound video remoteTimestamp in the future";
 
-        // Audio remote outbound
-        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
-        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerAudioTransceiver, &rtcMetrics));
+        // Audio remote outbound — wait for SR to arrive (separate timer from video)
+        for (INT32 i = 0; i < 50; i++) {
+            rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
+            ASSERT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerAudioTransceiver, &rtcMetrics));
+            if (rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats.sent.packetsSent ==
+                offerAudioOutMetrics.rtcStatsObject.outboundRtpStreamStats.sent.packetsSent) {
+                break;
+            }
+            THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        }
         auto& audioRemoteOut = rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats;
         auto& audioOfferOut = offerAudioOutMetrics.rtcStatsObject.outboundRtpStreamStats;
         EXPECT_GT(audioRemoteOut.reportsSent, (UINT64) 0) << "No RTCP SR received for audio";
