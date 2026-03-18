@@ -2554,8 +2554,8 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         for (UINT32 i = 0; i < NUM_VIDEO_FRAMES; i++) {
             minVideoPackets += (videoInputFrames[i].data.size() + DEFAULT_MTU_SIZE_BYTES - 1) / DEFAULT_MTU_SIZE_BYTES;
             UINT32 naluOffsets[128], naluLengths[128];
-            UINT32 naluCount = extractNaluInfo((PBYTE) videoInputFrames[i].data.data(), (UINT32) videoInputFrames[i].data.size(),
-                                               naluOffsets, naluLengths, 128);
+            UINT32 naluCount =
+                extractNaluInfo((PBYTE) videoInputFrames[i].data.data(), (UINT32) videoInputFrames[i].data.size(), naluOffsets, naluLengths, 128);
             for (UINT32 j = 0; j < naluCount; j++) {
                 totalNaluBytes += naluLengths[j];
             }
@@ -2613,8 +2613,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         rtcMetrics.rtcStatsObject.rtcDataChannelStats.dataChannelIdentifier = pAnswerRemoteDc->id;
         EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, NULL, &rtcMetrics));
         auto& dcTxStats = rtcMetrics.rtcStatsObject.rtcDataChannelStats;
-        EXPECT_EQ(dcTxStats.messagesSent, NUM_DC_MESSAGES)
-            << "DC messagesSent " << dcTxStats.messagesSent << " expected " << NUM_DC_MESSAGES;
+        EXPECT_EQ(dcTxStats.messagesSent, NUM_DC_MESSAGES) << "DC messagesSent " << dcTxStats.messagesSent << " expected " << NUM_DC_MESSAGES;
         EXPECT_EQ(dcTxStats.bytesSent, (UINT64) NUM_DC_MESSAGES * DC_MSG_SIZE);
     }
 
@@ -2641,8 +2640,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         auto& videoRemote = rtcMetrics.rtcStatsObject.remoteInboundRtpStreamStats;
         EXPECT_GT(videoRemote.reportsReceived, (UINT64) 0) << "No RTCP RR received for video";
         EXPECT_GE(videoRemote.received.packetsReceived, videoPacketsSent)
-            << "Remote inbound video packetsReceived " << videoRemote.received.packetsReceived
-            << " expected ~" << videoPacketsSent;
+            << "Remote inbound video packetsReceived " << videoRemote.received.packetsReceived << " expected ~" << videoPacketsSent;
         EXPECT_EQ(videoRemote.received.packetsLost, 0) << "Remote inbound video packetsLost " << videoRemote.received.packetsLost;
         EXPECT_GE(videoRemote.received.jitter, 0.0) << "Remote inbound video jitter is negative";
         EXPECT_EQ(videoRemote.fractionLost, 0.0) << "Remote inbound video fractionLost " << videoRemote.fractionLost;
@@ -2657,11 +2655,66 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         auto& audioRemote = rtcMetrics.rtcStatsObject.remoteInboundRtpStreamStats;
         EXPECT_GT(audioRemote.reportsReceived, (UINT64) 0) << "No RTCP RR received for audio";
         EXPECT_GE(audioRemote.received.packetsReceived, audioPacketsSent)
-            << "Remote inbound audio packetsReceived " << audioRemote.received.packetsReceived
-            << " expected ~" << audioPacketsSent;
+            << "Remote inbound audio packetsReceived " << audioRemote.received.packetsReceived << " expected ~" << audioPacketsSent;
         EXPECT_EQ(audioRemote.received.packetsLost, 0) << "Remote inbound audio packetsLost " << audioRemote.received.packetsLost;
         EXPECT_GE(audioRemote.received.jitter, 0.0) << "Remote inbound audio jitter is negative";
         EXPECT_EQ(audioRemote.fractionLost, 0.0) << "Remote inbound audio fractionLost " << audioRemote.fractionLost;
+    }
+
+    // --- Verify remote outbound RTP stats on the answer (from RTCP SR sent by offer) ---
+    {
+        RtcStats rtcMetrics{};
+
+        // Get the offer's outbound stats for comparison — the SR carries these exact values
+        RtcStats offerVideoOutMetrics{}, offerAudioOutMetrics{};
+        offerVideoOutMetrics.requestedTypeOfStats = RTC_STATS_TYPE_OUTBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerVideoTransceiver, &offerVideoOutMetrics));
+        offerAudioOutMetrics.requestedTypeOfStats = RTC_STATS_TYPE_OUTBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerAudioTransceiver, &offerAudioOutMetrics));
+
+        // Wait for at least one RTCP SR with final packet counts to arrive on the answer side.
+        // The SR copies outboundStats.sent.packetsSent; all frames were sent before the first SR fires
+        // (SR starts 2.5s after first frame, frames finish in ~500ms), so the SR should carry final counts.
+        for (INT32 i = 0; i < 50; i++) {
+            rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
+            ASSERT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerVideoTransceiver, &rtcMetrics));
+            if (rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats.sent.packetsSent ==
+                offerVideoOutMetrics.rtcStatsObject.outboundRtpStreamStats.sent.packetsSent) {
+                break;
+            }
+            THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        }
+
+        UINT64 nowMs = GETTIME() / HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+        // Video remote outbound — packetsSent/bytesSent must match the offer's outbound stats exactly
+        auto& videoRemoteOut = rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats;
+        auto& videoOfferOut = offerVideoOutMetrics.rtcStatsObject.outboundRtpStreamStats;
+        EXPECT_GT(videoRemoteOut.reportsSent, (UINT64) 0) << "No RTCP SR received for video";
+        EXPECT_EQ(videoRemoteOut.sent.packetsSent, videoOfferOut.sent.packetsSent)
+            << "Remote outbound video packetsSent " << videoRemoteOut.sent.packetsSent << " != offer outbound " << videoOfferOut.sent.packetsSent;
+        EXPECT_EQ(videoRemoteOut.sent.bytesSent, videoOfferOut.sent.bytesSent)
+            << "Remote outbound video bytesSent " << videoRemoteOut.sent.bytesSent << " != offer outbound " << videoOfferOut.sent.bytesSent;
+        EXPECT_EQ(videoRemoteOut.sent.rtpStream.ssrc, ((PKvsRtpTransceiver) offerVideoTransceiver)->sender.ssrc)
+            << "Remote outbound video SSRC mismatch";
+        // remoteTimestamp should be a Unix ms timestamp within 60s of now
+        EXPECT_GT(videoRemoteOut.remoteTimestamp, nowMs - 60000) << "Remote outbound video remoteTimestamp too old";
+        EXPECT_LE(videoRemoteOut.remoteTimestamp, nowMs + 1000) << "Remote outbound video remoteTimestamp in the future";
+
+        // Audio remote outbound
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
+        EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerAudioTransceiver, &rtcMetrics));
+        auto& audioRemoteOut = rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats;
+        auto& audioOfferOut = offerAudioOutMetrics.rtcStatsObject.outboundRtpStreamStats;
+        EXPECT_GT(audioRemoteOut.reportsSent, (UINT64) 0) << "No RTCP SR received for audio";
+        EXPECT_EQ(audioRemoteOut.sent.packetsSent, audioOfferOut.sent.packetsSent)
+            << "Remote outbound audio packetsSent " << audioRemoteOut.sent.packetsSent << " != offer outbound " << audioOfferOut.sent.packetsSent;
+        EXPECT_EQ(audioRemoteOut.sent.bytesSent, audioOfferOut.sent.bytesSent)
+            << "Remote outbound audio bytesSent " << audioRemoteOut.sent.bytesSent << " != offer outbound " << audioOfferOut.sent.bytesSent;
+        EXPECT_EQ(audioRemoteOut.sent.rtpStream.ssrc, ((PKvsRtpTransceiver) offerAudioTransceiver)->sender.ssrc)
+            << "Remote outbound audio SSRC mismatch";
+        EXPECT_GT(audioRemoteOut.remoteTimestamp, nowMs - 60000) << "Remote outbound audio remoteTimestamp too old";
+        EXPECT_LE(audioRemoteOut.remoteTimestamp, nowMs + 1000) << "Remote outbound audio remoteTimestamp in the future";
     }
 
     closePeerConnection(offerPc);

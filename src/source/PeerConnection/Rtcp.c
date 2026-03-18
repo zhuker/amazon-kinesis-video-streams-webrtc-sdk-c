@@ -57,11 +57,7 @@ static STATUS onRtcpSenderReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKv
     PKvsRtpTransceiver pTransceiver = NULL;
 
     CHK(pKvsPeerConnection != NULL && pRtcpPacket != NULL, STATUS_NULL_ARG);
-
-    if (pRtcpPacket->payloadLength != RTCP_PACKET_SENDER_REPORT_MINLEN) {
-        // TODO: handle sender report containing receiver report blocks
-        return STATUS_SUCCESS;
-    }
+    CHK(pRtcpPacket->payloadLength >= RTCP_PACKET_SENDER_REPORT_MINLEN, STATUS_RTCP_INPUT_PARTIAL_PACKET);
 
     senderSSRC = getUnalignedInt32BigEndian(pRtcpPacket->payload);
     if (STATUS_SUCCEEDED(findTransceiverBySsrc(pKvsPeerConnection, &pTransceiver, senderSSRC))) {
@@ -73,6 +69,19 @@ static STATUS onRtcpSenderReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKv
         // Store for LSR/DLSR in outgoing RR
         pTransceiver->lastSRNtpMid = (UINT32) ((ntpTime >> 16U) & 0xffffffffULL);
         pTransceiver->lastSRReceivedTime = GETTIME();
+
+        // Populate remote outbound stats
+        UINT64 ntpSec = ntpTime >> 32U;
+        UINT64 ntpFrac = ntpTime & 0xffffffffULL;
+        UINT64 unixMs = (ntpSec - NTP_OFFSET) * 1000ULL + (ntpFrac * 1000ULL / NTP_TIMESCALE);
+
+        MUTEX_LOCK(pTransceiver->statsLock);
+        pTransceiver->remoteOutboundStats.reportsSent++;
+        pTransceiver->remoteOutboundStats.sent.packetsSent = packetCnt;
+        pTransceiver->remoteOutboundStats.sent.bytesSent = octetCnt;
+        pTransceiver->remoteOutboundStats.sent.rtpStream.ssrc = senderSSRC;
+        pTransceiver->remoteOutboundStats.remoteTimestamp = unixMs;
+        MUTEX_UNLOCK(pTransceiver->statsLock);
     } else {
         DLOGW("Received sender report for non existing ssrc: %u", senderSSRC);
     }

@@ -205,7 +205,7 @@ TEST_F(RtcpFunctionalityTest, onRtcpPacketCompoundSenderReport)
     EXPECT_LT(0, stats.totalRoundTripTime);
     EXPECT_LT(0, stats.roundTripTime);
     // Verify incoming RR fields stored in received stats
-    EXPECT_EQ(0, stats.received.packetsLost); // cumulative lost = 0 in the packet
+    EXPECT_EQ(0, stats.received.packetsLost);     // cumulative lost = 0 in the packet
     EXPECT_DOUBLE_EQ(0.0, stats.received.jitter); // interarrival jitter = 0 in the packet
     freePeerConnection(&pRtcPeerConnection);
 }
@@ -299,8 +299,8 @@ TEST_F(RtcpFunctionalityTest, onpli)
     freePeerConnection(&pRtcPeerConnection);
 }
 
-static void testBwHandler(UINT64 customData, UINT32 txBytes, UINT32 rxBytes, UINT32 txPacketsCnt, UINT32 rxPacketsCnt,
-                                                   UINT64 duration) {
+static void testBwHandler(UINT64 customData, UINT32 txBytes, UINT32 rxBytes, UINT32 txPacketsCnt, UINT32 rxPacketsCnt, UINT64 duration)
+{
     UNUSED_PARAM(customData);
     UNUSED_PARAM(txBytes);
     UNUSED_PARAM(rxBytes);
@@ -329,16 +329,14 @@ static void parseTwcc(const std::string& hex, const uint32_t expectedReceived, c
     rtcpPacket.payload = payload;
     rtcpPacket.payloadLength = payloadLen;
 
-
     EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&config, &pRtcPeerConnection));
     pKvsPeerConnection = reinterpret_cast<PKvsPeerConnection>(pRtcPeerConnection);
-    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnSenderBandwidthEstimation(pRtcPeerConnection, 0,
-                                                                        testBwHandler));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnSenderBandwidthEstimation(pRtcPeerConnection, 0, testBwHandler));
 
     UINT16 baseSeqNum = getUnalignedInt16BigEndian(rtcpPacket.payload + 8);
     UINT16 pktCount = TWCC_PACKET_STATUS_COUNT(rtcpPacket.payload);
 
-    for(i = baseSeqNum; i < baseSeqNum + pktCount; i++) {
+    for (i = baseSeqNum; i < baseSeqNum + pktCount; i++) {
         rtpPacket.header.extension = TRUE;
         rtpPacket.header.extensionProfile = TWCC_EXT_PROFILE;
         rtpPacket.header.extensionLength = SIZEOF(UINT32);
@@ -350,10 +348,10 @@ static void parseTwcc(const std::string& hex, const uint32_t expectedReceived, c
 
     EXPECT_EQ(STATUS_SUCCESS, parseRtcpTwccPacket(&rtcpPacket, pKvsPeerConnection->pTwccManager));
 
-    for(i = 0; i < MAX_UINT16; i++) {
-        if(STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, i, &value))) {
+    for (i = 0; i < MAX_UINT16; i++) {
+        if (STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable, i, &value))) {
             PTwccRtpPacketInfo tempTwccRtpPktInfo = (PTwccRtpPacketInfo) value;
-            if(tempTwccRtpPktInfo->remoteTimeKvs == TWCC_PACKET_LOST_TIME) {
+            if (tempTwccRtpPktInfo->remoteTimeKvs == TWCC_PACKET_LOST_TIME) {
                 lost++;
             } else if (tempTwccRtpPktInfo->remoteTimeKvs != TWCC_PACKET_UNITIALIZED_TIME) {
                 received++;
@@ -431,19 +429,17 @@ TEST_F(RtcpFunctionalityTest, updateTwccHashTableTest)
 
     // Grab the hash table.
     pTwccRtpPktInfosHashTable = pKvsPeerConnection->pTwccManager->pTwccRtpPktInfosHashTable;
- 
+
     pKvsPeerConnection->pTwccManager->prevReportedBaseSeqNum = lowerBound;
     pKvsPeerConnection->pTwccManager->lastReportedSeqNum = upperBound + 10;
 
     // Breakup the packet indexes to be across the max int overflow.
-    for (i = lowerBound; i <= UINT16_MAX && i != 0 ; i++)
-    {
+    for (i = lowerBound; i <= UINT16_MAX && i != 0; i++) {
         pTwccRtpPacketInfo = (PTwccRtpPacketInfo) MEMCALLOC(1, SIZEOF(TwccRtpPacketInfo));
         EXPECT_EQ(STATUS_SUCCESS, hashTableUpsert(pTwccRtpPktInfosHashTable, i, (UINT64) pTwccRtpPacketInfo));
         hashTableInsertionCount++;
     }
-    for (i = 0; i < upperBound; i++)
-    {
+    for (i = 0; i < upperBound; i++) {
         pTwccRtpPacketInfo = (PTwccRtpPacketInfo) MEMCALLOC(1, SIZEOF(TwccRtpPacketInfo));
         EXPECT_EQ(STATUS_SUCCESS, hashTableUpsert(pTwccRtpPktInfosHashTable, i, (UINT64) pTwccRtpPacketInfo));
         hashTableInsertionCount++;
@@ -456,27 +452,29 @@ TEST_F(RtcpFunctionalityTest, updateTwccHashTableTest)
 
     // Validate hash table size after and before updating (onRtcpTwccPacket case).
     EXPECT_EQ(hashTableInsertionCount, pTwccRtpPktInfosHashTable->itemCount);
-    EXPECT_EQ(STATUS_SUCCESS, updateTwccHashTable(pKvsPeerConnection->pTwccManager, &duration, &receivedBytes, &receivedPackets, &sentBytes, &sentPackets));
+    EXPECT_EQ(STATUS_SUCCESS,
+              updateTwccHashTable(pKvsPeerConnection->pTwccManager, &duration, &receivedBytes, &receivedPackets, &sentBytes, &sentPackets));
     EXPECT_EQ(0, pTwccRtpPktInfosHashTable->itemCount);
 
     hashTableInsertionCount = 0;
     pTwccRtpPacketInfo = NULL;
-    for (i = 0; i <= upperBound; i++)
-    {
+    for (i = 0; i <= upperBound; i++) {
         EXPECT_EQ(STATUS_SUCCESS, hashTableUpsert(pTwccRtpPktInfosHashTable, i, (UINT64) pTwccRtpPacketInfo));
         hashTableInsertionCount++;
     }
     EXPECT_EQ(hashTableInsertionCount, pTwccRtpPktInfosHashTable->itemCount);
-    EXPECT_EQ(STATUS_SUCCESS, updateTwccHashTable(pKvsPeerConnection->pTwccManager, &duration, &receivedBytes, &receivedPackets, &sentBytes, &sentPackets));
+    EXPECT_EQ(STATUS_SUCCESS,
+              updateTwccHashTable(pKvsPeerConnection->pTwccManager, &duration, &receivedBytes, &receivedPackets, &sentBytes, &sentPackets));
     EXPECT_EQ(0, pTwccRtpPktInfosHashTable->itemCount);
-    
+
     MUTEX_LOCK(pKvsPeerConnection->twccLock);
     MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
 
     EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
 }
 
-TEST_F(RtcpFunctionalityTest, updateTwccHashTableIntPromotionCase) {
+TEST_F(RtcpFunctionalityTest, updateTwccHashTableIntPromotionCase)
+{
     PRtcPeerConnection pRtcPeerConnection = NULL;
     PKvsPeerConnection pKvsPeerConnection = NULL;
     RtcConfiguration config{};
@@ -503,11 +501,10 @@ TEST_F(RtcpFunctionalityTest, updateTwccHashTableIntPromotionCase) {
 
     // Even though pTwccManager->lastReportedSeqNum is a UINT16, (pTwccManager->lastReportedSeqNum + 1) can get
     // promoted to an int (32) when pTwccManager->lastReportedSeqNum == UINT16_MAX
-    EXPECT_EQ(STATUS_SUCCESS, updateTwccHashTable(pKvsPeerConnection->pTwccManager, &duration,
-                                                  &receivedBytes, &receivedPackets,
-                                                  &sentBytes, &sentPackets));
+    EXPECT_EQ(STATUS_SUCCESS,
+              updateTwccHashTable(pKvsPeerConnection->pTwccManager, &duration, &receivedBytes, &receivedPackets, &sentBytes, &sentPackets));
 
-    EXPECT_EQ(0, pTwccRtpPktInfosHashTable->itemCount);  // Ensure the table is cleared again
+    EXPECT_EQ(0, pTwccRtpPktInfosHashTable->itemCount); // Ensure the table is cleared again
 
     MUTEX_LOCK(pKvsPeerConnection->twccLock);
     MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
@@ -623,7 +620,7 @@ TEST_F(RtcpFunctionalityTest, twccReceiverOnPacketReceivedOutOfOrder)
     MEMCPY(extensionPayload, &twccPayload, 4);
     rtpPacket.receivedTime = GETTIME();
     EXPECT_EQ(STATUS_SUCCESS, twccReceiverOnPacketReceived(pKvsPeerConnection, &rtpPacket));
-    EXPECT_EQ(99, pManager->firstSeqNum);  // Updated to earlier packet
+    EXPECT_EQ(99, pManager->firstSeqNum); // Updated to earlier packet
     EXPECT_EQ(102, pManager->lastSeqNum);
 
     EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
@@ -674,7 +671,7 @@ TEST_F(RtcpFunctionalityTest, twccReceiverOnPacketReceivedSeqNumWraparound)
     rtpPacket.receivedTime = GETTIME();
     EXPECT_EQ(STATUS_SUCCESS, twccReceiverOnPacketReceived(pKvsPeerConnection, &rtpPacket));
     EXPECT_EQ(UINT16_MAX - 1, pManager->firstSeqNum);
-    EXPECT_EQ(0, pManager->lastSeqNum);  // Wrapped to 0
+    EXPECT_EQ(0, pManager->lastSeqNum); // Wrapped to 0
 
     // Add packet at 1
     twccPayload = htonl((1 << 28) | (1 << 24) | (1 << 8));
@@ -818,8 +815,8 @@ TEST_F(RtcpFunctionalityTest, receiverReportSeqOverflow)
 
     MUTEX_LOCK(pT->statsLock);
     pT->inboundStats.received.packetsReceived = 5;
-    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq; // 65536 + 2 = 65538
-    UINT32 expected = extMax - pT->rrBaseSeq + 1;  // 65538 - 65534 + 1 = 5
+    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq;  // 65536 + 2 = 65538
+    UINT32 expected = extMax - pT->rrBaseSeq + 1; // 65538 - 65534 + 1 = 5
     pT->inboundStats.received.packetsLost = (INT64) expected - (INT64) pT->inboundStats.received.packetsReceived;
     MUTEX_UNLOCK(pT->statsLock);
 
@@ -846,7 +843,7 @@ TEST_F(RtcpFunctionalityTest, receiverReportSeqOverflowWithLoss)
 
     MUTEX_LOCK(pT->statsLock);
     pT->inboundStats.received.packetsReceived = 5; // 65533, 65534, 0, 1, 3
-    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq; // 65536 + 3 = 65539
+    UINT32 extMax = pT->rrCycles + pT->rrMaxSeq;   // 65536 + 3 = 65539
     UINT32 expected = extMax - pT->rrBaseSeq + 1;  // 65539 - 65533 + 1 = 7
     pT->inboundStats.received.packetsLost = (INT64) expected - (INT64) pT->inboundStats.received.packetsReceived;
     MUTEX_UNLOCK(pT->statsLock);
@@ -888,11 +885,11 @@ TEST_F(RtcpFunctionalityTest, receiverReportFractionLostPerInterval)
     pT->inboundStats.received.packetsReceived = 97; // 50 + 47
 
     extMax = pT->rrCycles + pT->rrMaxSeq;
-    expected = extMax - pT->rrBaseSeq + 1; // 100
+    expected = extMax - pT->rrBaseSeq + 1;                         // 100
     received = (UINT32) pT->inboundStats.received.packetsReceived; // 97
-    expectedInterval = expected - pT->rrExpectedPrior; // 100 - 50 = 50
-    receivedInterval = received - pT->rrReceivedPrior; // 97 - 50 = 47
-    lostInterval = expectedInterval - receivedInterval; // 3
+    expectedInterval = expected - pT->rrExpectedPrior;             // 100 - 50 = 50
+    receivedInterval = received - pT->rrReceivedPrior;             // 97 - 50 = 47
+    lostInterval = expectedInterval - receivedInterval;            // 3
     UINT8 fraction2 = (expectedInterval == 0 || lostInterval == 0) ? 0 : (UINT8) ((lostInterval << 8) / expectedInterval);
     EXPECT_EQ((3 << 8) / 50, fraction2); // = 15
 
@@ -922,8 +919,8 @@ TEST_F(RtcpFunctionalityTest, receiverReportLargeJump)
     // maxSeq should NOT change
     constexpr UINT16 jumpSeq = 5000;
     UINT16 udelta = jumpSeq - pT->rrMaxSeq; // 4890
-    EXPECT_GT(udelta, 3000); // > MAX_DROPOUT
-    EXPECT_LT(udelta, RTP_SEQ_MOD - 100); // < RTP_SEQ_MOD - MAX_MISORDER
+    EXPECT_GT(udelta, 3000);                // > MAX_DROPOUT
+    EXPECT_LT(udelta, RTP_SEQ_MOD - 100);   // < RTP_SEQ_MOD - MAX_MISORDER
 
     // After this, maxSeq should remain 110, badSeq = 5001
     pT->rrBadSeq = ((UINT32) jumpSeq + 1) & (RTP_SEQ_MOD - 1);
@@ -947,7 +944,7 @@ TEST_F(RtcpFunctionalityTest, twccMakeRunlenMacro)
 
     // Test with NOT_RECEIVED status (00), run length 10
     UINT16 chunk = TWCC_MAKE_RUNLEN(TWCC_STATUS_SYMBOL_NOTRECEIVED, 10);
-    EXPECT_EQ(0, (chunk >> 15) & 1);  // Bit 15 should be 0 for run-length
+    EXPECT_EQ(0, (chunk >> 15) & 1); // Bit 15 should be 0 for run-length
     EXPECT_EQ(TWCC_STATUS_SYMBOL_NOTRECEIVED, (chunk >> 13) & 3);
     EXPECT_EQ(10, chunk & 0x1FFF);
 
@@ -966,6 +963,115 @@ TEST_F(RtcpFunctionalityTest, twccMakeRunlenMacro)
     // Test max run length (0x1FFF = 8191)
     chunk = TWCC_MAKE_RUNLEN(TWCC_STATUS_SYMBOL_SMALLDELTA, 0x1FFF);
     EXPECT_EQ(0x1FFF, chunk & 0x1FFF);
+}
+
+TEST_F(RtcpFunctionalityTest, remoteOutboundStatsFromSenderReport)
+{
+    // Craft a pure SR packet (no RR blocks): 24 bytes payload
+    // SSRC = 0x12345678
+    // NTP timestamp: sec = 0xE1E32043 (3790012483), frac = 0x00000000
+    // RTP timestamp: 0x00001000
+    // Packet count: 100 (0x00000064)
+    // Octet count: 50000 (0x0000C350)
+    constexpr UINT32 senderSSRC = 0x12345678;
+    constexpr UINT32 ntpSec = 0xE1E32043;
+    constexpr UINT32 ntpFrac = 0x00000000;
+    constexpr UINT32 rtpTs = 0x00001000;
+    constexpr UINT32 packetCount = 100;
+    constexpr UINT32 octetCount = 50000;
+
+    // Build RTCP SR: header (4 bytes) + payload (24 bytes)
+    BYTE srPacket[28];
+    // Header: V=2, P=0, RC=0, PT=200 (SR), length=6 (words-1)
+    srPacket[0] = 0x80;
+    srPacket[1] = 0xC8; // PT=200 (SR)
+    srPacket[2] = 0x00;
+    srPacket[3] = 0x06; // length = 6 (7 words = 28 bytes)
+    // Payload: SSRC
+    putUnalignedInt32BigEndian(srPacket + 4, senderSSRC);
+    // NTP timestamp
+    putUnalignedInt32BigEndian(srPacket + 8, ntpSec);
+    putUnalignedInt32BigEndian(srPacket + 12, ntpFrac);
+    // RTP timestamp
+    putUnalignedInt32BigEndian(srPacket + 16, rtpTs);
+    // Sender packet count
+    putUnalignedInt32BigEndian(srPacket + 20, packetCount);
+    // Sender octet count
+    putUnalignedInt32BigEndian(srPacket + 24, octetCount);
+
+    initTransceiver(senderSSRC);
+
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, srPacket, SIZEOF(srPacket)));
+
+    RtcStats stats{};
+    stats.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
+    EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(pRtcPeerConnection, pRtcRtpTransceiver, &stats));
+
+    auto& ros = stats.rtcStatsObject.remoteOutboundRtpStreamStats;
+    EXPECT_EQ(1, ros.reportsSent);
+    EXPECT_EQ(packetCount, ros.sent.packetsSent);
+    EXPECT_EQ(octetCount, ros.sent.bytesSent);
+    EXPECT_EQ(senderSSRC, ros.sent.rtpStream.ssrc);
+
+    // NTP sec 0xE1E32043 = 3790012483, minus NTP_OFFSET (2208988800) = 1581023683 Unix sec
+    // With ntpFrac=0, remoteTimestamp should be 1581023683000 ms
+    constexpr UINT64 expectedMs = (UINT64) (ntpSec - 2208988800ULL) * 1000ULL;
+    EXPECT_EQ(expectedMs, ros.remoteTimestamp);
+
+    // Feed a second SR to verify reportsSent increments
+    putUnalignedInt32BigEndian(srPacket + 20, packetCount + 50);
+    putUnalignedInt32BigEndian(srPacket + 24, octetCount + 25000);
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, srPacket, SIZEOF(srPacket)));
+
+    EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(pRtcPeerConnection, pRtcRtpTransceiver, &stats));
+    EXPECT_EQ(2, ros.reportsSent);
+    EXPECT_EQ(packetCount + 50, ros.sent.packetsSent);
+    EXPECT_EQ(octetCount + 25000, ros.sent.bytesSent);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, remoteOutboundStatsFromSRWithRRBlocks)
+{
+    // Test that SR with appended RR blocks (payloadLength > 24) is handled
+    // SR header: V=2, P=0, RC=1 (one RR block), PT=200, length=12 (13 words = 52 bytes)
+    // SR sender info (24 bytes) + 1 RR block (24 bytes) = 48 bytes payload
+    constexpr UINT32 senderSSRC = 0xAABBCCDD;
+    constexpr UINT32 reportedSSRC = 0x11223344;
+    BYTE srWithRR[52];
+    MEMSET(srWithRR, 0, SIZEOF(srWithRR));
+    // Header
+    srWithRR[0] = 0x81; // V=2, RC=1
+    srWithRR[1] = 0xC8; // PT=200 (SR)
+    srWithRR[2] = 0x00;
+    srWithRR[3] = 0x0C; // length = 12
+    // SR sender info
+    putUnalignedInt32BigEndian(srWithRR + 4, senderSSRC);
+    putUnalignedInt32BigEndian(srWithRR + 8, 0xE1E32043);  // NTP sec
+    putUnalignedInt32BigEndian(srWithRR + 12, 0x00000000); // NTP frac
+    putUnalignedInt32BigEndian(srWithRR + 16, 0x00001000); // RTP ts
+    putUnalignedInt32BigEndian(srWithRR + 20, 200);        // packet count
+    putUnalignedInt32BigEndian(srWithRR + 24, 80000);      // octet count
+    // RR block (24 bytes at offset 28)
+    putUnalignedInt32BigEndian(srWithRR + 28, reportedSSRC);
+    // rest of RR block is zeros (fraction lost=0, cumulative lost=0, etc.)
+
+    initTransceiver(senderSSRC);
+    addTransceiver(reportedSSRC);
+
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, srWithRR, SIZEOF(srWithRR)));
+
+    RtcStats stats{};
+    stats.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
+    EXPECT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(pRtcPeerConnection, pRtcRtpTransceiver, &stats));
+
+    auto& ros = stats.rtcStatsObject.remoteOutboundRtpStreamStats;
+    EXPECT_EQ(1, ros.reportsSent);
+    EXPECT_EQ(200, ros.sent.packetsSent);
+    EXPECT_EQ(80000, ros.sent.bytesSent);
+    EXPECT_EQ(senderSSRC, ros.sent.rtpStream.ssrc);
+
+    freePeerConnection(&pRtcPeerConnection);
 }
 
 } // namespace webrtcclient
