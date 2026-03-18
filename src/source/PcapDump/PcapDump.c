@@ -114,17 +114,17 @@ static VOID buildEthIpUdpHeader(BYTE* pHeader, UINT32 payloadLen, UINT16 srcPort
 
     // IPv4 header (20 bytes)
     ip = pHeader + PCAP_ETHERNET_HEADER_SIZE;
-    ip[0] = 0x45;                         // Version=4, IHL=5
-    ip[1] = 0x00;                         // DSCP/ECN
-    ip[2] = (BYTE) (ipTotalLen >> 8);     // Total length (big-endian)
+    ip[0] = 0x45;                     // Version=4, IHL=5
+    ip[1] = 0x00;                     // DSCP/ECN
+    ip[2] = (BYTE) (ipTotalLen >> 8); // Total length (big-endian)
     ip[3] = (BYTE) (ipTotalLen & 0xFF);
-    ip[4] = 0x00;                         // Identification
+    ip[4] = 0x00; // Identification
     ip[5] = 0x00;
-    ip[6] = 0x40;                         // Flags: Don't Fragment
+    ip[6] = 0x40; // Flags: Don't Fragment
     ip[7] = 0x00;
-    ip[8] = 0x40;                         // TTL = 64
-    ip[9] = 0x11;                         // Protocol = UDP
-    ip[10] = 0x00;                        // Checksum placeholder
+    ip[8] = 0x40;  // TTL = 64
+    ip[9] = 0x11;  // Protocol = UDP
+    ip[10] = 0x00; // Checksum placeholder
     ip[11] = 0x00;
     MEMCPY(ip + 12, &srcIp, 4);
     MEMCPY(ip + 16, &dstIp, 4);
