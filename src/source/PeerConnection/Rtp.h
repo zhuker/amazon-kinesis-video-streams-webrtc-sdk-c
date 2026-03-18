@@ -103,7 +103,7 @@ typedef struct {
     UINT32 rrReceivedPrior; // received at last RR interval
     BOOL rrSeqInitialized;  // whether first packet has been seen
 
-    // For LSR/DLSR in outgoing RR
+    // For LSR/DLSR in outgoing RR (protected by statsLock)
     UINT32 lastSRNtpMid;       // middle 32 bits of last received SR NTP timestamp
     UINT64 lastSRReceivedTime; // wallclock (100ns) when last SR was received
 

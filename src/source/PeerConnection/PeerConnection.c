@@ -230,6 +230,10 @@ VOID onInboundPacket(UINT64 customData, PBYTE buff, UINT32 buffLen)
                 }
 
                 if (signedBuffLen > 0) {
+                    // PCAP: capture decrypted inbound SCTP
+                    if (pKvsPeerConnection->pPcapDump != NULL) {
+                        pcapDumpWriteSctpPacket(pKvsPeerConnection->pPcapDump, buff, signedBuffLen, PCAP_PACKET_DIRECTION_RECV);
+                    }
                     CHK_STATUS(putSctpPacket(pKvsPeerConnection->pSctpSession, buff, signedBuffLen));
                 }
             }
@@ -242,6 +246,11 @@ VOID onInboundPacket(UINT64 customData, PBYTE buff, UINT32 buffLen)
             if (STATUS_FAILED(retStatus = decryptSrtcpPacket(pKvsPeerConnection->pSrtpSession, buff, &signedBuffLen))) {
                 DLOGW("decryptSrtcpPacket failed with 0x%08x", retStatus);
                 CHK(FALSE, STATUS_SUCCESS);
+            }
+
+            // PCAP: capture decrypted inbound RTCP
+            if (pKvsPeerConnection->pPcapDump != NULL) {
+                pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, buff, signedBuffLen, TRUE, PCAP_PACKET_DIRECTION_RECV);
             }
 
             CHK_STATUS(onRtcpPacket(pKvsPeerConnection, buff, signedBuffLen));
@@ -337,6 +346,11 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
         DLOGW("decryptSrtpPacket failed with 0x%08x", retStatus);
         packetsFailedDecryption++;
         CHK(FALSE, STATUS_SUCCESS);
+    }
+
+    // PCAP: capture decrypted inbound RTP
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pBuffer, bufferLen, FALSE, PCAP_PACKET_DIRECTION_RECV);
     }
 
     CHK(NULL != (pPayload = (PBYTE) MEMALLOC(bufferLen)), STATUS_NOT_ENOUGH_MEMORY);
@@ -731,6 +745,12 @@ VOID onSctpSessionOutboundPacket(UINT64 customData, PBYTE pPacket, UINT32 packet
     }
 
     pKvsPeerConnection = (PKvsPeerConnection) customData;
+
+    // PCAP: capture plaintext outbound SCTP
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWriteSctpPacket(pKvsPeerConnection->pPcapDump, pPacket, packetLen, PCAP_PACKET_DIRECTION_SEND);
+    }
+
     CHK_STATUS(dtlsSessionPutApplicationData(pKvsPeerConnection->pDtlsSession, pPacket, packetLen));
 
 CleanUp:
@@ -907,6 +927,12 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         putUnalignedInt32BigEndian(rawPacket + 16, rtpTime);
         putUnalignedInt32BigEndian(rawPacket + 20, packetCount);
         putUnalignedInt32BigEndian(rawPacket + 24, octetCount);
+
+        // PCAP: capture unencrypted outbound RTCP (Sender Report)
+        if (pKvsPeerConnection->pPcapDump != NULL) {
+            pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, rawPacket, packetLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
+        }
+
         CHK_STATUS(encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
         CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen));
     }
@@ -917,6 +943,8 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         UINT8 rrFraction;
         INT32 rrCumulativeLost;
         UINT32 rrPacketLen;
+        UINT32 rrLastSRNtpMid;
+        UINT64 rrLastSRReceivedTime;
         BYTE rrPacket[RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN]; // header + sender SSRC + 1 report block
 
         MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
@@ -946,6 +974,8 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         } else {
             rrCumulativeLost = (INT32) rrLost;
         }
+        rrLastSRNtpMid = pKvsRtpTransceiver->lastSRNtpMid;
+        rrLastSRReceivedTime = pKvsRtpTransceiver->lastSRReceivedTime;
         MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
 
         rrPacketLen = sizeof(rrPacket);
@@ -962,11 +992,11 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         rrPacket[15] = rrCumulativeLost & 0xFF;
         putUnalignedInt32BigEndian(rrPacket + 16, rrExtMax);                                             // extended highest sequence number
         putUnalignedInt32BigEndian(rrPacket + 20, (UINT32) (pKvsRtpTransceiver->pJitterBuffer->jitter)); // interarrival jitter
-        putUnalignedInt32BigEndian(rrPacket + 24, pKvsRtpTransceiver->lastSRNtpMid);                     // LSR
+        putUnalignedInt32BigEndian(rrPacket + 24, rrLastSRNtpMid);                                       // LSR
 
         // DLSR: delay since last SR in 1/65536 sec units
-        if (pKvsRtpTransceiver->lastSRReceivedTime != 0) {
-            UINT64 dlsrTime = currentTime - pKvsRtpTransceiver->lastSRReceivedTime;
+        if (rrLastSRReceivedTime != 0) {
+            UINT64 dlsrTime = currentTime - rrLastSRReceivedTime;
             UINT32 dlsr = (UINT32) KVS_CONVERT_TIMESCALE(dlsrTime, HUNDREDS_OF_NANOS_IN_A_SECOND, DLSR_TIMESCALE);
             putUnalignedInt32BigEndian(rrPacket + 28, dlsr);
         }
@@ -978,6 +1008,12 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
             PBYTE rrRawPacket = (PBYTE) MEMALLOC(rrAllocSize);
             CHK(rrRawPacket != NULL, STATUS_NOT_ENOUGH_MEMORY);
             MEMCPY(rrRawPacket, rrPacket, rrPacketLen);
+
+            // PCAP: capture unencrypted outbound RTCP (Receiver Report)
+            if (pKvsPeerConnection->pPcapDump != NULL) {
+                pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, rrRawPacket, rrPacketLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
+            }
+
             retStatus = encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, rrRawPacket, (PINT32) &rrPacketLen);
             if (STATUS_SUCCEEDED(retStatus)) {
                 retStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rrRawPacket, rrPacketLen);
@@ -1281,6 +1317,12 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection->sctpTimerCallbackId = MAX_UINT32;
 #endif
 
+    // PCAP dump
+    if (pConfiguration->kvsRtcConfiguration.pcapFilePath[0] != '\0') {
+        CHK_STATUS(pcapDumpCreate(pConfiguration->kvsRtcConfiguration.pcapFilePath, &pKvsPeerConnection->pPcapDump));
+        DLOGI("PCAP dump enabled: %s", pConfiguration->kvsRtcConfiguration.pcapFilePath);
+    }
+
     *ppPeerConnection = (PRtcPeerConnection) pKvsPeerConnection;
 
 CleanUp:
@@ -1456,6 +1498,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccReceiverLock)) {
         MUTEX_FREE(pKvsPeerConnection->twccReceiverLock);
         pKvsPeerConnection->twccReceiverLock = INVALID_MUTEX_VALUE;
+    }
+
+    // Free PCAP dump
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpFree(&pKvsPeerConnection->pPcapDump);
     }
 
     PROFILE_WITH_START_TIME_OBJ(startTime, pKvsPeerConnection->peerConnectionDiagnostics.freePeerConnectionTime, "Free peer connection");

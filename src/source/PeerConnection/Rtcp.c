@@ -66,16 +66,15 @@ static STATUS onRtcpSenderReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKv
         UINT32 packetCnt = getUnalignedInt32BigEndian(pRtcpPacket->payload + 16);
         UINT32 octetCnt = getUnalignedInt32BigEndian(pRtcpPacket->payload + 20);
         DLOGV("RTCP_PACKET_TYPE_SENDER_REPORT %d %" PRIu64 " rtpTs: %u %u pkts %u bytes", senderSSRC, ntpTime, rtpTs, packetCnt, octetCnt);
-        // Store for LSR/DLSR in outgoing RR
-        pTransceiver->lastSRNtpMid = (UINT32) ((ntpTime >> 16U) & 0xffffffffULL);
-        pTransceiver->lastSRReceivedTime = GETTIME();
-
+        // Store for LSR/DLSR in outgoing RR (protected by statsLock)
         // Populate remote outbound stats
         UINT64 ntpSec = ntpTime >> 32U;
         UINT64 ntpFrac = ntpTime & 0xffffffffULL;
         UINT64 unixMs = (ntpSec - NTP_OFFSET) * 1000ULL + (ntpFrac * 1000ULL / NTP_TIMESCALE);
 
         MUTEX_LOCK(pTransceiver->statsLock);
+        pTransceiver->lastSRNtpMid = (UINT32) ((ntpTime >> 16U) & 0xffffffffULL);
+        pTransceiver->lastSRReceivedTime = GETTIME();
         pTransceiver->remoteOutboundStats.reportsSent++;
         pTransceiver->remoteOutboundStats.sent.packetsSent = packetCnt;
         pTransceiver->remoteOutboundStats.sent.bytesSent = octetCnt;
@@ -684,6 +683,11 @@ static STATUS writeRtcpPacket(PKvsPeerConnection pKvsPeerConnection, PBYTE pPack
 
     MEMCPY(pRawPacket, pPacket, packetLen);
 
+    // PCAP: capture unencrypted outbound RTCP
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pRawPacket, packetLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
+    }
+
     CHK_STATUS(encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, pRawPacket, (PINT32) &packetLen));
     CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pRawPacket, packetLen));
 
@@ -1225,6 +1229,11 @@ STATUS sendRtcpTwccFeedback(PKvsPeerConnection pKvsPeerConnection)
     pManager->lastSeqNum = 0;
 
     MUTEX_UNLOCK(pKvsPeerConnection->twccReceiverLock);
+
+    // PCAP: capture unencrypted outbound RTCP (TWCC feedback)
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pPacket, packetLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
+    }
 
     // Encrypt and send
     MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);

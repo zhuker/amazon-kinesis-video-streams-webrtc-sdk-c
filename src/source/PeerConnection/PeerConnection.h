@@ -181,6 +181,8 @@ typedef struct {
 
     UINT32 jitterBufferMaxLatency; //!< Max latency for jitter buffer, from KvsRtcConfiguration
     BOOL useRealTimeJitterBuffer;  //!< Use real-time jitter buffer, from KvsRtcConfiguration
+
+    PPcapDumpContext pPcapDump; //!< PCAP dump context, NULL when disabled
 } KvsPeerConnection, *PKvsPeerConnection;
 
 typedef struct {
