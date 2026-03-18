@@ -1953,10 +1953,19 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
     }
 
     // Start TWCC feedback timer when remote offers TWCC
-    if (pKvsPeerConnection->twccExtId != 0 && pKvsPeerConnection->twccFeedbackTimerId == MAX_UINT32) {
-        CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, TWCC_FEEDBACK_INITIAL_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
-                                      twccFeedbackCallback, (UINT64) pKvsPeerConnection, &pKvsPeerConnection->twccFeedbackTimerId));
-        DLOGI("Started TWCC feedback timer with extension ID %u", pKvsPeerConnection->twccExtId);
+    if (pKvsPeerConnection->twccExtId != 0) {
+        MUTEX_LOCK(pKvsPeerConnection->twccLock);
+        BOOL startTimer = pKvsPeerConnection->twccFeedbackTimerId == MAX_UINT32;
+        MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+        if (startTimer) {
+            UINT32 timerId = MAX_UINT32;
+            CHK_STATUS(timerQueueAddTimer(pKvsPeerConnection->timerQueueHandle, TWCC_FEEDBACK_INITIAL_DELAY, TIMER_QUEUE_SINGLE_INVOCATION_PERIOD,
+                                          twccFeedbackCallback, (UINT64) pKvsPeerConnection, &timerId));
+            MUTEX_LOCK(pKvsPeerConnection->twccLock);
+            pKvsPeerConnection->twccFeedbackTimerId = timerId;
+            MUTEX_UNLOCK(pKvsPeerConnection->twccLock);
+            DLOGI("Started TWCC feedback timer with extension ID %u", pKvsPeerConnection->twccExtId);
+        }
     }
 
 CleanUp:
