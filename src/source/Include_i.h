@@ -174,6 +174,7 @@ STATUS generateJSONSafeString(PCHAR, UINT32);
 #include "Rtcp/RtcpPacket.h"
 #include "Rtcp/RollingBuffer.h"
 #include "Rtcp/RtpRollingBuffer.h"
+#include "PcapDump/PcapDump.h"
 #include "PeerConnection/JitterBuffer.h"
 #include "PeerConnection/Pacer.h"
 #include "PeerConnection/PeerConnection.h"

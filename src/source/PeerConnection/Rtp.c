@@ -420,6 +420,11 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
         }
 
+        // PCAP: capture unencrypted outbound RTP (main send path)
+        if (pKvsPeerConnection->pPcapDump != NULL) {
+            pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, rawPacket, packetLen, FALSE, PCAP_PACKET_DIRECTION_SEND);
+        }
+
         CHK_STATUS(encryptRtpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
 
         // Check if pacing is enabled (only for video - audio bypasses pacer to avoid latency)
@@ -564,6 +569,12 @@ STATUS writeRtpPacket(PKvsPeerConnection pKvsPeerConnection, PRtpPacket pRtpPack
     pRawPacket = MEMALLOC(pRtpPacket->rawPacketLength + SRTP_AUTH_TAG_OVERHEAD); // For SRTP authentication tag
     rawLen = pRtpPacket->rawPacketLength;
     MEMCPY(pRawPacket, pRtpPacket->pRawPacket, pRtpPacket->rawPacketLength);
+
+    // PCAP: capture unencrypted outbound RTP
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pRawPacket, rawLen, FALSE, PCAP_PACKET_DIRECTION_SEND);
+    }
+
     CHK_STATUS(encryptRtpPacket(pKvsPeerConnection->pSrtpSession, pRawPacket, &rawLen));
     CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pRawPacket, rawLen));
 

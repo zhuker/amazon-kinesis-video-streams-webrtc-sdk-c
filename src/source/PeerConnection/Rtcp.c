@@ -684,6 +684,11 @@ static STATUS writeRtcpPacket(PKvsPeerConnection pKvsPeerConnection, PBYTE pPack
 
     MEMCPY(pRawPacket, pPacket, packetLen);
 
+    // PCAP: capture unencrypted outbound RTCP
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pRawPacket, packetLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
+    }
+
     CHK_STATUS(encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, pRawPacket, (PINT32) &packetLen));
     CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pRawPacket, packetLen));
 
@@ -1225,6 +1230,11 @@ STATUS sendRtcpTwccFeedback(PKvsPeerConnection pKvsPeerConnection)
     pManager->lastSeqNum = 0;
 
     MUTEX_UNLOCK(pKvsPeerConnection->twccReceiverLock);
+
+    // PCAP: capture unencrypted outbound RTCP (TWCC feedback)
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pPacket, packetLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
+    }
 
     // Encrypt and send
     MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);

@@ -1297,6 +1297,11 @@ typedef struct {
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined
                          //!< to use this member, else stats are enabled by default.
 #endif
+
+    CHAR pcapFilePath[1024]; //!< Path to a PCAP dump file. When set (non-empty), all unencrypted RTP/RTCP packets
+                             //!< (both sent and received) are written to this file in standard pcap format with
+                             //!< fake Ethernet/IPv4/UDP headers so the file opens directly in Wireshark.
+                             //!< Leave empty (default) to disable.
 } KvsRtcConfiguration, *PKvsRtcConfiguration;
 
 /**

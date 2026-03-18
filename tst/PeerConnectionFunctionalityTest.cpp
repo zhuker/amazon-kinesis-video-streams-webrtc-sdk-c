@@ -2420,7 +2420,9 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver, offerAudioTransceiver, answerAudioTransceiver;
 
     initRtcConfiguration(&configuration);
+    STRCPY(configuration.kvsRtcConfiguration.pcapFilePath, "/tmp/webrtc-offer.pcap");
     ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &offerPc));
+    STRCPY(configuration.kvsRtcConfiguration.pcapFilePath, "/tmp/webrtc-answer.pcap");
     ASSERT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &answerPc));
 
     addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver,
@@ -2621,11 +2623,24 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
     {
         RtcStats rtcMetrics{};
 
-        // Wait for at least one RTCP RR to arrive (first SR at 3s, RR follows ~200ms later)
+        // Wait for at least one RTCP RR to arrive.
         for (INT32 i = 0; i < 50; i++) {
             rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_INBOUND_RTP;
             ASSERT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerVideoTransceiver, &rtcMetrics));
             if (rtcMetrics.rtcStatsObject.remoteInboundRtpStreamStats.reportsReceived > 0) {
+                break;
+            }
+            THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        }
+
+        // Wait for the offer's Sender Report to fire.
+        // SR needs RTCP_FIRST_REPORT_DELAY (3s) + 2.5s firstFrameWallClockTime guard.
+        // Poll until the offer receives an RR with non-zero LSR (meaning the answer
+        // received our SR), visible as roundTripTime > 0.
+        for (INT32 i = 0; i < 80; i++) {
+            rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_INBOUND_RTP;
+            ASSERT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(offerPc, offerVideoTransceiver, &rtcMetrics));
+            if (rtcMetrics.rtcStatsObject.remoteInboundRtpStreamStats.roundTripTime > 0) {
                 break;
             }
             THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
