@@ -458,6 +458,21 @@ typedef struct {
 } RtcRemoteInboundRtpStreamStats, *PRtcRemoteInboundRtpStreamStats;
 
 /**
+ * @brief RTCRemoteOutboundRtpStreamStats Represents the remote endpoint's measurement metrics for a particular outgoing RTP stream
+ *
+ * Reference: https://www.w3.org/TR/webrtc-stats/#remoteoutboundrtpstats-dict*
+ */
+typedef struct {
+    RTCSentRtpStreamStats sent;          //!< Inherited from RTCSentRtpStreamStats (packetsSent, bytesSent, ssrc, kind)
+    DOMString localId;                   //!< Reference to local RTCInboundRtpStreamStats
+    DOMHighResTimeStamp remoteTimestamp; //!< NTP timestamp from SR converted to ms since Unix epoch
+    UINT64 reportsSent;                  //!< Count of SR blocks received for this SSRC
+    DOUBLE roundTripTime;                //!< Latest RTT in seconds
+    DOUBLE totalRoundTripTime;           //!< Cumulative RTT in seconds
+    UINT64 roundTripTimeMeasurements;    //!< Count of valid RTT measurements
+} RtcRemoteOutboundRtpStreamStats, *PRtcRemoteOutboundRtpStreamStats;
+
+/**
  * @brief The RTCInboundRtpStreamStats dictionary represents the measurement metrics for the incoming RTP media stream. The timestamp reported in the
  * statistics object is the time at which the data was sampled.
  *
@@ -659,14 +674,15 @@ typedef struct {
  * be populated internally
  */
 typedef struct {
-    RtcIceCandidatePairStats iceCandidatePairStats;             //!< ICE Candidate Pair  stats object
-    RtcIceCandidateStats localIceCandidateStats;                //!< local ICE Candidate stats object
-    RtcIceCandidateStats remoteIceCandidateStats;               //!< remote ICE Candidate stats object
-    RtcIceServerStats iceServerStats;                           //!< ICE Server Pair stats object
-    RtcTransportStats transportStats;                           //!< Transport stats object
-    RtcOutboundRtpStreamStats outboundRtpStreamStats;           //!< Outbound RTP Stream stats object
-    RtcRemoteInboundRtpStreamStats remoteInboundRtpStreamStats; //!< Remote Inbound RTP Stream stats object
-    RtcInboundRtpStreamStats inboundRtpStreamStats;             //!< Inbound RTP Stream stats object
+    RtcIceCandidatePairStats iceCandidatePairStats;               //!< ICE Candidate Pair  stats object
+    RtcIceCandidateStats localIceCandidateStats;                  //!< local ICE Candidate stats object
+    RtcIceCandidateStats remoteIceCandidateStats;                 //!< remote ICE Candidate stats object
+    RtcIceServerStats iceServerStats;                             //!< ICE Server Pair stats object
+    RtcTransportStats transportStats;                             //!< Transport stats object
+    RtcOutboundRtpStreamStats outboundRtpStreamStats;             //!< Outbound RTP Stream stats object
+    RtcRemoteInboundRtpStreamStats remoteInboundRtpStreamStats;   //!< Remote Inbound RTP Stream stats object
+    RtcRemoteOutboundRtpStreamStats remoteOutboundRtpStreamStats; //!< Remote Outbound RTP Stream stats object
+    RtcInboundRtpStreamStats inboundRtpStreamStats;               //!< Inbound RTP Stream stats object
     RtcDataChannelStats rtcDataChannelStats;
 } RtcStatsObject, *PRtcStatsObject;
 /*!@} */

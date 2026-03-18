@@ -91,6 +91,7 @@ typedef struct {
     MUTEX statsLock;
     RtcOutboundRtpStreamStats outboundStats;
     RtcRemoteInboundRtpStreamStats remoteInboundStats;
+    RtcRemoteOutboundRtpStreamStats remoteOutboundStats;
     RtcInboundRtpStreamStats inboundStats;
 
     // RFC 3550 A.1/A.3 — receiver sequence number state for RR and packetsLost

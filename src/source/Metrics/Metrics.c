@@ -156,6 +156,30 @@ CleanUp:
     return retStatus;
 }
 
+STATUS getRtpRemoteOutboundStats(PRtcPeerConnection pRtcPeerConnection, PRtcRtpTransceiver pTransceiver,
+                                 PRtcRemoteOutboundRtpStreamStats pRtcRemoteOutboundRtpStreamStats)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PDoubleListNode node = NULL;
+    UINT64 hashValue = 0;
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
+    CHK(pRtcPeerConnection != NULL || pRtcRemoteOutboundRtpStreamStats != NULL, STATUS_NULL_ARG);
+    PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pTransceiver;
+    if (pKvsRtpTransceiver == NULL) {
+        CHK_STATUS(doubleListGetHeadNode(pKvsPeerConnection->pTransceivers, &node));
+        CHK_STATUS(doubleListGetNodeData(node, &hashValue));
+        pKvsRtpTransceiver = (PKvsRtpTransceiver) hashValue;
+        CHK(pKvsRtpTransceiver != NULL, STATUS_NOT_FOUND);
+    }
+    // check if specified transceiver belongs to this connection
+    CHK_STATUS(hasTransceiverWithSsrc(pKvsPeerConnection, pKvsRtpTransceiver->sender.ssrc));
+    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+    *pRtcRemoteOutboundRtpStreamStats = pKvsRtpTransceiver->remoteOutboundStats;
+    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
+CleanUp:
+    return retStatus;
+}
+
 STATUS getRtpOutboundStats(PRtcPeerConnection pRtcPeerConnection, PRtcRtpTransceiver pTransceiver,
                            PRtcOutboundRtpStreamStats pRtcOutboundRtpStreamStats)
 {
@@ -260,9 +284,11 @@ STATUS rtcPeerConnectionGetMetrics(PRtcPeerConnection pRtcPeerConnection, PRtcRt
             CHK_STATUS(getDataChannelStats(pRtcPeerConnection, &pRtcMetrics->rtcStatsObject.rtcDataChannelStats));
             DLOGD("RTC Data Channel Stats requested at %" PRIu64, pRtcMetrics->timestamp);
             break;
+        case RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP:
+            CHK_STATUS(getRtpRemoteOutboundStats(pRtcPeerConnection, pRtcRtpTransceiver, &pRtcMetrics->rtcStatsObject.remoteOutboundRtpStreamStats));
+            break;
         case RTC_STATS_TYPE_CERTIFICATE:
         case RTC_STATS_TYPE_CSRC:
-        case RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP:
         case RTC_STATS_TYPE_PEER_CONNECTION:
         case RTC_STATS_TYPE_RECEIVER:
         case RTC_STATS_TYPE_SENDER:
