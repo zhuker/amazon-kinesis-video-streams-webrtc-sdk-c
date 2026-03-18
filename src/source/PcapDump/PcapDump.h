@@ -24,12 +24,9 @@ extern "C" {
 #define PCAP_UDP_HEADER_SIZE      8
 #define PCAP_TRANSPORT_OVERHEAD   (PCAP_ETHERNET_HEADER_SIZE + PCAP_IPV4_HEADER_SIZE + PCAP_UDP_HEADER_SIZE)
 
-// Fake UDP ports — Wireshark applies RTP/RTCP dissectors on these
+// Fake UDP ports — Wireshark applies RTP dissector on these
 #define PCAP_FAKE_RTP_PORT  5004
 #define PCAP_FAKE_RTCP_PORT 5005
-
-// Ethernet + IPv4 overhead (no UDP — used for SCTP with IP proto 132)
-#define PCAP_IP_TRANSPORT_OVERHEAD (PCAP_ETHERNET_HEADER_SIZE + PCAP_IPV4_HEADER_SIZE)
 
 typedef enum {
     PCAP_PACKET_DIRECTION_SEND = 0,
@@ -44,7 +41,6 @@ typedef struct __PcapDumpContext {
 
 STATUS pcapDumpCreate(PCHAR filePath, PPcapDumpContext* ppCtx);
 STATUS pcapDumpWritePacket(PPcapDumpContext pCtx, PBYTE pBuffer, UINT32 bufferLen, BOOL isRtcp, PCAP_PACKET_DIRECTION direction);
-STATUS pcapDumpWriteSctpPacket(PPcapDumpContext pCtx, PBYTE pBuffer, UINT32 bufferLen, PCAP_PACKET_DIRECTION direction);
 STATUS pcapDumpFree(PPcapDumpContext* ppCtx);
 
 #ifdef __cplusplus

@@ -114,17 +114,17 @@ static VOID buildEthIpUdpHeader(BYTE* pHeader, UINT32 payloadLen, UINT16 srcPort
 
     // IPv4 header (20 bytes)
     ip = pHeader + PCAP_ETHERNET_HEADER_SIZE;
-    ip[0] = 0x45;                     // Version=4, IHL=5
-    ip[1] = 0x00;                     // DSCP/ECN
-    ip[2] = (BYTE) (ipTotalLen >> 8); // Total length (big-endian)
+    ip[0] = 0x45;                         // Version=4, IHL=5
+    ip[1] = 0x00;                         // DSCP/ECN
+    ip[2] = (BYTE) (ipTotalLen >> 8);     // Total length (big-endian)
     ip[3] = (BYTE) (ipTotalLen & 0xFF);
-    ip[4] = 0x00; // Identification
+    ip[4] = 0x00;                         // Identification
     ip[5] = 0x00;
-    ip[6] = 0x40; // Flags: Don't Fragment
+    ip[6] = 0x40;                         // Flags: Don't Fragment
     ip[7] = 0x00;
-    ip[8] = 0x40;  // TTL = 64
-    ip[9] = 0x11;  // Protocol = UDP
-    ip[10] = 0x00; // Checksum placeholder
+    ip[8] = 0x40;                         // TTL = 64
+    ip[9] = 0x11;                         // Protocol = UDP
+    ip[10] = 0x00;                        // Checksum placeholder
     ip[11] = 0x00;
     MEMCPY(ip + 12, &srcIp, 4);
     MEMCPY(ip + 16, &dstIp, 4);
@@ -144,88 +144,19 @@ static VOID buildEthIpUdpHeader(BYTE* pHeader, UINT32 payloadLen, UINT16 srcPort
     udp[7] = 0x00;
 }
 
-static VOID buildEthIpHeader(BYTE* pHeader, UINT32 payloadLen, UINT8 protocol, UINT32 srcIp, UINT32 dstIp)
-{
-    UINT16 ipTotalLen = (UINT16) (PCAP_IPV4_HEADER_SIZE + payloadLen);
-    UINT16 cksum;
-    BYTE* ip;
-
-    // Ethernet header (14 bytes)
-    MEMCPY(pHeader, PCAP_DST_MAC, 6);
-    MEMCPY(pHeader + 6, PCAP_SRC_MAC, 6);
-    pHeader[12] = 0x08;
-    pHeader[13] = 0x00;
-
-    // IPv4 header (20 bytes)
-    ip = pHeader + PCAP_ETHERNET_HEADER_SIZE;
-    ip[0] = 0x45;
-    ip[1] = 0x00;
-    ip[2] = (BYTE) (ipTotalLen >> 8);
-    ip[3] = (BYTE) (ipTotalLen & 0xFF);
-    ip[4] = 0x00;
-    ip[5] = 0x00;
-    ip[6] = 0x40;
-    ip[7] = 0x00;
-    ip[8] = 0x40;
-    ip[9] = protocol;
-    ip[10] = 0x00;
-    ip[11] = 0x00;
-    MEMCPY(ip + 12, &srcIp, 4);
-    MEMCPY(ip + 16, &dstIp, 4);
-    cksum = ipChecksum(ip, PCAP_IPV4_HEADER_SIZE);
-    ip[10] = (BYTE) (cksum >> 8);
-    ip[11] = (BYTE) (cksum & 0xFF);
-}
-
-static STATUS pcapDumpWriteRaw(PPcapDumpContext pCtx, BYTE* pTransportHeader, UINT32 transportHeaderLen, PBYTE pBuffer, UINT32 bufferLen)
-{
-    STATUS retStatus = STATUS_SUCCESS;
-    BYTE recordHeader[16];
-    UINT64 now, sec, usec;
-    UINT32 totalLen;
-
-    totalLen = transportHeaderLen + bufferLen;
-
-    now = GETTIME();
-    sec = now / (10 * 1000 * 1000);
-    usec = (now / 10) % 1000000;
-
-    recordHeader[0] = (BYTE) (sec & 0xFF);
-    recordHeader[1] = (BYTE) ((sec >> 8) & 0xFF);
-    recordHeader[2] = (BYTE) ((sec >> 16) & 0xFF);
-    recordHeader[3] = (BYTE) ((sec >> 24) & 0xFF);
-    recordHeader[4] = (BYTE) (usec & 0xFF);
-    recordHeader[5] = (BYTE) ((usec >> 8) & 0xFF);
-    recordHeader[6] = (BYTE) ((usec >> 16) & 0xFF);
-    recordHeader[7] = (BYTE) ((usec >> 24) & 0xFF);
-    recordHeader[8] = (BYTE) (totalLen & 0xFF);
-    recordHeader[9] = (BYTE) ((totalLen >> 8) & 0xFF);
-    recordHeader[10] = (BYTE) ((totalLen >> 16) & 0xFF);
-    recordHeader[11] = (BYTE) ((totalLen >> 24) & 0xFF);
-    recordHeader[12] = recordHeader[8];
-    recordHeader[13] = recordHeader[9];
-    recordHeader[14] = recordHeader[10];
-    recordHeader[15] = recordHeader[11];
-
-    MUTEX_LOCK(pCtx->lock);
-    if (fwrite(recordHeader, 1, SIZEOF(recordHeader), pCtx->pFile) != SIZEOF(recordHeader) ||
-        fwrite(pTransportHeader, 1, transportHeaderLen, pCtx->pFile) != transportHeaderLen ||
-        fwrite(pBuffer, 1, bufferLen, pCtx->pFile) != bufferLen) {
-        retStatus = STATUS_WRITE_TO_FILE_FAILED;
-    }
-    MUTEX_UNLOCK(pCtx->lock);
-
-    return retStatus;
-}
-
 STATUS pcapDumpWritePacket(PPcapDumpContext pCtx, PBYTE pBuffer, UINT32 bufferLen, BOOL isRtcp, PCAP_PACKET_DIRECTION direction)
 {
     STATUS retStatus = STATUS_SUCCESS;
+    BYTE recordHeader[16];
     BYTE transportHeader[PCAP_TRANSPORT_OVERHEAD];
+    UINT64 now, sec, usec;
+    UINT32 totalLen;
     UINT16 srcPort, dstPort;
     UINT32 srcIp, dstIp;
 
     CHK(pCtx != NULL && pCtx->initialized && pBuffer != NULL && bufferLen > 0, STATUS_NULL_ARG);
+
+    totalLen = PCAP_TRANSPORT_OVERHEAD + bufferLen;
 
     srcPort = isRtcp ? PCAP_FAKE_RTCP_PORT : PCAP_FAKE_RTP_PORT;
     dstPort = srcPort;
@@ -239,30 +170,37 @@ STATUS pcapDumpWritePacket(PPcapDumpContext pCtx, PBYTE pBuffer, UINT32 bufferLe
     }
 
     buildEthIpUdpHeader(transportHeader, bufferLen, srcPort, dstPort, srcIp, dstIp);
-    retStatus = pcapDumpWriteRaw(pCtx, transportHeader, SIZEOF(transportHeader), pBuffer, bufferLen);
 
-CleanUp:
-    return retStatus;
-}
+    now = GETTIME(); // 100ns units
+    sec = now / (10 * 1000 * 1000);
+    usec = (now / 10) % 1000000;
 
-STATUS pcapDumpWriteSctpPacket(PPcapDumpContext pCtx, PBYTE pBuffer, UINT32 bufferLen, PCAP_PACKET_DIRECTION direction)
-{
-    STATUS retStatus = STATUS_SUCCESS;
-    BYTE transportHeader[PCAP_IP_TRANSPORT_OVERHEAD];
-    UINT32 srcIp, dstIp;
+    // PCAP packet record header (little-endian)
+    recordHeader[0] = (BYTE) (sec & 0xFF);
+    recordHeader[1] = (BYTE) ((sec >> 8) & 0xFF);
+    recordHeader[2] = (BYTE) ((sec >> 16) & 0xFF);
+    recordHeader[3] = (BYTE) ((sec >> 24) & 0xFF);
+    recordHeader[4] = (BYTE) (usec & 0xFF);
+    recordHeader[5] = (BYTE) ((usec >> 8) & 0xFF);
+    recordHeader[6] = (BYTE) ((usec >> 16) & 0xFF);
+    recordHeader[7] = (BYTE) ((usec >> 24) & 0xFF);
+    // incl_len = orig_len = totalLen
+    recordHeader[8] = (BYTE) (totalLen & 0xFF);
+    recordHeader[9] = (BYTE) ((totalLen >> 8) & 0xFF);
+    recordHeader[10] = (BYTE) ((totalLen >> 16) & 0xFF);
+    recordHeader[11] = (BYTE) ((totalLen >> 24) & 0xFF);
+    recordHeader[12] = recordHeader[8];
+    recordHeader[13] = recordHeader[9];
+    recordHeader[14] = recordHeader[10];
+    recordHeader[15] = recordHeader[11];
 
-    CHK(pCtx != NULL && pCtx->initialized && pBuffer != NULL && bufferLen > 0, STATUS_NULL_ARG);
-
-    if (direction == PCAP_PACKET_DIRECTION_SEND) {
-        srcIp = PCAP_IP_LOCAL;
-        dstIp = PCAP_IP_REMOTE;
-    } else {
-        srcIp = PCAP_IP_REMOTE;
-        dstIp = PCAP_IP_LOCAL;
+    MUTEX_LOCK(pCtx->lock);
+    if (fwrite(recordHeader, 1, SIZEOF(recordHeader), pCtx->pFile) != SIZEOF(recordHeader) ||
+        fwrite(transportHeader, 1, SIZEOF(transportHeader), pCtx->pFile) != SIZEOF(transportHeader) ||
+        fwrite(pBuffer, 1, bufferLen, pCtx->pFile) != bufferLen) {
+        retStatus = STATUS_WRITE_TO_FILE_FAILED;
     }
-
-    buildEthIpHeader(transportHeader, bufferLen, 132, srcIp, dstIp); // IP protocol 132 = SCTP
-    retStatus = pcapDumpWriteRaw(pCtx, transportHeader, SIZEOF(transportHeader), pBuffer, bufferLen);
+    MUTEX_UNLOCK(pCtx->lock);
 
 CleanUp:
     return retStatus;
