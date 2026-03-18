@@ -66,16 +66,15 @@ static STATUS onRtcpSenderReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKv
         UINT32 packetCnt = getUnalignedInt32BigEndian(pRtcpPacket->payload + 16);
         UINT32 octetCnt = getUnalignedInt32BigEndian(pRtcpPacket->payload + 20);
         DLOGV("RTCP_PACKET_TYPE_SENDER_REPORT %d %" PRIu64 " rtpTs: %u %u pkts %u bytes", senderSSRC, ntpTime, rtpTs, packetCnt, octetCnt);
-        // Store for LSR/DLSR in outgoing RR
-        pTransceiver->lastSRNtpMid = (UINT32) ((ntpTime >> 16U) & 0xffffffffULL);
-        pTransceiver->lastSRReceivedTime = GETTIME();
-
+        // Store for LSR/DLSR in outgoing RR (protected by statsLock)
         // Populate remote outbound stats
         UINT64 ntpSec = ntpTime >> 32U;
         UINT64 ntpFrac = ntpTime & 0xffffffffULL;
         UINT64 unixMs = (ntpSec - NTP_OFFSET) * 1000ULL + (ntpFrac * 1000ULL / NTP_TIMESCALE);
 
         MUTEX_LOCK(pTransceiver->statsLock);
+        pTransceiver->lastSRNtpMid = (UINT32) ((ntpTime >> 16U) & 0xffffffffULL);
+        pTransceiver->lastSRReceivedTime = GETTIME();
         pTransceiver->remoteOutboundStats.reportsSent++;
         pTransceiver->remoteOutboundStats.sent.packetsSent = packetCnt;
         pTransceiver->remoteOutboundStats.sent.bytesSent = octetCnt;

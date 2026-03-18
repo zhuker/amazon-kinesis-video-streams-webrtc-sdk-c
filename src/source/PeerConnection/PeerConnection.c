@@ -943,6 +943,8 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         UINT8 rrFraction;
         INT32 rrCumulativeLost;
         UINT32 rrPacketLen;
+        UINT32 rrLastSRNtpMid;
+        UINT64 rrLastSRReceivedTime;
         BYTE rrPacket[RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN]; // header + sender SSRC + 1 report block
 
         MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
@@ -972,6 +974,8 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         } else {
             rrCumulativeLost = (INT32) rrLost;
         }
+        rrLastSRNtpMid = pKvsRtpTransceiver->lastSRNtpMid;
+        rrLastSRReceivedTime = pKvsRtpTransceiver->lastSRReceivedTime;
         MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
 
         rrPacketLen = sizeof(rrPacket);
@@ -988,11 +992,11 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         rrPacket[15] = rrCumulativeLost & 0xFF;
         putUnalignedInt32BigEndian(rrPacket + 16, rrExtMax);                                             // extended highest sequence number
         putUnalignedInt32BigEndian(rrPacket + 20, (UINT32) (pKvsRtpTransceiver->pJitterBuffer->jitter)); // interarrival jitter
-        putUnalignedInt32BigEndian(rrPacket + 24, pKvsRtpTransceiver->lastSRNtpMid);                     // LSR
+        putUnalignedInt32BigEndian(rrPacket + 24, rrLastSRNtpMid);                                       // LSR
 
         // DLSR: delay since last SR in 1/65536 sec units
-        if (pKvsRtpTransceiver->lastSRReceivedTime != 0) {
-            UINT64 dlsrTime = currentTime - pKvsRtpTransceiver->lastSRReceivedTime;
+        if (rrLastSRReceivedTime != 0) {
+            UINT64 dlsrTime = currentTime - rrLastSRReceivedTime;
             UINT32 dlsr = (UINT32) KVS_CONVERT_TIMESCALE(dlsrTime, HUNDREDS_OF_NANOS_IN_A_SECOND, DLSR_TIMESCALE);
             putUnalignedInt32BigEndian(rrPacket + 28, dlsr);
         }
