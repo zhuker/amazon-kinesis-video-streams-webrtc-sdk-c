@@ -86,6 +86,11 @@ add_executable(
         discoverNatBehavior.c)
 target_link_libraries(discoverNatBehavior kvsWebrtcClient ${EXTRA_DEPS})
 
+add_executable(
+        pcapJitterBuffer
+        pcapJitterBuffer.c)
+target_link_libraries(pcapJitterBuffer kvsWebrtcClient ${EXTRA_DEPS})
+
 if(GST_FOUND AND ENABLE_SIGNALING)
   add_executable(
     kvsWebrtcClientMasterGstSample
