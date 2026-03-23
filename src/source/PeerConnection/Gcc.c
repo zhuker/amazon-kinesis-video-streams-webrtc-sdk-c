@@ -566,8 +566,10 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
             receivedCount++;
             receivedBytes += pReports[i].packetSize;
 
-            // Feed into windowed bitrate estimator using send time
-            // (send time is on our local clock with proper timebase)
+            // Feed into windowed bitrate estimator using send time.
+            // The reference uses arrival time, but our TWCC arrival times have a relative
+            // timebase (24-bit reference * 64ms) that doesn't advance at wall-clock rate.
+            // Send time is on our local monotonic clock and gives accurate window progress.
             INT64 sendTimeMs = (INT64) (pReports[i].sendTimeKvs / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
             gccBitrateEstimatorUpdate(&pController->bitrateEstim, sendTimeMs, pReports[i].packetSize);
 
