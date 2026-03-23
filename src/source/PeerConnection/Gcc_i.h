@@ -34,8 +34,7 @@ extern "C" {
 #define GCC_LOSS_THRESHOLD_HIGH    0.10    // 10% loss threshold
 
 // Acknowledged bitrate estimator parameters (based on WebRTC BitrateEstimator)
-#define GCC_INITIAL_RATE_WINDOW_MS 500 // Larger initial window for stable first estimate
-#define GCC_RATE_WINDOW_MS         500 // Steady-state window size (ms) — must span multiple video frames
+#define GCC_RATE_WINDOW_MS 1000 // Steady-state window size (ms) — must span multiple video frame bursts
 
 // Default bitrate bounds
 #define GCC_DEFAULT_MIN_BITRATE     100000  // 100 kbps
@@ -87,16 +86,14 @@ typedef struct {
 } GccOveruseDetector, *PGccOveruseDetector;
 
 /**
- * Windowed acknowledged bitrate estimator (based on WebRTC BitrateEstimator)
- * Uses a sliding time window with Bayesian smoothing to produce a stable
- * estimate of the acknowledged throughput.
+ * Acknowledged bitrate estimator using wall-clock windowing.
+ * Accumulates all acknowledged bytes across TWCC reports and computes
+ * bitrate over a fixed wall-clock window (GCC_RATE_WINDOW_MS).
  */
 typedef struct {
-    INT64 sumBytes;             //!< Accumulated bytes in current window
-    INT64 currentWindowMs;      //!< Current window duration (ms)
-    INT64 prevTimeMs;           //!< Previous packet time (ms), -1 = uninitialized
-    DOUBLE bitrateEstimateKbps; //!< Smoothed bitrate estimate (kbps), -1.0 = no estimate
-    DOUBLE bitrateEstimateVar;  //!< Estimate variance for Bayesian update
+    UINT64 sumBytes;           //!< Accumulated acknowledged bytes in current window
+    UINT64 windowStartTimeKvs; //!< Wall-clock start of current window (100ns units)
+    UINT64 bitrateEstimateBps; //!< Current bitrate estimate (bps), 0 = no estimate
 } GccBitrateEstimator, *PGccBitrateEstimator;
 
 /**
@@ -238,13 +235,13 @@ BOOL gccFinalizeGroup(PGccController pController, DOUBLE* pD_i);
 VOID gccBitrateEstimatorInit(PGccBitrateEstimator pEstimator);
 
 /**
- * Feed a received packet into the bitrate estimator
+ * Add acknowledged bytes and update the estimate if the window has elapsed.
+ * Uses wall-clock time (GETTIME) for windowing.
  *
  * @param[in,out] pEstimator Bitrate estimator state
- * @param[in] arrivalTimeMs Packet arrival time in milliseconds
- * @param[in] packetSize Packet size in bytes
+ * @param[in] ackedBytes Number of acknowledged bytes to add
  */
-VOID gccBitrateEstimatorUpdate(PGccBitrateEstimator pEstimator, INT64 arrivalTimeMs, UINT32 packetSize);
+VOID gccBitrateEstimatorAddBytes(PGccBitrateEstimator pEstimator, UINT64 ackedBytes);
 
 /**
  * Get the current acknowledged bitrate estimate

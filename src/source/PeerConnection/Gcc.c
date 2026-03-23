@@ -311,57 +311,51 @@ VOID gccBitrateEstimatorInit(PGccBitrateEstimator pEstimator)
         return;
     }
     pEstimator->sumBytes = 0;
-    pEstimator->currentWindowMs = 0;
-    pEstimator->prevTimeMs = -1;
-    pEstimator->bitrateEstimateKbps = -1.0;
-    pEstimator->bitrateEstimateVar = 50.0;
+    pEstimator->windowStartTimeKvs = 0;
+    pEstimator->bitrateEstimateBps = 0;
 }
 
-VOID gccBitrateEstimatorUpdate(PGccBitrateEstimator pEstimator, INT64 arrivalTimeMs, UINT32 packetSize)
+VOID gccBitrateEstimatorAddBytes(PGccBitrateEstimator pEstimator, UINT64 ackedBytes)
 {
-    INT64 rateWindowMs;
+    UINT64 now, elapsedKvs, sampleBps;
 
     if (pEstimator == NULL) {
         return;
     }
 
-    // Use larger initial window for stable first estimate
-    rateWindowMs = (pEstimator->bitrateEstimateKbps < 0.0) ? GCC_INITIAL_RATE_WINDOW_MS : GCC_RATE_WINDOW_MS;
+    now = GETTIME();
 
-    // Track window progress based on arrival time
-    if (arrivalTimeMs < pEstimator->prevTimeMs) {
-        // Time moved backwards, reset
-        pEstimator->prevTimeMs = -1;
-        pEstimator->sumBytes = 0;
-        pEstimator->currentWindowMs = 0;
+    if (pEstimator->windowStartTimeKvs == 0) {
+        pEstimator->windowStartTimeKvs = now;
     }
 
-    if (pEstimator->prevTimeMs >= 0) {
-        INT64 elapsed = arrivalTimeMs - pEstimator->prevTimeMs;
-        pEstimator->currentWindowMs += elapsed;
-        // Reset if nothing received for more than a full window
-        if (elapsed > rateWindowMs) {
-            pEstimator->sumBytes = 0;
-            pEstimator->currentWindowMs %= rateWindowMs;
+    pEstimator->sumBytes += ackedBytes;
+
+    elapsedKvs = now - pEstimator->windowStartTimeKvs;
+    if (elapsedKvs >= GCC_MS_TO_KVS(GCC_RATE_WINDOW_MS)) {
+        // Window complete: compute bitrate sample = bytes * 8 / seconds
+        sampleBps = (UINT64) ((DOUBLE) pEstimator->sumBytes * 8.0 * HUNDREDS_OF_NANOS_IN_A_SECOND / (DOUBLE) elapsedKvs);
+
+        // EMA: blend new sample with previous estimate for stability
+        if (pEstimator->bitrateEstimateBps == 0) {
+            pEstimator->bitrateEstimateBps = sampleBps;
+        } else {
+            // alpha=0.5 gives equal weight to new sample and history
+            pEstimator->bitrateEstimateBps = (pEstimator->bitrateEstimateBps + sampleBps) / 2;
         }
-    }
-    pEstimator->prevTimeMs = arrivalTimeMs;
 
-    // When window is full, compute bitrate directly
-    if (pEstimator->currentWindowMs >= rateWindowMs) {
-        pEstimator->bitrateEstimateKbps = 8.0 * (DOUBLE) pEstimator->sumBytes / (DOUBLE) rateWindowMs;
-        pEstimator->currentWindowMs -= rateWindowMs;
+        // Reset for next window
         pEstimator->sumBytes = 0;
+        pEstimator->windowStartTimeKvs = now;
     }
-    pEstimator->sumBytes += packetSize;
 }
 
 UINT64 gccBitrateEstimatorGetBitrate(PGccBitrateEstimator pEstimator)
 {
-    if (pEstimator == NULL || pEstimator->bitrateEstimateKbps < 0.0) {
+    if (pEstimator == NULL) {
         return 0;
     }
-    return (UINT64) (pEstimator->bitrateEstimateKbps * 1000.0);
+    return pEstimator->bitrateEstimateBps;
 }
 
 //
@@ -557,7 +551,7 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
         pController->lastRttKvs = rttEstimateKvs;
     }
 
-    // Process all packets through the pre-filter/grouping and bitrate estimator
+    // Process all packets through the pre-filter/grouping
     for (i = 0; i < reportCount; i++) {
         totalBytes += pReports[i].packetSize;
         pController->totalPacketsSent++;
@@ -565,13 +559,6 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
         if (pReports[i].received) {
             receivedCount++;
             receivedBytes += pReports[i].packetSize;
-
-            // Feed into windowed bitrate estimator using send time.
-            // The reference uses arrival time, but our TWCC arrival times have a relative
-            // timebase (24-bit reference * 64ms) that doesn't advance at wall-clock rate.
-            // Send time is on our local monotonic clock and gives accurate window progress.
-            INT64 sendTimeMs = (INT64) (pReports[i].sendTimeKvs / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
-            gccBitrateEstimatorUpdate(&pController->bitrateEstim, sendTimeMs, pReports[i].packetSize);
 
             // Process packet for grouping
             gccProcessPacket(pController, pReports[i].sendTimeKvs, pReports[i].arrivalTimeKvs, pReports[i].packetSize, pReports[i].seqNum);
@@ -586,7 +573,8 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
         pController->currentLossRatio = (DOUBLE) lostCount / (DOUBLE) (receivedCount + lostCount);
     }
 
-    // Get smoothed incoming bitrate from windowed estimator
+    // Accumulate acknowledged bytes and update windowed bitrate estimate
+    gccBitrateEstimatorAddBytes(&pController->bitrateEstim, receivedBytes);
     incomingBitrate = gccBitrateEstimatorGetBitrate(&pController->bitrateEstim);
 
     // Finalize current group and get inter-group delay variation
