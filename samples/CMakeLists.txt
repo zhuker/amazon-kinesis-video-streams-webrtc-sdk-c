@@ -91,6 +91,11 @@ add_executable(
         pcapJitterBuffer.c)
 target_link_libraries(pcapJitterBuffer kvsWebrtcClient ${EXTRA_DEPS})
 
+add_executable(
+        pcapGcc
+        pcapGcc.c)
+target_link_libraries(pcapGcc kvsWebrtcClient ${EXTRA_DEPS})
+
 if(GST_FOUND AND ENABLE_SIGNALING)
   add_executable(
     kvsWebrtcClientMasterGstSample
