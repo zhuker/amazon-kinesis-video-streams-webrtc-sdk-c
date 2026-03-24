@@ -228,9 +228,10 @@ STATUS gccUpdateDelayController(PGccRateController pRateCtrl, GccSignal signal, 
                 pRateCtrl->A_hat = (UINT64) (eta * pRateCtrl->A_hat);
             }
 
-            // Don't let estimate diverge too far from actual sending rate
-            // A_hat(i) < 1.5 * R_hat(i)
-            if (incomingBitrate > 0 && pRateCtrl->A_hat > (UINT64) (1.5 * incomingBitrate)) {
+            // Don't let estimate diverge too far from actual acknowledged rate.
+            // Skip the cap when acked rate is below minBitrate — the clamp at the
+            // end already enforces the floor, and capping here would prevent growth.
+            if (incomingBitrate > minBitrate && pRateCtrl->A_hat > (UINT64) (1.5 * incomingBitrate)) {
                 pRateCtrl->A_hat = (UINT64) (1.5 * incomingBitrate);
             }
             break;
@@ -311,51 +312,70 @@ VOID gccBitrateEstimatorInit(PGccBitrateEstimator pEstimator)
         return;
     }
     pEstimator->sumBytes = 0;
-    pEstimator->windowStartTimeKvs = 0;
-    pEstimator->bitrateEstimateBps = 0;
+    pEstimator->currentWindowMs = 0;
+    pEstimator->prevTimeMs = -1;
+    pEstimator->bitrateEstimateKbps = -1.0;
+    pEstimator->bitrateEstimateVar = 50.0;
 }
 
-VOID gccBitrateEstimatorAddBytes(PGccBitrateEstimator pEstimator, UINT64 ackedBytes)
+// Port of WebRTC BitrateEstimator::Update + UpdateWindow
+VOID gccBitrateEstimatorUpdate(PGccBitrateEstimator pEstimator, INT64 timeMs, UINT32 packetSize)
 {
-    UINT64 now, elapsedKvs, sampleBps;
+    INT64 rateWindowMs;
+    DOUBLE bitrateSampleKbps;
+    DOUBLE sampleUncertainty, sampleVar, predVar;
 
     if (pEstimator == NULL) {
         return;
     }
 
-    now = GETTIME();
+    // Use larger initial window for stable first estimate
+    rateWindowMs = (pEstimator->bitrateEstimateKbps < 0.0) ? GCC_INITIAL_RATE_WINDOW_MS : GCC_RATE_WINDOW_MS;
 
-    if (pEstimator->windowStartTimeKvs == 0) {
-        pEstimator->windowStartTimeKvs = now;
-    }
-
-    pEstimator->sumBytes += ackedBytes;
-
-    elapsedKvs = now - pEstimator->windowStartTimeKvs;
-    if (elapsedKvs >= GCC_MS_TO_KVS(GCC_RATE_WINDOW_MS)) {
-        // Window complete: compute bitrate sample = bytes * 8 / seconds
-        sampleBps = (UINT64) ((DOUBLE) pEstimator->sumBytes * 8.0 * HUNDREDS_OF_NANOS_IN_A_SECOND / (DOUBLE) elapsedKvs);
-
-        // EMA: blend new sample with previous estimate for stability
-        if (pEstimator->bitrateEstimateBps == 0) {
-            pEstimator->bitrateEstimateBps = sampleBps;
-        } else {
-            // alpha=0.5 gives equal weight to new sample and history
-            pEstimator->bitrateEstimateBps = (pEstimator->bitrateEstimateBps + sampleBps) / 2;
-        }
-
-        // Reset for next window
+    // --- UpdateWindow (reference lines 111-136) ---
+    // Reset if time moves backwards
+    if (timeMs < pEstimator->prevTimeMs) {
+        pEstimator->prevTimeMs = -1;
         pEstimator->sumBytes = 0;
-        pEstimator->windowStartTimeKvs = now;
+        pEstimator->currentWindowMs = 0;
     }
+
+    if (pEstimator->prevTimeMs >= 0) {
+        INT64 elapsed = timeMs - pEstimator->prevTimeMs;
+        pEstimator->currentWindowMs += elapsed;
+        // Reset if nothing received for more than a full window
+        if (elapsed > rateWindowMs) {
+            pEstimator->sumBytes = 0;
+            pEstimator->currentWindowMs %= rateWindowMs;
+        }
+    }
+    pEstimator->prevTimeMs = timeMs;
+
+    bitrateSampleKbps = -1.0;
+    if (pEstimator->currentWindowMs >= rateWindowMs) {
+        bitrateSampleKbps = 8.0 * (DOUBLE) pEstimator->sumBytes / (DOUBLE) rateWindowMs;
+        pEstimator->currentWindowMs -= rateWindowMs;
+        pEstimator->sumBytes = 0;
+    }
+    pEstimator->sumBytes += packetSize;
+
+    if (bitrateSampleKbps < 0.0) {
+        return; // Window not full yet
+    }
+
+    // Use window sample directly — Bayesian smoothing doesn't work well here
+    // because TWCC reports cover subsets of traffic (not all packets), making
+    // individual window samples unreliable. Instead we just track the latest
+    // sample and let the 1.5x cap and AIMD handle smoothing.
+    pEstimator->bitrateEstimateKbps = bitrateSampleKbps;
 }
 
 UINT64 gccBitrateEstimatorGetBitrate(PGccBitrateEstimator pEstimator)
 {
-    if (pEstimator == NULL) {
+    if (pEstimator == NULL || pEstimator->bitrateEstimateKbps < 0.0) {
         return 0;
     }
-    return pEstimator->bitrateEstimateBps;
+    return (UINT64) (pEstimator->bitrateEstimateKbps * 1000.0);
 }
 
 //
@@ -560,6 +580,10 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
             receivedCount++;
             receivedBytes += pReports[i].packetSize;
 
+            // Feed each received packet into the bitrate estimator using send time
+            INT64 sendTimeMs = (INT64) (pReports[i].sendTimeKvs / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+            gccBitrateEstimatorUpdate(&pController->bitrateEstim, sendTimeMs, pReports[i].packetSize);
+
             // Process packet for grouping
             gccProcessPacket(pController, pReports[i].sendTimeKvs, pReports[i].arrivalTimeKvs, pReports[i].packetSize, pReports[i].seqNum);
         } else {
@@ -573,8 +597,7 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
         pController->currentLossRatio = (DOUBLE) lostCount / (DOUBLE) (receivedCount + lostCount);
     }
 
-    // Accumulate acknowledged bytes and update windowed bitrate estimate
-    gccBitrateEstimatorAddBytes(&pController->bitrateEstim, receivedBytes);
+    // Get smoothed acknowledged bitrate from per-packet estimator
     incomingBitrate = gccBitrateEstimatorGetBitrate(&pController->bitrateEstim);
 
     // Finalize current group and get inter-group delay variation
