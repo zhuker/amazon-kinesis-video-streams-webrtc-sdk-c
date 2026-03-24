@@ -228,9 +228,10 @@ STATUS gccUpdateDelayController(PGccRateController pRateCtrl, GccSignal signal, 
                 pRateCtrl->A_hat = (UINT64) (eta * pRateCtrl->A_hat);
             }
 
-            // Don't let estimate diverge too far from actual sending rate
-            // A_hat(i) < 1.5 * R_hat(i)
-            if (incomingBitrate > 0 && pRateCtrl->A_hat > (UINT64) (1.5 * incomingBitrate)) {
+            // Don't let estimate diverge too far from actual acknowledged rate.
+            // Skip the cap when acked rate is below minBitrate — the clamp at the
+            // end already enforces the floor, and capping here would prevent growth.
+            if (incomingBitrate > minBitrate && pRateCtrl->A_hat > (UINT64) (1.5 * incomingBitrate)) {
                 pRateCtrl->A_hat = (UINT64) (1.5 * incomingBitrate);
             }
             break;
@@ -278,13 +279,13 @@ STATUS gccUpdateLossController(PGccRateController pRateCtrl, DOUBLE lossRatio, U
 
     CHK(pRateCtrl != NULL, STATUS_NULL_ARG);
 
-    // RFC Section 6: Loss-based control
+    // Loss-based control (more aggressive than RFC Section 6)
     if (lossRatio > GCC_LOSS_THRESHOLD_HIGH) {
-        // More than 10% loss: reduce by half the loss ratio
-        pRateCtrl->As_hat = (UINT64) (pRateCtrl->As_hat * (1.0 - 0.5 * lossRatio));
+        // More than 10% loss: reduce proportionally to loss
+        pRateCtrl->As_hat = (UINT64) (pRateCtrl->As_hat * (1.0 - lossRatio));
     } else if (lossRatio > GCC_LOSS_THRESHOLD_LOW) {
-        // 2-10% loss: hold steady
-        // As_hat unchanged
+        // 2-10% loss: reduce gently (5%)
+        pRateCtrl->As_hat = (UINT64) (pRateCtrl->As_hat * 0.95);
     } else {
         // Less than 2% loss: increase by 5%
         pRateCtrl->As_hat = (UINT64) (pRateCtrl->As_hat * 1.05);
@@ -299,6 +300,72 @@ STATUS gccUpdateLossController(PGccRateController pRateCtrl, DOUBLE lossRatio, U
 
 CleanUp:
     return retStatus;
+}
+
+//
+// Acknowledged Bitrate Estimator (port of WebRTC BitrateEstimator)
+//
+
+VOID gccBitrateEstimatorInit(PGccBitrateEstimator pEstimator)
+{
+    if (pEstimator == NULL) {
+        return;
+    }
+    pEstimator->sumBytes = 0;
+    pEstimator->currentWindowMs = 0;
+    pEstimator->prevTimeMs = -1;
+    pEstimator->bitrateEstimateKbps = -1.0;
+}
+
+VOID gccBitrateEstimatorUpdate(PGccBitrateEstimator pEstimator, INT64 timeMs, UINT32 packetSize)
+{
+    INT64 rateWindowMs;
+    DOUBLE bitrateSampleKbps;
+
+    if (pEstimator == NULL) {
+        return;
+    }
+
+    rateWindowMs = (pEstimator->bitrateEstimateKbps < 0.0) ? GCC_INITIAL_RATE_WINDOW_MS : GCC_RATE_WINDOW_MS;
+
+    // Reset if time moves backwards
+    if (timeMs < pEstimator->prevTimeMs) {
+        pEstimator->prevTimeMs = -1;
+        pEstimator->sumBytes = 0;
+        pEstimator->currentWindowMs = 0;
+    }
+
+    if (pEstimator->prevTimeMs >= 0) {
+        INT64 elapsed = timeMs - pEstimator->prevTimeMs;
+        pEstimator->currentWindowMs += elapsed;
+        if (elapsed > rateWindowMs) {
+            pEstimator->sumBytes = 0;
+            pEstimator->currentWindowMs %= rateWindowMs;
+        }
+    }
+    pEstimator->prevTimeMs = timeMs;
+
+    bitrateSampleKbps = -1.0;
+    if (pEstimator->currentWindowMs >= rateWindowMs) {
+        bitrateSampleKbps = 8.0 * (DOUBLE) pEstimator->sumBytes / (DOUBLE) rateWindowMs;
+        pEstimator->currentWindowMs -= rateWindowMs;
+        pEstimator->sumBytes = 0;
+    }
+    pEstimator->sumBytes += packetSize;
+
+    if (bitrateSampleKbps < 0.0) {
+        return;
+    }
+
+    pEstimator->bitrateEstimateKbps = bitrateSampleKbps;
+}
+
+UINT64 gccBitrateEstimatorGetBitrate(PGccBitrateEstimator pEstimator)
+{
+    if (pEstimator == NULL || pEstimator->bitrateEstimateKbps < 0.0) {
+        return 0;
+    }
+    return (UINT64) (pEstimator->bitrateEstimateKbps * 1000.0);
 }
 
 //
@@ -425,6 +492,7 @@ STATUS createGccController(PGccController* ppController, PGccConfig pConfig)
     CHK_STATUS(gccKalmanInit(&pController->kalman));
     CHK_STATUS(gccOveruseDetectorInit(&pController->overuse));
     CHK_STATUS(gccRateControllerInit(&pController->rateCtrl, pController->initialBitrate));
+    gccBitrateEstimatorInit(&pController->bitrateEstim);
 
     // Initialize packet group tracking
     MEMSET(&pController->currentGroup, 0, SIZEOF(GccPacketGroup));
@@ -477,7 +545,6 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
     GccSignal signal;
     UINT64 now, dtKvs;
     UINT64 incomingBitrate = 0;
-    UINT64 duration = 0;
 
     CHK(pController != NULL && pReports != NULL && reportCount > 0, STATUS_NULL_ARG);
 
@@ -503,6 +570,10 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
             receivedCount++;
             receivedBytes += pReports[i].packetSize;
 
+            // Feed each received packet into the bitrate estimator using send time
+            INT64 sendTimeMs = (INT64) (pReports[i].sendTimeKvs / HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+            gccBitrateEstimatorUpdate(&pController->bitrateEstim, sendTimeMs, pReports[i].packetSize);
+
             // Process packet for grouping
             gccProcessPacket(pController, pReports[i].sendTimeKvs, pReports[i].arrivalTimeKvs, pReports[i].packetSize, pReports[i].seqNum);
         } else {
@@ -516,24 +587,8 @@ STATUS gccOnTwccPacketReports(PGccController pController, PTwccPacketReport pRep
         pController->currentLossRatio = (DOUBLE) lostCount / (DOUBLE) (receivedCount + lostCount);
     }
 
-    // Calculate incoming bitrate from received packets
-    // Find duration from first to last received packet
-    UINT64 firstSendTime = 0, lastSendTime = 0;
-    for (i = 0; i < reportCount; i++) {
-        if (pReports[i].received) {
-            if (firstSendTime == 0 || pReports[i].sendTimeKvs < firstSendTime) {
-                firstSendTime = pReports[i].sendTimeKvs;
-            }
-            if (pReports[i].sendTimeKvs > lastSendTime) {
-                lastSendTime = pReports[i].sendTimeKvs;
-            }
-        }
-    }
-    if (lastSendTime > firstSendTime) {
-        duration = lastSendTime - firstSendTime;
-        // Convert to bps: bytes * 8 / seconds
-        incomingBitrate = (UINT64) ((DOUBLE) receivedBytes * 8.0 * HUNDREDS_OF_NANOS_IN_A_SECOND / (DOUBLE) duration);
-    }
+    // Get smoothed acknowledged bitrate from per-packet estimator
+    incomingBitrate = gccBitrateEstimatorGetBitrate(&pController->bitrateEstim);
 
     // Finalize current group and get inter-group delay variation
     while (gccFinalizeGroup(pController, &d_i)) {

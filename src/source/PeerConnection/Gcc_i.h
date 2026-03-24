@@ -33,6 +33,10 @@ extern "C" {
 #define GCC_LOSS_THRESHOLD_LOW     0.02    // 2% loss threshold
 #define GCC_LOSS_THRESHOLD_HIGH    0.10    // 10% loss threshold
 
+// Acknowledged bitrate estimator parameters (matches WebRTC BitrateEstimator)
+#define GCC_INITIAL_RATE_WINDOW_MS 500 // Larger initial window for stable first estimate
+#define GCC_RATE_WINDOW_MS         150 // Steady-state window (ms), ~4-5 video frames at 30fps
+
 // Default bitrate bounds
 #define GCC_DEFAULT_MIN_BITRATE     100000  // 100 kbps
 #define GCC_DEFAULT_MAX_BITRATE     2500000 // 2.5 Mbps
@@ -83,6 +87,17 @@ typedef struct {
 } GccOveruseDetector, *PGccOveruseDetector;
 
 /**
+ * Acknowledged bitrate estimator (port of WebRTC BitrateEstimator).
+ * Per-packet sliding window producing throughput samples.
+ */
+typedef struct {
+    INT64 sumBytes;             //!< Accumulated bytes in current window
+    INT64 currentWindowMs;      //!< Current window duration (ms)
+    INT64 prevTimeMs;           //!< Previous packet time (ms), -1 = uninitialized
+    DOUBLE bitrateEstimateKbps; //!< Current estimate (kbps), -1.0 = no estimate
+} GccBitrateEstimator, *PGccBitrateEstimator;
+
+/**
  * Rate controller state (RFC Section 5.5)
  */
 typedef struct {
@@ -105,9 +120,10 @@ struct __GccController {
     MUTEX lock; //!< Thread safety
 
     // Sub-components
-    GccKalmanState kalman;      //!< Kalman filter state
-    GccOveruseDetector overuse; //!< Over-use detector state
-    GccRateController rateCtrl; //!< Rate controller state
+    GccKalmanState kalman;            //!< Kalman filter state
+    GccOveruseDetector overuse;       //!< Over-use detector state
+    GccRateController rateCtrl;       //!< Rate controller state
+    GccBitrateEstimator bitrateEstim; //!< Acknowledged bitrate estimator
 
     // Packet group tracking
     GccPacketGroup currentGroup; //!< Current packet group being built
@@ -213,6 +229,10 @@ STATUS gccProcessPacket(PGccController pController, UINT64 sendTimeKvs, UINT64 a
  * @return TRUE if a new d(i) value was computed
  */
 BOOL gccFinalizeGroup(PGccController pController, DOUBLE* pD_i);
+
+VOID gccBitrateEstimatorInit(PGccBitrateEstimator pEstimator);
+VOID gccBitrateEstimatorUpdate(PGccBitrateEstimator pEstimator, INT64 timeMs, UINT32 packetSize);
+UINT64 gccBitrateEstimatorGetBitrate(PGccBitrateEstimator pEstimator);
 
 #ifdef __cplusplus
 }
