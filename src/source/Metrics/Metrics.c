@@ -20,8 +20,8 @@ STATUS getIceCandidatePairStats(PRtcPeerConnection pRtcPeerConnection, PRtcIceCa
     CHK(pIceAgent->pDataSendingIceCandidatePair != NULL, STATUS_SUCCESS);
     PRtcIceCandidatePairDiagnostics pRtcIceCandidatePairDiagnostics = pIceAgent->pDataSendingIceCandidatePair->pRtcIceCandidatePairDiagnostics;
     if (pRtcIceCandidatePairDiagnostics != NULL) {
-        STRCPY(pRtcIceCandidatePairStats->localCandidateId, pRtcIceCandidatePairDiagnostics->localCandidateId);
-        STRCPY(pRtcIceCandidatePairStats->remoteCandidateId, pRtcIceCandidatePairDiagnostics->remoteCandidateId);
+        SAFE_STRCPY(pRtcIceCandidatePairStats->localCandidateId, pRtcIceCandidatePairDiagnostics->localCandidateId);
+        SAFE_STRCPY(pRtcIceCandidatePairStats->remoteCandidateId, pRtcIceCandidatePairDiagnostics->remoteCandidateId);
         pRtcIceCandidatePairStats->state = pRtcIceCandidatePairDiagnostics->state;
         pRtcIceCandidatePairStats->nominated = pRtcIceCandidatePairDiagnostics->nominated;
 
@@ -74,14 +74,14 @@ STATUS getIceCandidateStats(PRtcPeerConnection pRtcPeerConnection, BOOL isRemote
     if (pRtcIceCandidateDiagnostics != NULL) {
         if (!isRemote) {
             pRtcIceCandidateDiagnostics = pIceAgent->pRtcSelectedLocalIceCandidateDiagnostics;
-            STRCPY(pRtcIceCandidateStats->relayProtocol, pRtcIceCandidateDiagnostics->relayProtocol);
-            STRCPY(pRtcIceCandidateStats->url, pRtcIceCandidateDiagnostics->url);
+            SAFE_STRCPY(pRtcIceCandidateStats->relayProtocol, pRtcIceCandidateDiagnostics->relayProtocol);
+            SAFE_STRCPY(pRtcIceCandidateStats->url, pRtcIceCandidateDiagnostics->url);
         }
-        STRCPY(pRtcIceCandidateStats->address, pRtcIceCandidateDiagnostics->address);
-        STRCPY(pRtcIceCandidateStats->candidateType, pRtcIceCandidateDiagnostics->candidateType);
+        SAFE_STRCPY(pRtcIceCandidateStats->address, pRtcIceCandidateDiagnostics->address);
+        SAFE_STRCPY(pRtcIceCandidateStats->candidateType, pRtcIceCandidateDiagnostics->candidateType);
         pRtcIceCandidateStats->port = pRtcIceCandidateDiagnostics->port;
         pRtcIceCandidateStats->priority = pRtcIceCandidateDiagnostics->priority;
-        STRCPY(pRtcIceCandidateStats->protocol, pRtcIceCandidateDiagnostics->protocol);
+        SAFE_STRCPY(pRtcIceCandidateStats->protocol, pRtcIceCandidateDiagnostics->protocol);
     }
 CleanUp:
     if (locked) {
@@ -108,8 +108,8 @@ STATUS getIceServerStats(PRtcPeerConnection pRtcPeerConnection, PRtcIceServerSta
 
     if (pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex] != NULL) {
         pRtcIceServerStats->port = pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->port;
-        STRCPY(pRtcIceServerStats->protocol, pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->protocol);
-        STRCPY(pRtcIceServerStats->url, pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->url);
+        SAFE_STRCPY(pRtcIceServerStats->protocol, pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->protocol);
+        SAFE_STRCPY(pRtcIceServerStats->url, pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->url);
         pRtcIceServerStats->totalRequestsSent = pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->totalRequestsSent;
         pRtcIceServerStats->totalResponsesReceived = pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->totalResponsesReceived;
         pRtcIceServerStats->totalRoundTripTime = pIceAgent->pRtcIceServerDiagnostics[pRtcIceServerStats->iceServerIndex]->totalRoundTripTime;
@@ -238,7 +238,7 @@ STATUS getDataChannelStats(PRtcPeerConnection pRtcPeerConnection, PRtcDataChanne
     pKvsDataChannel = (PKvsDataChannel) hashValue;
     pRtcDataChannelStats->bytesReceived = (UINT64) ATOMIC_LOAD(&pKvsDataChannel->atomicBytesReceived);
     pRtcDataChannelStats->bytesSent = (UINT64) ATOMIC_LOAD(&pKvsDataChannel->atomicBytesSent);
-    STRCPY(pRtcDataChannelStats->label, pKvsDataChannel->rtcDataChannelDiagnostics.label);
+    SAFE_STRCPY(pRtcDataChannelStats->label, pKvsDataChannel->rtcDataChannelDiagnostics.label);
     pRtcDataChannelStats->messagesReceived = (UINT32) ATOMIC_LOAD(&pKvsDataChannel->atomicMessagesReceived);
     pRtcDataChannelStats->messagesSent = (UINT32) ATOMIC_LOAD(&pKvsDataChannel->atomicMessagesSent);
     pRtcDataChannelStats->state = pKvsDataChannel->rtcDataChannelDiagnostics.state;
