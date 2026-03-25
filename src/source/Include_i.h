@@ -74,6 +74,13 @@ extern "C" {
 #endif
 #endif
 
+// STRNCPY that always null-terminates. dst must be a fixed-size array (not a pointer).
+#define SAFE_STRCPY(dst, src)                                                                                                                        \
+    do {                                                                                                                                             \
+        STRNCPY((dst), (src), ARRAY_SIZE(dst));                                                                                                      \
+        (dst)[ARRAY_SIZE(dst) - 1] = '\0';                                                                                                           \
+    } while (FALSE)
+
 // Max uFrag and uPwd length as documented in https://tools.ietf.org/html/rfc5245#section-15.4
 #define ICE_MAX_UFRAG_LEN 256
 #define ICE_MAX_UPWD_LEN  256
