@@ -285,6 +285,12 @@ static BOOL rtTryMarkFrameComplete(PRealTimeJitterBufferInternal pInternal, PRtF
 static VOID rtUpdateHead(PRealTimeJitterBufferInternal pInternal)
 {
     if (pInternal->frameCount == 0) {
+        // No frames in buffer: reset head to tail to prevent stale head values
+        // from triggering false overflow detection when new packets arrive.
+        pInternal->headTimestamp = pInternal->base.tailTimestamp;
+        pInternal->headSequenceNumber = pInternal->tailSequenceNumber;
+        pInternal->timestampOverFlowState = FALSE;
+        pInternal->sequenceNumberOverflowState = FALSE;
         return;
     }
 
@@ -626,9 +632,7 @@ EvictAndDeliver:
                 rtRemoveFrame(pInternal, earliestEvictIdx);
                 pInternal->hasDelivered = TRUE;
                 evicted = TRUE;
-                if (pInternal->frameCount > 0) {
-                    rtUpdateHead(pInternal);
-                }
+                rtUpdateHead(pInternal);
             }
         }
     }
@@ -660,9 +664,7 @@ EvictAndDeliver:
                     rtRemoveFrame(pInternal, checkIdx);
                 }
                 pInternal->hasDelivered = TRUE;
-                if (pInternal->frameCount > 0) {
-                    rtUpdateHead(pInternal);
-                }
+                rtUpdateHead(pInternal);
                 delivered = TRUE;
             }
         }
