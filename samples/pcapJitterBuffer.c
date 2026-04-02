@@ -249,6 +249,10 @@ INT32 main(INT32 argc, CHAR* argv[])
 
     initKvsWebRtc();
 
+    if (verbose) {
+        SET_LOGGER_LOG_LEVEL(LOG_LEVEL_DEBUG);
+    }
+
     fp = fopen(argv[argIdx], "rb");
     if (fp == NULL) {
         printf("ERROR: Cannot open file %s\n", argv[argIdx]);
