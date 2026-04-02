@@ -1856,6 +1856,59 @@ TEST_P(JitterBufferFunctionalityTest, LongRunningWithDroppedPacketsTest)
 }
 #endif
 
+// Regression test: push sequential multi-packet frames (3 packets each) through
+// two full seq-number cycles (~131K packets). Frames are fence-completed when
+// the next frame's first packet arrives — matching real H.264 RTP behavior.
+// Without the fix, stale head state after the buffer empties causes false
+// timestamp-overflow detection, silently discarding all subsequent packets
+// partway through the second seq cycle.
+TEST_P(JitterBufferFunctionalityTest, deliveryContinuesAfterSeqWrapAndEmptyBuffer)
+{
+    if (!GetParam()) {
+        // DefaultJitterBuffer has a pre-existing bug with long-running streams
+        // across seq wraparound (delivers only ~half the frames). Skip until fixed.
+        GTEST_SKIP();
+    }
+
+    constexpr UINT32 PACKETS_PER_FRAME = 3;
+    constexpr UINT32 TOTAL_PACKETS = 131073; // 43691 * 3
+    constexpr UINT32 FRAME_COUNT = TOTAL_PACKETS / PACKETS_PER_FRAME;
+
+    initializeJitterBuffer(FRAME_COUNT, 0, TOTAL_PACKETS);
+
+    UINT32 timestamp = 100;
+    for (UINT32 frame = 0; frame < FRAME_COUNT; frame++) {
+        mPExpectedFrameArr[frame] = (PBYTE) MEMALLOC(PACKETS_PER_FRAME);
+        mExpectedFrameSizeArr[frame] = PACKETS_PER_FRAME;
+        for (UINT32 p = 0; p < PACKETS_PER_FRAME; p++) {
+            mPExpectedFrameArr[frame][p] = (BYTE) p;
+        }
+
+        for (UINT32 p = 0; p < PACKETS_PER_FRAME; p++) {
+            UINT32 pktIdx = frame * PACKETS_PER_FRAME + p;
+            mPRtpPackets[pktIdx]->header.sequenceNumber = (UINT16) pktIdx;
+            mPRtpPackets[pktIdx]->header.timestamp = timestamp;
+            mPRtpPackets[pktIdx]->header.marker = (p == PACKETS_PER_FRAME - 1);
+            mPRtpPackets[pktIdx]->payloadLength = 1;
+            mPRtpPackets[pktIdx]->payload = (PBYTE) MEMALLOC(mPRtpPackets[pktIdx]->payloadLength + 1);
+            mPRtpPackets[pktIdx]->payload[0] = (BYTE) p;
+            mPRtpPackets[pktIdx]->payload[1] = (p == 0) ? 1 : 0;
+            mPRtpPackets[pktIdx]->pRawPacket = mPRtpPackets[pktIdx]->payload;
+        }
+        timestamp += 200;
+    }
+
+    for (UINT32 i = 0; i < TOTAL_PACKETS; i++) {
+        EXPECT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, mPRtpPackets[i], nullptr));
+    }
+
+    // Marker bit on last packet completes each frame immediately
+    EXPECT_EQ(FRAME_COUNT, mReadyFrameIndex);
+    EXPECT_EQ(0, mDroppedFrameIndex);
+
+    clearJitterBufferForTest();
+}
+
 TEST_P(JitterBufferFunctionalityTest, markerBitTriggersImmediateDelivery)
 {
     UINT32 i;

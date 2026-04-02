@@ -268,8 +268,6 @@ static BOOL rtTryMarkFrameComplete(PRealTimeJitterBufferInternal pInternal, PRtF
     BOOL gapFound = FALSE;
 
     if (slotsInRange == 0 || slotsInRange > 1000) {
-        DLOGD("rtTryMarkFrameComplete: ts=%u firstSeq=%u fenceSeq=%u slotsInRange=%u out of range, skip", pFrame->timestamp, pFrame->firstSeqNum,
-              fenceSeq, slotsInRange);
         return FALSE;
     }
 
@@ -278,12 +276,8 @@ static BOOL rtTryMarkFrameComplete(PRealTimeJitterBufferInternal pInternal, PRtF
     if (!gapFound && present == pFrame->packetCount) {
         pFrame->hasEnd = TRUE;
         pFrame->lastSeqNum = (UINT16) (fenceSeq - 1);
-        DLOGD("rtTryMarkFrameComplete: ts=%u seq=[%u..%u] fence-completed via fenceSeq=%u", pFrame->timestamp, pFrame->firstSeqNum,
-              pFrame->lastSeqNum, fenceSeq);
         return TRUE;
     }
-    DLOGD("rtTryMarkFrameComplete: ts=%u firstSeq=%u fenceSeq=%u FAILED: gapFound=%d present=%u packetCount=%u", pFrame->timestamp,
-          pFrame->firstSeqNum, fenceSeq, gapFound, present, pFrame->packetCount);
     return FALSE;
 }
 
@@ -291,6 +285,12 @@ static BOOL rtTryMarkFrameComplete(PRealTimeJitterBufferInternal pInternal, PRtF
 static VOID rtUpdateHead(PRealTimeJitterBufferInternal pInternal)
 {
     if (pInternal->frameCount == 0) {
+        // No frames in buffer: reset head to tail to prevent stale head values
+        // from triggering false overflow detection when new packets arrive.
+        pInternal->headTimestamp = pInternal->base.tailTimestamp;
+        pInternal->headSequenceNumber = pInternal->tailSequenceNumber;
+        pInternal->timestampOverFlowState = FALSE;
+        pInternal->sequenceNumberOverflowState = FALSE;
         return;
     }
 
@@ -622,9 +622,6 @@ EvictAndDeliver:
             evicted = FALSE;
             UINT32 earliestEvictIdx = rtFindEarliestFrameIdx(pInternal);
             age = rtTimestampAge(pInternal, pInternal->frames[earliestEvictIdx].timestamp);
-            DLOGD("EvictPass: head frame ts=%u seq=[%u..%u] age=%u maxLatency=%llu complete=%d", pInternal->frames[earliestEvictIdx].timestamp,
-                  pInternal->frames[earliestEvictIdx].firstSeqNum, pInternal->frames[earliestEvictIdx].lastSeqNum, age, pInternal->maxLatency,
-                  rtFrameIsComplete(pInternal, &pInternal->frames[earliestEvictIdx]));
             if (age > pInternal->maxLatency && !rtFrameIsComplete(pInternal, &pInternal->frames[earliestEvictIdx])) {
                 DLOGS("RealTimeJitterBuffer: evicting stale frame ts %u (age %u)", pInternal->frames[earliestEvictIdx].timestamp, age);
                 UINT32 evictedTs = pInternal->frames[earliestEvictIdx].timestamp;
@@ -635,9 +632,7 @@ EvictAndDeliver:
                 rtRemoveFrame(pInternal, earliestEvictIdx);
                 pInternal->hasDelivered = TRUE;
                 evicted = TRUE;
-                if (pInternal->frameCount > 0) {
-                    rtUpdateHead(pInternal);
-                }
+                rtUpdateHead(pInternal);
             }
         }
     }
@@ -655,7 +650,6 @@ EvictAndDeliver:
                 // A single NAL packet with marker bit looks "complete" but may be part of a larger frame
                 // whose other packets haven't arrived yet. Single-packet codecs (audio) bypass this.
                 if (!pInternal->hasDelivered && !pInternal->alwaysSinglePacketFrames && pInternal->frameCount <= 1) {
-                    DLOGD("DeliveryPass: waiting for second frame before delivering ts=%u", pFrame->timestamp);
                     break;
                 }
                 // Calculate frame size
@@ -670,14 +664,8 @@ EvictAndDeliver:
                     rtRemoveFrame(pInternal, checkIdx);
                 }
                 pInternal->hasDelivered = TRUE;
-                if (pInternal->frameCount > 0) {
-                    rtUpdateHead(pInternal);
-                }
+                rtUpdateHead(pInternal);
                 delivered = TRUE;
-            } else {
-                DLOGD("DeliveryPass: head frame ts=%u seq=[%u..%u] not complete: hasStart=%d hasEnd=%d packetCount=%u expectedCount=%u frameCount=%u",
-                      pFrame->timestamp, pFrame->firstSeqNum, pFrame->lastSeqNum, pFrame->hasStart, pFrame->hasEnd, pFrame->packetCount,
-                      (UINT16) (pFrame->lastSeqNum - pFrame->firstSeqNum + 1), pInternal->frameCount);
             }
         }
     }
