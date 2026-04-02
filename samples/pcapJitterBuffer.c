@@ -6,7 +6,8 @@
  * Packets are paced according to pcap record timestamps to simulate
  * real-time delivery.
  *
- * Usage: pcapJitterBuffer <pcap-file> [max-latency-ms]
+ * Usage: pcapJitterBuffer [-v] <pcap-file> [max-latency-ms]
+ *   -v             verbose: print each RTP packet as it is fed to the jitter buffer
  *   max-latency-ms defaults to 32
  */
 
@@ -221,17 +222,26 @@ INT32 main(INT32 argc, CHAR* argv[])
     UINT32 totalPackets = 0;
     UINT32 rtpPackets = 0;
     UINT32 pliCount = 0;
+    BOOL verbose = FALSE;
 
     MEMSET(&ctx, 0, SIZEOF(ctx));
 
-    if (argc < 2) {
-        printf("Usage: %s <pcap-file> [max-latency-ms]\n", argv[0]);
+    // Parse arguments: optional -v flag, then pcap file, then optional max-latency-ms
+    INT32 argIdx = 1;
+    if (argIdx < argc && strcmp(argv[argIdx], "-v") == 0) {
+        verbose = TRUE;
+        argIdx++;
+    }
+
+    if (argIdx >= argc) {
+        printf("Usage: %s [-v] <pcap-file> [max-latency-ms]\n", argv[0]);
+        printf("  -v             verbose: print each RTP packet as it is fed to the jitter buffer\n");
         printf("  max-latency-ms defaults to 32\n");
         return 1;
     }
 
-    if (argc >= 3) {
-        maxLatencyMs = (UINT32) STRTOUL(argv[2], NULL, 10);
+    if (argIdx + 1 < argc) {
+        maxLatencyMs = (UINT32) STRTOUL(argv[argIdx + 1], NULL, 10);
         if (maxLatencyMs == 0) {
             maxLatencyMs = 32;
         }
@@ -239,9 +249,9 @@ INT32 main(INT32 argc, CHAR* argv[])
 
     initKvsWebRtc();
 
-    fp = fopen(argv[1], "rb");
+    fp = fopen(argv[argIdx], "rb");
     if (fp == NULL) {
-        printf("ERROR: Cannot open file %s\n", argv[1]);
+        printf("ERROR: Cannot open file %s\n", argv[argIdx]);
         retStatus = STATUS_OPEN_FILE_FAILED;
         goto CleanUp;
     }
@@ -394,6 +404,11 @@ INT32 main(INT32 argc, CHAR* argv[])
         }
 
         pRtpPacket->receivedTime = pcapTimestampUs * 10; // pcap µs → 100ns units
+
+        if (verbose) {
+            printf("rtp seq=%u rtp_ts=%u pcap_ts=%.6fs\n", pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp,
+                   (DOUBLE) pcapTimestampUs / 1000000.0);
+        }
 
         BOOL discarded = FALSE;
         retStatus = jitterBufferPush(ctx.pJitterBuffer, pRtpPacket, &discarded);
