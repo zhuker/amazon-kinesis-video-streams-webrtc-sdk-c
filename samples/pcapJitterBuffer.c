@@ -270,9 +270,8 @@ INT32 main(INT32 argc, CHAR* argv[])
     CHK_STATUS(createRealTimeJitterBuffer(onFrameReady, onFrameDropped, depayH264FromRtpPayload, maxLatency100ns, VIDEO_CLOCK_RATE, (UINT64) &ctx,
                                           FALSE, &ctx.pJitterBuffer));
 
-    // Track pcap timestamps for pacing
+    // Track first pcap timestamp for relative time display
     UINT64 firstPcapTimestampUs = 0;
-    UINT64 firstWallClock = 0;
     BOOL firstPcapTimestamp = TRUE;
 
     // Read packets
@@ -370,21 +369,9 @@ INT32 main(INT32 argc, CHAR* argv[])
             continue; // not our video stream
         }
 
-        // Pace delivery according to pcap timestamps to simulate real-time arrival
         if (firstPcapTimestamp) {
             firstPcapTimestampUs = pcapTimestampUs;
-            firstWallClock = GETTIME();
             firstPcapTimestamp = FALSE;
-        } else {
-            UINT64 pcapElapsedUs = pcapTimestampUs - firstPcapTimestampUs;
-            UINT64 wallElapsed100ns = GETTIME() - firstWallClock;
-            UINT64 wallElapsedUs = wallElapsed100ns / 10;
-            if (pcapElapsedUs > wallElapsedUs) {
-                UINT64 sleepUs = pcapElapsedUs - wallElapsedUs;
-                if (sleepUs > 100) {
-                    THREAD_SLEEP(sleepUs * 10); // THREAD_SLEEP takes 100ns units
-                }
-            }
         }
 
         // createRtpPacketFromBytes takes ownership of the buffer, so we must
@@ -406,7 +393,7 @@ INT32 main(INT32 argc, CHAR* argv[])
             continue;
         }
 
-        pRtpPacket->receivedTime = GETTIME();
+        pRtpPacket->receivedTime = pcapTimestampUs * 10; // pcap µs → 100ns units
 
         BOOL discarded = FALSE;
         retStatus = jitterBufferPush(ctx.pJitterBuffer, pRtpPacket, &discarded);
