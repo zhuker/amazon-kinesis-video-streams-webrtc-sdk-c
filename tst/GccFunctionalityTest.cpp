@@ -376,10 +376,10 @@ TEST_F(GccFunctionalityTest, lossControllerMidLossHold)
 
     UINT64 initialAsHat = rateCtrl.As_hat;
 
-    // 2-10% loss should reduce gently (5%)
+    // 2-10% loss should hold steady
     gccUpdateLossController(&rateCtrl, 0.05, GCC_DEFAULT_MIN_BITRATE, GCC_DEFAULT_MAX_BITRATE);
 
-    EXPECT_EQ((UINT64)(initialAsHat * 0.95), rateCtrl.As_hat);
+    EXPECT_EQ(initialAsHat, rateCtrl.As_hat);
 }
 
 TEST_F(GccFunctionalityTest, lossControllerHighLossDecrease)
