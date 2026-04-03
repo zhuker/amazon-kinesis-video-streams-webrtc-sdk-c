@@ -34,8 +34,10 @@ extern "C" {
 #define GCC_LOSS_THRESHOLD_HIGH    0.10    // 10% loss threshold
 
 // Acknowledged bitrate estimator parameters (matches WebRTC BitrateEstimator)
-#define GCC_INITIAL_RATE_WINDOW_MS 500 // Larger initial window for stable first estimate
-#define GCC_RATE_WINDOW_MS         150 // Steady-state window (ms), ~4-5 video frames at 30fps
+#define GCC_INITIAL_RATE_WINDOW_MS 500  // Larger initial window for stable first estimate
+#define GCC_RATE_WINDOW_MS         150  // Steady-state window (ms), ~4-5 video frames at 30fps
+#define GCC_UNCERTAINTY_SCALE      10.0 // Bayesian uncertainty scaling factor
+#define GCC_PRED_VAR_INCREMENT     5.0  // Prediction variance increase per update
 
 // Default bitrate bounds
 #define GCC_DEFAULT_MIN_BITRATE     100000  // 100 kbps
@@ -88,13 +90,14 @@ typedef struct {
 
 /**
  * Acknowledged bitrate estimator (port of WebRTC BitrateEstimator).
- * Per-packet sliding window producing throughput samples.
+ * Per-packet sliding window with Bayesian smoothing.
  */
 typedef struct {
     INT64 sumBytes;             //!< Accumulated bytes in current window
     INT64 currentWindowMs;      //!< Current window duration (ms)
     INT64 prevTimeMs;           //!< Previous packet time (ms), -1 = uninitialized
-    DOUBLE bitrateEstimateKbps; //!< Current estimate (kbps), -1.0 = no estimate
+    DOUBLE bitrateEstimateKbps; //!< Bayesian smoothed estimate (kbps), -1.0 = no estimate
+    DOUBLE bitrateEstimateVar;  //!< Estimate variance for Bayesian update
 } GccBitrateEstimator, *PGccBitrateEstimator;
 
 /**
@@ -230,8 +233,27 @@ STATUS gccProcessPacket(PGccController pController, UINT64 sendTimeKvs, UINT64 a
  */
 BOOL gccFinalizeGroup(PGccController pController, DOUBLE* pD_i);
 
+/**
+ * Initialize the acknowledged bitrate estimator
+ */
 VOID gccBitrateEstimatorInit(PGccBitrateEstimator pEstimator);
+
+/**
+ * Feed a received packet into the estimator (per-packet, like reference).
+ * Window tracks using packet send time, not wall-clock.
+ *
+ * @param[in,out] pEstimator Bitrate estimator state
+ * @param[in] timeMs Packet send time in milliseconds
+ * @param[in] packetSize Packet size in bytes
+ */
 VOID gccBitrateEstimatorUpdate(PGccBitrateEstimator pEstimator, INT64 timeMs, UINT32 packetSize);
+
+/**
+ * Get the current acknowledged bitrate estimate
+ *
+ * @param[in] pEstimator Bitrate estimator state
+ * @return Estimated bitrate in bps, or 0 if no estimate available
+ */
 UINT64 gccBitrateEstimatorGetBitrate(PGccBitrateEstimator pEstimator);
 
 #ifdef __cplusplus
