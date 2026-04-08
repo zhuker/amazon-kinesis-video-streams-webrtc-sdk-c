@@ -176,8 +176,19 @@ INT32 main(INT32 argc, CHAR* argv[])
     UINT32 packetBufSize = 0;
     UINT32 totalPackets = 0;
     UINT32 rtpSend = 0, rtpRecv = 0, rtcpSend = 0, rtcpRecv = 0, sctpCount = 0;
-    UINT32 twccRecvCount = 0;
+    UINT32 twccRecvCount = 0, twccSendCount = 0;
     UINT64 totalTwccReceived = 0, totalTwccLost = 0;
+    UINT64 totalTwccSendReceived = 0, totalTwccSendLost = 0;
+
+    // RTT estimation: 2x one-way delay from SR NTP timestamp vs PCAP arrival time
+    UINT32 rttSampleCount = 0;
+    DOUBLE totalRttMs = 0.0, minRttMs = 1e9, maxRttMs = 0.0;
+
+    // RR-based loss and jitter
+    UINT32 rrSampleCount = 0;
+    UINT32 lastCumLost = 0;
+    DOUBLE totalFracLostPct = 0.0;
+    DOUBLE totalJitterSumTs = 0.0;
 
     if (argc < 2) {
         printf("Usage: %s <pcap-file>\n", argv[0]);
@@ -252,6 +263,115 @@ INT32 main(INT32 argc, CHAR* argv[])
         // SCTP
         if (ipProtocol == 132) {
             sctpCount++;
+            PBYTE sctpData = ipHeader + PCAP_IPV4_HDR_SIZE;
+            UINT32 sctpLen = inclLen - PCAP_ETHERNET_HDR_SIZE - PCAP_IPV4_HDR_SIZE;
+            if (sctpLen >= 12) {
+                // SCTP common header: srcPort(2) + dstPort(2) + vtag(4) + checksum(4) = 12
+                UINT16 sctpSrcPort = ((UINT16) sctpData[0] << 8) | sctpData[1];
+                UINT16 sctpDstPort = ((UINT16) sctpData[2] << 8) | sctpData[3];
+                UINT32 sctpVtag = getUnalignedInt32BigEndian(sctpData + 4);
+                UINT32 srcIpSctp;
+                MEMCPY(&srcIpSctp, ipHeader + 12, 4);
+                BOOL isSctpSend = (srcIpSctp == 0x0100000AU);
+                const char* sctpDir = isSctpSend ? "SEND" : "RECV";
+
+                printf("%.3f %s SCTP %u bytes src=%u dst=%u vtag=0x%08x\n", timeSec, sctpDir, sctpLen, sctpSrcPort, sctpDstPort, sctpVtag);
+
+                // Walk chunks
+                UINT32 chkOff = 12;
+                while (chkOff + 4 <= sctpLen) {
+                    UINT8 chunkType = sctpData[chkOff];
+                    UINT8 chunkFlags = sctpData[chkOff + 1];
+                    UINT16 chunkLen = ((UINT16) sctpData[chkOff + 2] << 8) | sctpData[chkOff + 3];
+                    if (chunkLen < 4 || chkOff + chunkLen > sctpLen) {
+                        break;
+                    }
+
+                    switch (chunkType) {
+                        case 0: { // DATA
+                            if (chunkLen >= 16) {
+                                UINT32 tsn = getUnalignedInt32BigEndian(sctpData + chkOff + 4);
+                                UINT16 sid = ((UINT16) sctpData[chkOff + 8] << 8) | sctpData[chkOff + 9];
+                                UINT16 ssn = ((UINT16) sctpData[chkOff + 10] << 8) | sctpData[chkOff + 11];
+                                UINT32 ppid = getUnalignedInt32BigEndian(sctpData + chkOff + 12);
+                                BOOL uBit = (chunkFlags & 0x04) != 0;
+                                BOOL bBit = (chunkFlags & 0x02) != 0;
+                                BOOL eBit = (chunkFlags & 0x01) != 0;
+                                const char* ppidStr = "?";
+                                if (ppid == 50)
+                                    ppidStr = "DCEP";
+                                else if (ppid == 51)
+                                    ppidStr = "STRING";
+                                else if (ppid == 53)
+                                    ppidStr = "BINARY";
+                                else if (ppid == 56)
+                                    ppidStr = "STRING_EMPTY";
+                                else if (ppid == 57)
+                                    ppidStr = "BINARY_EMPTY";
+                                printf("  DATA tsn=%u sid=%u ssn=%u ppid=%u(%s) flags=[%s%s%s] payload=%u\n", tsn, sid, ssn, ppid, ppidStr,
+                                       uBit ? "U" : "", bBit ? "B" : "", eBit ? "E" : "", chunkLen - 16);
+                                if (ppid == 50 && chunkLen > 16 + 2) { // DCEP
+                                    PBYTE dcep = sctpData + chkOff + 16;
+                                    UINT32 dcepLen = chunkLen - 16;
+                                    printf("    DCEP msgType=0x%02x channelType=0x%02x", dcep[0], dcep[1]);
+                                    if (dcepLen >= 12) {
+                                        UINT16 prio = ((UINT16) dcep[2] << 8) | dcep[3];
+                                        UINT32 reliParam = getUnalignedInt32BigEndian(dcep + 4);
+                                        UINT16 labelLen = ((UINT16) dcep[8] << 8) | dcep[9];
+                                        UINT16 protoLen = ((UINT16) dcep[10] << 8) | dcep[11];
+                                        printf(" prio=%u reliParam=%u labelLen=%u protoLen=%u", prio, reliParam, labelLen, protoLen);
+                                        if (dcepLen >= 12u + labelLen) {
+                                            printf(" label=\"%.*s\"", labelLen, dcep + 12);
+                                        }
+                                    }
+                                    printf("\n");
+                                }
+                            }
+                            break;
+                        }
+                        case 1:
+                            printf("  INIT\n");
+                            break;
+                        case 2:
+                            printf("  INIT-ACK\n");
+                            break;
+                        case 3: { // SACK
+                            if (chunkLen >= 16) {
+                                UINT32 cumTsn = getUnalignedInt32BigEndian(sctpData + chkOff + 4);
+                                UINT32 arwnd = getUnalignedInt32BigEndian(sctpData + chkOff + 8);
+                                UINT16 nGaps = ((UINT16) sctpData[chkOff + 12] << 8) | sctpData[chkOff + 13];
+                                UINT16 nDups = ((UINT16) sctpData[chkOff + 14] << 8) | sctpData[chkOff + 15];
+                                printf("  SACK cumTsn=%u arwnd=%u gaps=%u dups=%u\n", cumTsn, arwnd, nGaps, nDups);
+                            }
+                            break;
+                        }
+                        case 6:
+                            printf("  ABORT\n");
+                            break;
+                        case 7:
+                            printf("  SHUTDOWN\n");
+                            break;
+                        case 10:
+                            printf("  COOKIE-ECHO\n");
+                            break;
+                        case 11:
+                            printf("  COOKIE-ACK\n");
+                            break;
+                        case 192: { // FORWARD-TSN
+                            if (chunkLen >= 8) {
+                                UINT32 newCumTsn = getUnalignedInt32BigEndian(sctpData + chkOff + 4);
+                                printf("  FORWARD-TSN newCumTsn=%u\n", newCumTsn);
+                            }
+                            break;
+                        }
+                        default:
+                            printf("  CHUNK type=%u flags=0x%02x len=%u\n", chunkType, chunkFlags, chunkLen);
+                            break;
+                    }
+                    // Advance to next chunk (padded to 4 bytes)
+                    chkOff += ((chunkLen + 3) & ~3u);
+                }
+            }
             continue;
         }
 
@@ -382,11 +502,49 @@ INT32 main(INT32 argc, CHAR* argv[])
                 }
                 printf("\n");
 
+                // SR: extract NTP timestamp and estimate RTT from PCAP arrival time
+                if (pt == 200 && packetBytes >= 28) {
+                    UINT32 ntpMSW = getUnalignedInt32BigEndian(payload + rtcpOffset + 8);
+                    UINT32 ntpLSW = getUnalignedInt32BigEndian(payload + rtcpOffset + 12);
+                    // NTP epoch is Jan 1 1900; Unix epoch is Jan 1 1970; diff = 2208988800s
+                    INT64 ntpUnixSec = (INT64) ntpMSW - 2208988800LL;
+                    DOUBLE ntpUnixTime = (DOUBLE) ntpUnixSec + (DOUBLE) ntpLSW / 4294967296.0;
+                    DOUBLE pcapUnixTime = (DOUBLE) pcapTimestampUs / 1000000.0;
+                    DOUBLE owdMs = (pcapUnixTime - ntpUnixTime) * 1000.0;
+                    DOUBLE rttMs = owdMs * 2.0;
+                    printf("    ntp_unix=%.3f pcap_unix=%.3f owd=%.1fms rtt_est=%.1fms\n", ntpUnixTime, pcapUnixTime, owdMs, rttMs);
+                    if (rttMs > 0.0 && rttMs < 10000.0) {
+                        totalRttMs += rttMs;
+                        rttSampleCount++;
+                        if (rttMs < minRttMs)
+                            minRttMs = rttMs;
+                        if (rttMs > maxRttMs)
+                            maxRttMs = rttMs;
+                    }
+                }
+
+                // RR: extract per-report-block loss, jitter, DLSR
+                if (pt == 201 && packetBytes >= 32 && fmt >= 1) {
+                    // report block 0 starts at rtcpOffset+8
+                    UINT32 srcSsrc = getUnalignedInt32BigEndian(payload + rtcpOffset + 8);
+                    UINT8 fracLost = payload[rtcpOffset + 12];
+                    UINT32 cumLost = ((UINT32) payload[rtcpOffset + 13] << 16) | ((UINT32) payload[rtcpOffset + 14] << 8) | payload[rtcpOffset + 15];
+                    UINT32 jitter = getUnalignedInt32BigEndian(payload + rtcpOffset + 20);
+                    UINT32 lsr = getUnalignedInt32BigEndian(payload + rtcpOffset + 24);
+                    UINT32 dlsr = getUnalignedInt32BigEndian(payload + rtcpOffset + 28);
+                    DOUBLE dlsrMs = dlsr * 1000.0 / 65536.0;
+                    DOUBLE fracLostPct = fracLost * 100.0 / 256.0;
+                    printf("    source=0x%08x frac_lost=%u (%.1f%%) cum_lost=%u jitter=%uts dlsr=%.1fms\n", srcSsrc, fracLost, fracLostPct, cumLost,
+                           jitter, dlsrMs);
+                    rrSampleCount++;
+                    totalFracLostPct += fracLostPct;
+                    lastCumLost = cumLost;
+                    totalJitterSumTs += jitter;
+                }
+
                 // Detailed TWCC parsing
                 if (pt == 205 && fmt == 15 && packetBytes > 16) {
                     // TWCC payload starts after RTCP header (4 bytes) + sender SSRC (4 bytes) + media SSRC (4 bytes) = 12 bytes
-                    // But the RTCP header fields occupy: V|P|FMT(1) + PT(1) + length(2) + sender_ssrc(4) + media_ssrc(4) = 12 bytes
-                    // TWCC-specific fields start at offset 12 within the RTCP packet
                     UINT32 twccPayloadOffset = rtcpOffset + 12;
                     UINT32 twccPayloadLen = packetBytes - 12;
                     if (twccPayloadOffset + 8 <= payloadLen) {
@@ -397,6 +555,10 @@ INT32 main(INT32 argc, CHAR* argv[])
                             twccRecvCount++;
                             totalTwccReceived += fbReceived;
                             totalTwccLost += fbLost;
+                        } else {
+                            twccSendCount++;
+                            totalTwccSendReceived += fbReceived;
+                            totalTwccSendLost += fbLost;
                         }
                     }
                 }
@@ -413,10 +575,25 @@ INT32 main(INT32 argc, CHAR* argv[])
     printf("RTP:  send=%u recv=%u\n", rtpSend, rtpRecv);
     printf("RTCP: send=%u recv=%u\n", rtcpSend, rtcpRecv);
     printf("SCTP: %u\n", sctpCount);
-    printf("TWCC feedbacks received: %u\n", twccRecvCount);
-    printf("TWCC packets acked: %" PRIu64 " lost: %" PRIu64 " total: %" PRIu64 " loss: %.1f%%\n", totalTwccReceived, totalTwccLost,
-           totalTwccReceived + totalTwccLost,
+    printf("TWCC feedbacks recv'd (remote→us): %u  acked: %" PRIu64 " lost: %" PRIu64 " total: %" PRIu64 " loss: %.1f%%\n", twccRecvCount,
+           totalTwccReceived, totalTwccLost, totalTwccReceived + totalTwccLost,
            (totalTwccReceived + totalTwccLost) > 0 ? totalTwccLost * 100.0 / (totalTwccReceived + totalTwccLost) : 0.0);
+    printf("TWCC feedbacks sent  (us→remote): %u  acked: %" PRIu64 " lost: %" PRIu64 " total: %" PRIu64 " loss: %.1f%%\n", twccSendCount,
+           totalTwccSendReceived, totalTwccSendLost, totalTwccSendReceived + totalTwccSendLost,
+           (totalTwccSendReceived + totalTwccSendLost) > 0 ? totalTwccSendLost * 100.0 / (totalTwccSendReceived + totalTwccSendLost) : 0.0);
+    printf("\n--- RTT (from SR NTP vs PCAP arrival, assumes NTP-synced clocks) ---\n");
+    if (rttSampleCount > 0) {
+        printf("Samples: %u  avg: %.1fms  min: %.1fms  max: %.1fms\n", rttSampleCount, totalRttMs / rttSampleCount, minRttMs, maxRttMs);
+    } else {
+        printf("No valid RTT samples\n");
+    }
+    printf("\n--- RR-based loss and jitter ---\n");
+    if (rrSampleCount > 0) {
+        printf("RR reports: %u  avg_frac_lost: %.1f%%  cumulative_lost: %u  avg_jitter: %.0f ts-units\n", rrSampleCount,
+               totalFracLostPct / rrSampleCount, lastCumLost, totalJitterSumTs / rrSampleCount);
+    } else {
+        printf("No RR samples\n");
+    }
 
     SAFE_MEMFREE(pPacketBuf);
     if (fp != NULL) {
