@@ -263,6 +263,115 @@ INT32 main(INT32 argc, CHAR* argv[])
         // SCTP
         if (ipProtocol == 132) {
             sctpCount++;
+            PBYTE sctpData = ipHeader + PCAP_IPV4_HDR_SIZE;
+            UINT32 sctpLen = inclLen - PCAP_ETHERNET_HDR_SIZE - PCAP_IPV4_HDR_SIZE;
+            if (sctpLen >= 12) {
+                // SCTP common header: srcPort(2) + dstPort(2) + vtag(4) + checksum(4) = 12
+                UINT16 sctpSrcPort = ((UINT16) sctpData[0] << 8) | sctpData[1];
+                UINT16 sctpDstPort = ((UINT16) sctpData[2] << 8) | sctpData[3];
+                UINT32 sctpVtag = getUnalignedInt32BigEndian(sctpData + 4);
+                UINT32 srcIpSctp;
+                MEMCPY(&srcIpSctp, ipHeader + 12, 4);
+                BOOL isSctpSend = (srcIpSctp == 0x0100000AU);
+                const char* sctpDir = isSctpSend ? "SEND" : "RECV";
+
+                printf("%.3f %s SCTP %u bytes src=%u dst=%u vtag=0x%08x\n", timeSec, sctpDir, sctpLen, sctpSrcPort, sctpDstPort, sctpVtag);
+
+                // Walk chunks
+                UINT32 chkOff = 12;
+                while (chkOff + 4 <= sctpLen) {
+                    UINT8 chunkType = sctpData[chkOff];
+                    UINT8 chunkFlags = sctpData[chkOff + 1];
+                    UINT16 chunkLen = ((UINT16) sctpData[chkOff + 2] << 8) | sctpData[chkOff + 3];
+                    if (chunkLen < 4 || chkOff + chunkLen > sctpLen) {
+                        break;
+                    }
+
+                    switch (chunkType) {
+                        case 0: { // DATA
+                            if (chunkLen >= 16) {
+                                UINT32 tsn = getUnalignedInt32BigEndian(sctpData + chkOff + 4);
+                                UINT16 sid = ((UINT16) sctpData[chkOff + 8] << 8) | sctpData[chkOff + 9];
+                                UINT16 ssn = ((UINT16) sctpData[chkOff + 10] << 8) | sctpData[chkOff + 11];
+                                UINT32 ppid = getUnalignedInt32BigEndian(sctpData + chkOff + 12);
+                                BOOL uBit = (chunkFlags & 0x04) != 0;
+                                BOOL bBit = (chunkFlags & 0x02) != 0;
+                                BOOL eBit = (chunkFlags & 0x01) != 0;
+                                const char* ppidStr = "?";
+                                if (ppid == 50)
+                                    ppidStr = "DCEP";
+                                else if (ppid == 51)
+                                    ppidStr = "STRING";
+                                else if (ppid == 53)
+                                    ppidStr = "BINARY";
+                                else if (ppid == 56)
+                                    ppidStr = "STRING_EMPTY";
+                                else if (ppid == 57)
+                                    ppidStr = "BINARY_EMPTY";
+                                printf("  DATA tsn=%u sid=%u ssn=%u ppid=%u(%s) flags=[%s%s%s] payload=%u\n", tsn, sid, ssn, ppid, ppidStr,
+                                       uBit ? "U" : "", bBit ? "B" : "", eBit ? "E" : "", chunkLen - 16);
+                                if (ppid == 50 && chunkLen > 16 + 2) { // DCEP
+                                    PBYTE dcep = sctpData + chkOff + 16;
+                                    UINT32 dcepLen = chunkLen - 16;
+                                    printf("    DCEP msgType=0x%02x channelType=0x%02x", dcep[0], dcep[1]);
+                                    if (dcepLen >= 12) {
+                                        UINT16 prio = ((UINT16) dcep[2] << 8) | dcep[3];
+                                        UINT32 reliParam = getUnalignedInt32BigEndian(dcep + 4);
+                                        UINT16 labelLen = ((UINT16) dcep[8] << 8) | dcep[9];
+                                        UINT16 protoLen = ((UINT16) dcep[10] << 8) | dcep[11];
+                                        printf(" prio=%u reliParam=%u labelLen=%u protoLen=%u", prio, reliParam, labelLen, protoLen);
+                                        if (dcepLen >= 12u + labelLen) {
+                                            printf(" label=\"%.*s\"", labelLen, dcep + 12);
+                                        }
+                                    }
+                                    printf("\n");
+                                }
+                            }
+                            break;
+                        }
+                        case 1:
+                            printf("  INIT\n");
+                            break;
+                        case 2:
+                            printf("  INIT-ACK\n");
+                            break;
+                        case 3: { // SACK
+                            if (chunkLen >= 16) {
+                                UINT32 cumTsn = getUnalignedInt32BigEndian(sctpData + chkOff + 4);
+                                UINT32 arwnd = getUnalignedInt32BigEndian(sctpData + chkOff + 8);
+                                UINT16 nGaps = ((UINT16) sctpData[chkOff + 12] << 8) | sctpData[chkOff + 13];
+                                UINT16 nDups = ((UINT16) sctpData[chkOff + 14] << 8) | sctpData[chkOff + 15];
+                                printf("  SACK cumTsn=%u arwnd=%u gaps=%u dups=%u\n", cumTsn, arwnd, nGaps, nDups);
+                            }
+                            break;
+                        }
+                        case 6:
+                            printf("  ABORT\n");
+                            break;
+                        case 7:
+                            printf("  SHUTDOWN\n");
+                            break;
+                        case 10:
+                            printf("  COOKIE-ECHO\n");
+                            break;
+                        case 11:
+                            printf("  COOKIE-ACK\n");
+                            break;
+                        case 192: { // FORWARD-TSN
+                            if (chunkLen >= 8) {
+                                UINT32 newCumTsn = getUnalignedInt32BigEndian(sctpData + chkOff + 4);
+                                printf("  FORWARD-TSN newCumTsn=%u\n", newCumTsn);
+                            }
+                            break;
+                        }
+                        default:
+                            printf("  CHUNK type=%u flags=0x%02x len=%u\n", chunkType, chunkFlags, chunkLen);
+                            break;
+                    }
+                    // Advance to next chunk (padded to 4 bytes)
+                    chkOff += ((chunkLen + 3) & ~3u);
+                }
+            }
             continue;
         }
 
@@ -407,8 +516,10 @@ INT32 main(INT32 argc, CHAR* argv[])
                     if (rttMs > 0.0 && rttMs < 10000.0) {
                         totalRttMs += rttMs;
                         rttSampleCount++;
-                        if (rttMs < minRttMs) minRttMs = rttMs;
-                        if (rttMs > maxRttMs) maxRttMs = rttMs;
+                        if (rttMs < minRttMs)
+                            minRttMs = rttMs;
+                        if (rttMs > maxRttMs)
+                            maxRttMs = rttMs;
                     }
                 }
 
@@ -423,8 +534,8 @@ INT32 main(INT32 argc, CHAR* argv[])
                     UINT32 dlsr = getUnalignedInt32BigEndian(payload + rtcpOffset + 28);
                     DOUBLE dlsrMs = dlsr * 1000.0 / 65536.0;
                     DOUBLE fracLostPct = fracLost * 100.0 / 256.0;
-                    printf("    source=0x%08x frac_lost=%u (%.1f%%) cum_lost=%u jitter=%uts dlsr=%.1fms\n", srcSsrc, fracLost, fracLostPct,
-                           cumLost, jitter, dlsrMs);
+                    printf("    source=0x%08x frac_lost=%u (%.1f%%) cum_lost=%u jitter=%uts dlsr=%.1fms\n", srcSsrc, fracLost, fracLostPct, cumLost,
+                           jitter, dlsrMs);
                     rrSampleCount++;
                     totalFracLostPct += fracLostPct;
                     lastCumLost = cumLost;
