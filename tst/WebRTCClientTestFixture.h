@@ -6,6 +6,7 @@
 #include <mutex>
 #include <queue>
 #include <atomic>
+#include <vector>
 
 #define TEST_DEFAULT_REGION             ((PCHAR) "us-west-2")
 #define TEST_DEFAULT_STUN_URL_POSTFIX   (KINESIS_VIDEO_STUN_URL_POSTFIX)
@@ -40,6 +41,38 @@ typedef struct {
 #endif
 
 STATUS createRtpPacketWithSeqNum(UINT16 seqNum, PRtpPacket* ppRtpPacket);
+
+// Shared TestFrame.flags values. FULL means onFrameReady delivered every byte
+// of the frame; PARTIAL means onFrameDropped fired but some packets were
+// still salvageable through fillPartialFrameData; DROPPED means nothing was
+// recoverable. Additional states can be added here as tests need them.
+// Enum (not static constexpr) to avoid pre-C++17 ODR-use link errors when
+// these values are passed to gtest EXPECT_EQ by reference.
+enum : uint32_t {
+    TEST_FRAME_FULL = 1,
+    TEST_FRAME_PARTIAL = 2,
+    TEST_FRAME_DROPPED = 3,
+};
+
+// Shared test frame type used by H264 integration / peer connection tests.
+// The loader (WebRtcClientTestBase::loadH264FramesFromFolder) populates
+// `data`, `sendPts` (= i * frameDuration) and `timescale`. Remaining fields
+// are runtime state that specific tests fill in at send / receive time:
+//   - sendTime / receiveTime: GETTIME() wall clock
+//   - receivePts: presentation ts as seen at the receiver
+//   - flags: test-defined status bits (see TEST_FRAME_* above)
+// sendPts / receivePts are in units of 1/timescale seconds. Tests that care
+// about a specific clock rate (e.g. the H264 jitter test uses RTP 90 kHz)
+// pass an explicit timescale / frameDuration to the loader.
+struct TestFrame {
+    std::vector<BYTE> data;
+    UINT64 sendPts = 0;
+    UINT64 receivePts = 0;
+    UINT32 timescale = 0;
+    UINT64 sendTime = 0;
+    UINT64 receiveTime = 0;
+    UINT32 flags = 0;
+};
 
 class WebRtcClientTestBase : public ::testing::Test {
   public:
@@ -208,6 +241,9 @@ class WebRtcClientTestBase : public ::testing::Test {
             case RTC_CODEC_H265:
                 SNPRINTF(filePath, MAX_PATH_LEN, "%s/frame-%04d.h265", frameFilePath, index);
                 break;
+            case RTC_CODEC_OPUS:
+                SNPRINTF(filePath, MAX_PATH_LEN, "%s/sample-%03d.opus", frameFilePath, index);
+                break;
             default:
                 break;
         }
@@ -263,6 +299,29 @@ class WebRtcClientTestBase : public ::testing::Test {
                                   MEDIA_STREAM_TRACK_KIND kind);
     void getIceServers(PRtcConfiguration pRtcConfiguration);
     static void initRtcConfiguration(PRtcConfiguration pRtcConfiguration);
+
+    // Reads `count` raw frame files from `folder` via readFrameData into a
+    // vector of TestFrames. File index starts at `firstIndex` (H.264/H.265
+    // sample folders are 1-based, Opus sample folders are 0-based). Each
+    // TestFrame's `sendPts` is set to `i * frameDuration` and `timescale`
+    // to the caller-supplied value, so the default call (H.264 at 25 fps
+    // in hundreds-of-nanos) matches the fullCycleVideoAudioDataChannel
+    // PTS convention with no post-load fixups. The H.264 jitter integration
+    // test overrides timescale/frameDuration to get 30 fps in 90 kHz RTP
+    // ticks; fullCycle's Opus loader passes RTC_CODEC_OPUS and firstIndex=0.
+    std::vector<TestFrame> loadFramesFromFolder(PCHAR folder, UINT32 count,
+                                                RTC_CODEC codec = RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                                                UINT32 timescale = HUNDREDS_OF_NANOS_IN_A_SECOND,
+                                                UINT64 frameDuration = HUNDREDS_OF_NANOS_IN_A_SECOND / 25, UINT32 firstIndex = 1);
+
+    // Parses NAL units out of both frames via extractNaluInfo and asserts
+    // that the two frames contain the same number of NAL units and that
+    // each NAL unit matches in length and byte content. Does not compare
+    // total byte size — the depayloader may emit 3-byte start codes where
+    // the source had 4-byte ones (or vice versa), so frames can legitimately
+    // differ by one byte per NAL boundary on a perfect round trip.
+    // `context` is prefixed to every gtest diagnostic message.
+    static void expectTestFramesNalUnitsEqual(const TestFrame& expected, const TestFrame& actual, const char* context);
 
   protected:
     virtual void SetUp();
