@@ -828,7 +828,7 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         initializeH264JitterBuffer();
         mOriginalFrames =
             loadFramesFromFolder((PCHAR) sampleFolder, numFrames, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                                 /*timescale=*/90000, /*frameDuration=*/3000);
+                                 /*timescale=*/90000, /*frameDuration=*/1440);
         packetizeAllFrames();
 
         UINT32 totalPackets = (UINT32) mAllPackets.size();
@@ -982,7 +982,7 @@ TEST_P(H264JitterBufferIntegrationTest, markerPacketFirstAtTimestampZeroNoDouble
     initializeH264JitterBuffer();
     mOriginalFrames =
         loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", 2, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                             /*timescale=*/90000, /*frameDuration=*/3000);
+                             /*timescale=*/90000, /*frameDuration=*/1440);
 
     UINT16 seqNum = 0;
     UINT32 timestamp = 0;
@@ -991,8 +991,8 @@ TEST_P(H264JitterBufferIntegrationTest, markerPacketFirstAtTimestampZeroNoDouble
     UINT32 frame0PacketCount = (UINT32) mAllPackets.size();
     ASSERT_GE(frame0PacketCount, 2u) << "Frame 0 must have multiple packets for this test";
 
-    // Packetize frame 1 at ts=3000
-    timestamp += 3000;
+    // Packetize frame 1 at ts=1440
+    timestamp += 1440;
     ASSERT_EQ(STATUS_SUCCESS, packetizeFrame(1, timestamp, &seqNum));
     UINT32 totalPackets = (UINT32) mAllPackets.size();
 
@@ -1063,7 +1063,7 @@ TEST_P(H264JitterBufferIntegrationTest, DISABLED_jitterBufferDeficiencyBenchmark
         initializeH264JitterBuffer();
         mOriginalFrames = loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", NUM_FRAMES,
                                                RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                                               /*timescale=*/90000, /*frameDuration=*/3000);
+                                               /*timescale=*/90000, /*frameDuration=*/1440);
         packetizeAllFrames();
 
         auto dropIndices = generateDropIndices((UINT32) mAllPackets.size(), PACKET_LOSS_RATE, 12345);
@@ -1094,7 +1094,7 @@ TEST_P(H264JitterBufferIntegrationTest, DISABLED_jitterBufferDeficiencyBenchmark
         initializeH264JitterBuffer();
         mOriginalFrames = loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", NUM_FRAMES,
                                                RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                                               /*timescale=*/90000, /*frameDuration=*/3000);
+                                               /*timescale=*/90000, /*frameDuration=*/1440);
         packetizeAllFrames();
 
         auto dropIndices = generateDropIndices((UINT32) mAllPackets.size(), PACKET_LOSS_RATE, 54321);
@@ -1126,7 +1126,7 @@ TEST_P(H264JitterBufferIntegrationTest, DISABLED_jitterBufferDeficiencyBenchmark
         initializeH264JitterBuffer();
         mOriginalFrames = loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", NUM_FRAMES,
                                                RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
-                                               /*timescale=*/90000, /*frameDuration=*/3000);
+                                               /*timescale=*/90000, /*frameDuration=*/1440);
         packetizeAllFrames();
 
         std::set<UINT32> dropIndices;
