@@ -232,6 +232,36 @@ void RtpFunctionalityTest::verifyH264PackingUnpacking(const char* sampleFolder, 
             offset += payloadArray.payloadSubLength[i];
         }
 
+        // Verify frame-start detection: the packets reporting isStart=TRUE must form
+        // a contiguous prefix starting at packet 0. Packet 0 must always be a frame
+        // start (it contains the frame's first NALU — SPS/PPS/SEI/AUD or the first
+        // slice with first_mb_in_slice==0). After the first packet that reports
+        // isStart=FALSE, no later packet in the same frame may report TRUE — that
+        // would indicate a mid-frame aggregate (e.g. STAP-A) wrongly claiming to
+        // start a new frame, which is the bug this test guards against.
+        {
+            UINT32 checkOffset = 0;
+            BOOL sawNonStart = FALSE;
+            for (i = 0; i < payloadArray.payloadSubLenSize; i++) {
+                BOOL pktIsStart = TRUE;
+                UINT32 tmpLen = 0;
+                EXPECT_EQ(STATUS_SUCCESS,
+                          depayH264FromRtpPayload(payloadArray.payloadBuffer + checkOffset, payloadArray.payloadSubLength[i], NULL, &tmpLen,
+                                                  &pktIsStart));
+                if (i == 0) {
+                    EXPECT_TRUE(pktIsStart) << "Frame " << fileIndex << " packet 0 must be frame start";
+                }
+                if (sawNonStart) {
+                    EXPECT_FALSE(pktIsStart) << "Frame " << fileIndex << " packet " << i
+                                             << " reports frame start after a non-start packet (mid-frame spurious start)";
+                }
+                if (!pktIsStart) {
+                    sawNonStart = TRUE;
+                }
+                checkOffset += payloadArray.payloadSubLength[i];
+            }
+        }
+
         origNaluCount = extractNaluInfo(payload, payloadLen, origNaluOffsets, origNaluLengths, MAX_NALUS);
         depayNaluCount = extractNaluInfo(depayloadBuffer, depayloadOffset, depayNaluOffsets, depayNaluLengths, MAX_NALUS);
         EXPECT_EQ(origNaluCount, depayNaluCount) << "Frame " << fileIndex << " NAL count mismatch";
