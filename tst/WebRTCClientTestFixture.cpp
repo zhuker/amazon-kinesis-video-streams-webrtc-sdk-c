@@ -271,6 +271,47 @@ PCHAR WebRtcClientTestBase::GetTestName()
     return (PCHAR)::testing::UnitTest::GetInstance()->current_test_info()->test_case_name();
 }
 
+std::vector<TestFrame> WebRtcClientTestBase::loadFramesFromFolder(PCHAR folder, UINT32 count, RTC_CODEC codec, UINT32 timescale, UINT64 frameDuration,
+                                                                  UINT32 firstIndex)
+{
+    constexpr UINT32 MAX_FRAME_SIZE = 500000;
+    std::vector<BYTE> buffer(MAX_FRAME_SIZE);
+    std::vector<TestFrame> frames;
+    frames.reserve(count);
+
+    DLOGI("Loading %u frames from %s", count, folder);
+    for (UINT32 i = 0; i < count; i++) {
+        UINT32 frameSize = MAX_FRAME_SIZE;
+        EXPECT_EQ(STATUS_SUCCESS, readFrameData(buffer.data(), &frameSize, firstIndex + i, folder, codec));
+        TestFrame tf;
+        tf.data.assign(buffer.data(), buffer.data() + frameSize);
+        tf.sendPts = (UINT64) i * frameDuration;
+        tf.timescale = timescale;
+        frames.push_back(std::move(tf));
+    }
+    return frames;
+}
+
+void WebRtcClientTestBase::expectTestFramesNalUnitsEqual(const TestFrame& expected, const TestFrame& actual, const char* context)
+{
+    constexpr UINT32 MAX_NALUS = 128;
+    UINT32 expOffsets[MAX_NALUS], expLengths[MAX_NALUS];
+    UINT32 actOffsets[MAX_NALUS], actLengths[MAX_NALUS];
+
+    UINT32 expCount = extractNaluInfo((PBYTE) expected.data.data(), (UINT32) expected.data.size(), expOffsets, expLengths, MAX_NALUS);
+    UINT32 actCount = extractNaluInfo((PBYTE) actual.data.data(), (UINT32) actual.data.size(), actOffsets, actLengths, MAX_NALUS);
+
+    EXPECT_EQ(expCount, actCount) << context << ": NAL count mismatch";
+
+    for (UINT32 i = 0; i < MIN(expCount, actCount); i++) {
+        EXPECT_EQ(expLengths[i], actLengths[i]) << context << ": NAL " << i << " length mismatch";
+        if (expLengths[i] == actLengths[i]) {
+            EXPECT_EQ(0, MEMCMP(expected.data.data() + expOffsets[i], actual.data.data() + actOffsets[i], expLengths[i]))
+                << context << ": NAL " << i << " data mismatch";
+        }
+    }
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

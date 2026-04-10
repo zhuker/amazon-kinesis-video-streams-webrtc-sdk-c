@@ -1932,16 +1932,13 @@ struct PacingTestContext {
 // populates context with collected TWCC reports for analysis
 void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerConfig, PacingTestContext& context)
 {
-    const char* FRAME_DIR = "../samples/bbbH264";
     const UINT32 NUM_FRAMES_TO_SEND = 60;
     const UINT64 FRAME_DURATION_KVS = HUNDREDS_OF_NANOS_IN_A_SECOND / 60;
-    const SIZE_T MAX_FRAME_SIZE = 256 * 1024;
     RtcConfiguration configuration;
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
     RtcMediaStreamTrack offerVideoTrack, answerVideoTrack;
     PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver;
     Frame videoFrame;
-    PBYTE pFrameBuffer = NULL;
 
     MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
@@ -1950,10 +1947,12 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
     context.receivedPackets = 0;
     context.allReports.clear();
 
-    // Allocate frame buffer
-    pFrameBuffer = (PBYTE) MEMALLOC(MAX_FRAME_SIZE);
-    ASSERT_NE(pFrameBuffer, nullptr);
-    videoFrame.frameData = pFrameBuffer;
+    // Pre-load all bbbH264 frames with 60 fps PTS. sendPts is populated by the
+    // loader (i * FRAME_DURATION_KVS), so the per-frame write loop can pull
+    // presentationTs directly from the TestFrame.
+    std::vector<TestFrame> bbbFrames = loadFramesFromFolder((PCHAR) "../samples/bbbH264", NUM_FRAMES_TO_SEND,
+                                                            RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                                                            HUNDREDS_OF_NANOS_IN_A_SECOND, FRAME_DURATION_KVS);
 
     // Create peer connections
     EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
@@ -1999,32 +1998,24 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
     EXPECT_EQ(peerConnectionSetPacerBitrate(offerPc, pacerConfig.initialBitrateBps), STATUS_SUCCESS);
 
     // Send video frames
-    CHAR framePath[256];
-    UINT64 presentationTs = 0;
     SIZE_T totalBytesSent = 0;
     SIZE_T iFrameCount = 0;
 
-    for (UINT32 frameNum = 1; frameNum <= NUM_FRAMES_TO_SEND; frameNum++) {
-        SNPRINTF(framePath, SIZEOF(framePath), "%s/frame-%04u.h264", FRAME_DIR, frameNum);
+    for (UINT32 frameNum = 0; frameNum < NUM_FRAMES_TO_SEND; frameNum++) {
+        TestFrame& f = bbbFrames[frameNum];
+        videoFrame.frameData = f.data.data();
+        videoFrame.size = (UINT32) f.data.size();
+        videoFrame.presentationTs = f.sendPts;
+        videoFrame.decodingTs = f.sendPts;
 
-        UINT64 fileSize = 0;
-        ASSERT_EQ(readFile(framePath, TRUE, NULL, &fileSize), STATUS_SUCCESS) << "Failed to read frame file: " << framePath;
-        ASSERT_LE(fileSize, MAX_FRAME_SIZE) << "Frame too large: " << fileSize << " bytes";
-        ASSERT_EQ(readFile(framePath, TRUE, pFrameBuffer, &fileSize), STATUS_SUCCESS) << "Failed to read frame data: " << framePath;
-
-        videoFrame.size = (UINT32) fileSize;
-        videoFrame.presentationTs = presentationTs;
-        videoFrame.decodingTs = presentationTs;
-
-        BOOL isKeyFrame = (frameNum == 1 || fileSize > 50000);
+        BOOL isKeyFrame = (frameNum == 0 || f.data.size() > 50000);
         videoFrame.flags = isKeyFrame ? FRAME_FLAG_KEY_FRAME : FRAME_FLAG_NONE;
         if (isKeyFrame) {
             iFrameCount++;
         }
 
         EXPECT_EQ(writeFrame(offerVideoTransceiver, &videoFrame), STATUS_SUCCESS);
-        totalBytesSent += fileSize;
-        presentationTs += FRAME_DURATION_KVS;
+        totalBytesSent += f.data.size();
         THREAD_SLEEP(FRAME_DURATION_KVS);
     }
 
@@ -2039,8 +2030,6 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
 
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
-
-    MEMFREE(pFrameBuffer);
 
     // Basic validation
     EXPECT_GT(pContext->feedbackCount, 0) << "Should have received TWCC feedback";
@@ -2237,29 +2226,10 @@ TEST_F(PeerConnectionFunctionalityTest, pacingFrameDeadline)
 TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
 {
     constexpr UINT32 NUM_FRAMES = 100;
-    constexpr UINT32 MAX_FRAME_SIZE = 500000;
 
-    // Pre-read all input frames and record their NAL structure up front so the
-    // receiver callback can compare without re-reading from disk.
-    struct InputFrame {
-        std::vector<BYTE> data;
-        UINT32 naluCount;
-        UINT32 naluOffsets[128];
-        UINT32 naluLengths[128];
-    };
-    std::vector<InputFrame> inputFrames(NUM_FRAMES);
-    {
-        std::vector<BYTE> buf(MAX_FRAME_SIZE);
-        for (UINT32 i = 0; i < NUM_FRAMES; i++) {
-            UINT32 sz = MAX_FRAME_SIZE;
-            ASSERT_EQ(STATUS_SUCCESS,
-                      readFrameData(buf.data(), &sz, i + 1, (PCHAR) "../samples/girH264",
-                                    RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
-            inputFrames[i].data.resize(sz);
-            inputFrames[i].data.assign(buf.begin(), buf.begin() + sz);
-            inputFrames[i].naluCount = extractNaluInfo(inputFrames[i].data.data(), sz, inputFrames[i].naluOffsets, inputFrames[i].naluLengths, 128);
-        }
-    }
+    // Pre-read all input frames. NAL comparison happens on the receive side
+    // via the shared expectTestFramesNalUnitsEqual helper at comparison time.
+    std::vector<TestFrame> inputFrames = loadFramesFromFolder((PCHAR) "../samples/girH264", NUM_FRAMES);
 
     RtcConfiguration configuration{};
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
@@ -2276,37 +2246,27 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
                              RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, MEDIA_STREAM_TRACK_KIND_VIDEO);
 
     struct RxContext {
-        const std::vector<InputFrame>* inputFrames;
+        const std::vector<TestFrame>* inputFrames;
         SIZE_T receivedCount; // incremented atomically; used as sequential frame index
-        SIZE_T mismatchCount; // incremented atomically on any NAL content mismatch
     };
     RxContext rxCtx;
     MEMSET(&rxCtx, 0, SIZEOF(rxCtx));
     rxCtx.inputFrames = &inputFrames;
 
     // Non-capturing lambda: state flows through customData.
-    // Jitter buffer guarantees in-order delivery, so receivedCount-1 is the frame index.
+    // Jitter buffer guarantees in-order delivery; ATOMIC_INCREMENT returns the
+    // pre-increment value, so idx is the zero-based frame index.
     EXPECT_EQ(STATUS_SUCCESS, transceiverOnFrame(answerVideoTransceiver, (UINT64) &rxCtx, [](UINT64 customData, PFrame pFrame) -> void {
                   RxContext* ctx = (RxContext*) customData;
                   SIZE_T idx = ATOMIC_INCREMENT((PSIZE_T) &ctx->receivedCount);
                   DLOGI("%zu received frame %lld %d", idx, pFrame->presentationTs, pFrame->size);
-                  if (idx - 1 >= 100) {
+                  if (idx >= ctx->inputFrames->size()) {
                       return;
                   }
-                  UINT32 rxOffsets[128], rxLengths[128];
-                  UINT32 rxCount = extractNaluInfo(pFrame->frameData, pFrame->size, rxOffsets, rxLengths, 128);
-                  const InputFrame& expected = (*ctx->inputFrames)[(UINT32) idx];
-                  if (rxCount != expected.naluCount) {
-                      ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
-                      return;
-                  }
-                  for (UINT32 i = 0; i < rxCount; i++) {
-                      if (rxLengths[i] != expected.naluLengths[i] ||
-                          MEMCMP(pFrame->frameData + rxOffsets[i], expected.data.data() + expected.naluOffsets[i], rxLengths[i]) != 0) {
-                          ATOMIC_INCREMENT((PSIZE_T) &ctx->mismatchCount);
-                          return;
-                      }
-                  }
+                  TestFrame received;
+                  received.data.assign(pFrame->frameData, pFrame->frameData + pFrame->size);
+                  std::string ctxStr = "girH264 frame " + std::to_string(idx);
+                  expectTestFramesNalUnitsEqual((*ctx->inputFrames)[(UINT32) idx], received, ctxStr.c_str());
               }));
 
     EXPECT_EQ(TRUE, connectTwoPeers(offerPc, answerPc));
@@ -2317,7 +2277,7 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
     MEMSET(&txFrame, 0x00, SIZEOF(Frame));
     txFrame.presentationTs = HUNDREDS_OF_NANOS_IN_A_SECOND;
     for (UINT32 i = 0; i < NUM_FRAMES; i++) {
-        InputFrame& src = inputFrames[i];
+        TestFrame& src = inputFrames[i];
         txFrame.frameData = src.data.data();
         txFrame.size = (UINT32) src.data.size();
         EXPECT_EQ(STATUS_SUCCESS, writeFrame(offerVideoTransceiver, &txFrame));
@@ -2358,7 +2318,8 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
     freePeerConnection(&answerPc);
 
     EXPECT_EQ((SIZE_T) NUM_FRAMES, ATOMIC_LOAD(&rxCtx.receivedCount)) << "Expected exactly " << NUM_FRAMES << " frames delivered end-to-end";
-    EXPECT_EQ((SIZE_T) 0, ATOMIC_LOAD(&rxCtx.mismatchCount)) << "One or more received frames had NAL count or content mismatch";
+    // Per-frame NAL count / content mismatches are reported directly by
+    // expectTestFramesNalUnitsEqual in the receive callback via EXPECT_EQ.
 
     EXPECT_EQ(stats.sent.packetsSent, statsRx.received.packetsReceived);
     EXPECT_LE(stats.sent.packetsSent, perfectWorldNumberOfPackets * 2);
@@ -2370,48 +2331,18 @@ TEST_F(PeerConnectionFunctionalityTest, girH264StapARoundTrip)
 TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
 {
     constexpr UINT32 NUM_VIDEO_FRAMES = 100;
-    constexpr UINT32 MAX_FRAME_SIZE = 500000;
     constexpr UINT32 NUM_AUDIO_FRAMES = 100;
     constexpr UINT32 NUM_DC_MESSAGES = 120;
     constexpr UINT32 DC_MSG_SIZE = 32;
 
-    // --- Frame struct used for both input (sent) and received frames ---
-    struct TestFrame {
-        std::vector<BYTE> data;
-        UINT64 sendPts = 0;
-        UINT64 receivePts = 0;
-        UINT64 sendTime = 0;
-        UINT64 receiveTime = 0;
-    };
+    // --- Pre-read H.264 video frames (25 fps in hundreds-of-nanos matches the
+    //     test's existing PTS convention, so default loader args suffice). ---
+    std::vector<TestFrame> videoInputFrames = loadFramesFromFolder((PCHAR) "../samples/girH264", NUM_VIDEO_FRAMES);
 
-    // --- Pre-read H.264 video frames ---
-    std::vector<TestFrame> videoInputFrames(NUM_VIDEO_FRAMES);
-    {
-        std::vector<BYTE> buf(MAX_FRAME_SIZE);
-        for (UINT32 i = 0; i < NUM_VIDEO_FRAMES; i++) {
-            UINT32 sz = MAX_FRAME_SIZE;
-            ASSERT_EQ(STATUS_SUCCESS,
-                      readFrameData(buf.data(), &sz, i + 1, (PCHAR) "../samples/girH264",
-                                    RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
-            videoInputFrames[i].data.assign(buf.begin(), buf.begin() + sz);
-            videoInputFrames[i].sendPts = i * (HUNDREDS_OF_NANOS_IN_A_SECOND / 25);
-        }
-    }
-
-    // --- Pre-read Opus audio frames ---
+    // --- Pre-read Opus audio frames (20 ms per frame, 0-based file index) ---
     constexpr UINT64 OPUS_FRAME_DURATION = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-    std::vector<TestFrame> audioInputFrames(NUM_AUDIO_FRAMES);
-    {
-        CHAR filePath[MAX_PATH_LEN + 1];
-        for (UINT32 i = 0; i < NUM_AUDIO_FRAMES; i++) {
-            SNPRINTF(filePath, MAX_PATH_LEN, "../samples/opusSampleFrames/sample-%03d.opus", i);
-            UINT64 size = 0;
-            ASSERT_EQ(STATUS_SUCCESS, readFile(filePath, TRUE, NULL, &size));
-            audioInputFrames[i].data.resize((size_t) size);
-            ASSERT_EQ(STATUS_SUCCESS, readFile(filePath, TRUE, audioInputFrames[i].data.data(), &size));
-            audioInputFrames[i].sendPts = i * OPUS_FRAME_DURATION;
-        }
-    }
+    std::vector<TestFrame> audioInputFrames = loadFramesFromFolder((PCHAR) "../samples/opusSampleFrames", NUM_AUDIO_FRAMES, RTC_CODEC_OPUS,
+                                                                   HUNDREDS_OF_NANOS_IN_A_SECOND, OPUS_FRAME_DURATION, /*firstIndex=*/0);
 
     // --- Create peer connections with video + audio tracks ---
     RtcConfiguration configuration{};

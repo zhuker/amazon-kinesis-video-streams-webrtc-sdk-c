@@ -17,67 +17,13 @@ namespace webrtcclient {
 #define H264_INTEGRATION_TEST_SSRC         0x12345678
 #define H264_INTEGRATION_TEST_PAYLOAD_TYPE 96
 
-// Helper to extract NAL unit info from Annex-B formatted H264 data
-static UINT32 extractNaluInfoForTest(PBYTE data, UINT32 dataLen, PUINT32 naluOffsets, PUINT32 naluLengths, UINT32 maxNalus)
-{
-    UINT32 naluCount = 0;
-    UINT32 i = 0;
-    UINT32 startCodeLen = 0;
-    UINT32 naluStart = 0;
-
-    while (i < dataLen && naluCount < maxNalus) {
-        if (i + 2 < dataLen && data[i] == 0 && data[i + 1] == 0) {
-            if (data[i + 2] == 1) {
-                startCodeLen = 3;
-            } else if (i + 3 < dataLen && data[i + 2] == 0 && data[i + 3] == 1) {
-                startCodeLen = 4;
-            } else {
-                i++;
-                continue;
-            }
-
-            if (naluCount > 0) {
-                naluLengths[naluCount - 1] = i - naluStart;
-            }
-
-            naluStart = i + startCodeLen;
-            naluOffsets[naluCount] = naluStart;
-            naluCount++;
-            i += startCodeLen;
-        } else {
-            i++;
-        }
-    }
-
-    if (naluCount > 0) {
-        naluLengths[naluCount - 1] = dataLen - naluStart;
-    }
-
-    return naluCount;
-}
-
 // Parameter: <useRealTimeJitterBuffer, maxLatencyMs>
 class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::testing::WithParamInterface<std::tuple<bool, UINT32>> {
   protected:
-    // Status flag for TestFrame. A frame is FULL when onFrameReady fired and
-    // the buffer supplied every byte; PARTIAL when onFrameDropped fired but
-    // some packets were still fillable; DROPPED when nothing was salvageable.
-    // Enum (not static constexpr) to avoid pre-C++17 ODR-use link errors when
-    // these values are passed to EXPECT_EQ, which takes references.
-    enum : uint32_t {
-        TEST_FRAME_FULL = 1,
-        TEST_FRAME_PARTIAL = 2,
-        TEST_FRAME_DROPPED = 3,
-    };
-
-    struct TestFrame {
-        std::vector<uint8_t> data;
-        uint32_t timestamp; // RTP timestamp
-        uint32_t flags;
-    };
-
-    // Storage for original frames (Annex-B format with start codes).
-    // Timestamp is assigned during packetizeAllFrames once RTP timestamps are chosen.
+    // Storage for original frames (Annex-B format with start codes). TestFrame
+    // is defined in WebRTCClientTestFixture.h and shared across integration
+    // tests. loadFramesFromFolder populates data, sendPts (90 kHz RTP ticks in
+    // this test) and timescale.
     std::vector<TestFrame> mOriginalFrames;
 
     // Storage for frames seen by the jitter buffer callbacks. Contains one
@@ -187,27 +133,6 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         }
     }
 
-    void loadFramesFromSamples(const char* sampleFolder, UINT32 numFrames)
-    {
-        BYTE frameBuffer[500000];
-        UINT32 frameSize;
-
-        DLOGI("Loading %u frames from %s", numFrames, sampleFolder);
-        for (UINT32 i = 1; i <= numFrames; i++) {
-            ASSERT_EQ(STATUS_SUCCESS,
-                      readFrameData(frameBuffer, &frameSize, i, (PCHAR) sampleFolder,
-                                    RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
-            TestFrame tf;
-            tf.data.assign(frameBuffer, frameBuffer + frameSize);
-            // Deterministic RTP timestamp — matches the 3000-tick/30fps step used
-            // by packetizeAllFrames and the markerPacketFirstAtTimestampZero test.
-            tf.timestamp = (UINT32) (mOriginalFrames.size() * 3000);
-            tf.flags = TEST_FRAME_FULL;
-            mOriginalFrames.push_back(std::move(tf));
-        }
-        DLOGI("Loaded %zu frames", mOriginalFrames.size());
-    }
-
     STATUS packetizeFrame(UINT32 frameIndex, UINT32 timestamp, UINT16* pSeqNum)
     {
         STATUS retStatus = STATUS_SUCCESS;
@@ -287,7 +212,7 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
 
         DLOGI("Packetizing %zu frames", mOriginalFrames.size());
         for (UINT32 i = 0; i < mOriginalFrames.size(); i++) {
-            ASSERT_EQ(STATUS_SUCCESS, packetizeFrame(i, mOriginalFrames[i].timestamp, &seqNum));
+            ASSERT_EQ(STATUS_SUCCESS, packetizeFrame(i, (UINT32) mOriginalFrames[i].sendPts, &seqNum));
         }
         DLOGI("Created %zu packets from %u frames", mAllPackets.size(), mTotalFramesSent);
     }
@@ -321,32 +246,6 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
                     mTotalPacketsSent++;
                 }
                 mAllPackets[idx].pPacket = NULL;
-            }
-        }
-    }
-
-    void verifyReceivedFrameNalUnits(UINT32 receivedIndex, UINT32 originalIndex)
-    {
-        static constexpr UINT32 MAX_NALUS = 128;
-        UINT32 origNaluOffsets[MAX_NALUS], origNaluLengths[MAX_NALUS];
-        UINT32 recvNaluOffsets[MAX_NALUS], recvNaluLengths[MAX_NALUS];
-
-        UINT32 origNaluCount = extractNaluInfoForTest(mOriginalFrames[originalIndex].data.data(), (UINT32) mOriginalFrames[originalIndex].data.size(),
-                                                      origNaluOffsets, origNaluLengths, MAX_NALUS);
-
-        UINT32 recvNaluCount = extractNaluInfoForTest(mReceivedFrames[receivedIndex].data.data(), (UINT32) mReceivedFrames[receivedIndex].data.size(),
-                                                      recvNaluOffsets, recvNaluLengths, MAX_NALUS);
-
-        EXPECT_EQ(origNaluCount, recvNaluCount) << "NAL count mismatch for frame " << originalIndex;
-
-        for (UINT32 i = 0; i < MIN(origNaluCount, recvNaluCount); i++) {
-            EXPECT_EQ(origNaluLengths[i], recvNaluLengths[i]) << "NAL " << i << " length mismatch for frame " << originalIndex;
-
-            if (origNaluLengths[i] == recvNaluLengths[i]) {
-                EXPECT_EQ(0,
-                          MEMCMP(mOriginalFrames[originalIndex].data.data() + origNaluOffsets[i],
-                                 mReceivedFrames[receivedIndex].data.data() + recvNaluOffsets[i], origNaluLengths[i]))
-                    << "NAL " << i << " data mismatch for frame " << originalIndex;
             }
         }
     }
@@ -389,7 +288,8 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         if (STATUS_SUCCEEDED(status) && filledSize == frameSize) {
             TestFrame tf;
             tf.data.assign(frameBuffer, frameBuffer + frameSize);
-            tf.timestamp = frameTsReady;
+            tf.sendPts = frameTsReady;
+            tf.timescale = 90000;
             tf.flags = TEST_FRAME_FULL;
             pTest->mReceivedFrames.push_back(std::move(tf));
             DLOGS("Received frame %u, size %u, startSeq=%u", pTest->countFullyReceived(), frameSize, startIndex);
@@ -418,7 +318,8 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         // whatever packets are present in the ring so the post-pass can inspect
         // what the transceiver would have forwarded as a partial frame.
         TestFrame tf;
-        tf.timestamp = timestamp;
+        tf.sendPts = timestamp;
+        tf.timescale = 90000;
         tf.flags = TEST_FRAME_DROPPED;
 
         if (pTest->mJitterBuffer != NULL) {
@@ -657,9 +558,9 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         std::set<UINT32> actuallyDroppedTimestamps;
         for (const auto& f : mReceivedFrames) {
             if (f.flags == TEST_FRAME_FULL) {
-                actuallyReceivedTimestamps.insert(f.timestamp);
+                actuallyReceivedTimestamps.insert((UINT32) f.sendPts);
             } else {
-                actuallyDroppedTimestamps.insert(f.timestamp);
+                actuallyDroppedTimestamps.insert((UINT32) f.sendPts);
             }
         }
 
@@ -795,7 +696,7 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
             if (f.flags == TEST_FRAME_FULL) {
                 continue;
             }
-            auto it = frameIsIntact.find(f.timestamp);
+            auto it = frameIsIntact.find((UINT32) f.sendPts);
             if (it != frameIsIntact.end() && it->second) {
                 count++;
             }
@@ -925,7 +826,9 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         mIntactFramesDropped = 0;
 
         initializeH264JitterBuffer();
-        loadFramesFromSamples(sampleFolder, numFrames);
+        mOriginalFrames =
+            loadFramesFromFolder((PCHAR) sampleFolder, numFrames, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                                 /*timescale=*/90000, /*frameDuration=*/3000);
         packetizeAllFrames();
 
         UINT32 totalPackets = (UINT32) mAllPackets.size();
@@ -1009,83 +912,6 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         // Not EQ because partiallyDelivered frames may be dropped if blocked behind a stale head.
         UINT32 maxExpectedReceived = analysis.framesIntact + analysis.framesPartiallyDelivered;
         EXPECT_LE(receivedAfterFlush, maxExpectedReceived) << "More frames received than possible";
-
-        // Post-pass content verification: for every intact original frame (all
-        // its packets arrived) whose matching FULL entry is in mReceivedFrames,
-        // the NAL units must byte-match the original. Frames with any packet
-        // loss are excluded — the jitter buffer may still deliver them as
-        // "partially delivered" corrupted frames, which is expected behavior.
-        //
-        // Skipped on the default jitter buffer at low latency for the same
-        // reason the accounting assertion above is skipped: that configuration
-        // has known reorder/eviction deficiencies and can deliver truncated
-        // frames. The assertion there documents it as out-of-contract.
-        if (!isDefaultLowLatency) {
-            // verifyFullFramesMatchOriginals(intactFrameIndices(dropIndices));
-        }
-    }
-
-    // Walks mReceivedFrames and for every FULL entry whose original was intact
-    // (no packets dropped for that frame) asserts that the NAL units match the
-    // original frame with the same RTP timestamp — by count, per-NAL length,
-    // and per-NAL byte content.
-    //
-    // Total byte sizes are NOT compared: the H.264 depayloader emits 3-byte
-    // start codes `00 00 01` while readFrameData's source may contain 4-byte
-    // `00 00 00 01`, so frame sizes can legitimately differ by one byte per
-    // NAL boundary even on a perfect round-trip. NAL-level comparison is what
-    // a decoder cares about and still catches every truncation/mismatch flavor
-    // we're testing.
-    //
-    // Frames whose original was NOT in `intactOriginalIndices` are skipped —
-    // those are "partially delivered" (some packets lost, buffer still
-    // assembled a frame from the survivors) and are deliberately corrupted.
-    // Passing an empty set means "all originals are intact" — used by the
-    // no-loss tests (perfectDelivery, packetReordering, marker-first).
-    //
-    // PARTIAL / DROPPED TestFrames are skipped — they are incomplete by construction.
-    void verifyFullFramesMatchOriginals(const std::set<UINT32>& intactOriginalIndices = {})
-    {
-        bool checkAll = intactOriginalIndices.empty();
-        std::map<UINT32, UINT32> originalByTs;
-        for (UINT32 i = 0; i < mOriginalFrames.size(); i++) {
-            originalByTs[mOriginalFrames[i].timestamp] = i;
-        }
-        for (UINT32 r = 0; r < mReceivedFrames.size(); r++) {
-            const TestFrame& rf = mReceivedFrames[r];
-            if (rf.flags != TEST_FRAME_FULL) {
-                continue;
-            }
-            auto it = originalByTs.find(rf.timestamp);
-            if (it == originalByTs.end()) {
-                ADD_FAILURE() << "FULL frame with timestamp " << rf.timestamp << " has no matching original";
-                continue;
-            }
-            UINT32 origIdx = it->second;
-            if (!checkAll && intactOriginalIndices.find(origIdx) == intactOriginalIndices.end()) {
-                continue; // skip partially-delivered frames — decoder would see corruption, test knows this
-            }
-            verifyReceivedFrameNalUnits(r, origIdx);
-        }
-    }
-
-    // Given a set of packet indices that were dropped, return the set of
-    // original frame indices whose packets were ALL delivered (no loss).
-    std::set<UINT32> intactFrameIndices(const std::set<UINT32>& dropIndices) const
-    {
-        std::set<UINT32> affected;
-        for (UINT32 idx : dropIndices) {
-            if (idx < mAllPackets.size()) {
-                affected.insert(mAllPackets[idx].frameIndex);
-            }
-        }
-        std::set<UINT32> intact;
-        for (UINT32 i = 0; i < mOriginalFrames.size(); i++) {
-            if (affected.find(i) == affected.end()) {
-                intact.insert(i);
-            }
-        }
-        return intact;
     }
 };
 
@@ -1154,7 +980,9 @@ TEST_P(H264JitterBufferIntegrationTest, markerPacketFirstAtTimestampZeroNoDouble
 {
     // Load 2 frames from h264SampleFrames (frame 0 is multi-packet IDR)
     initializeH264JitterBuffer();
-    loadFramesFromSamples("../samples/h264SampleFrames", 2);
+    mOriginalFrames =
+        loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", 2, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                             /*timescale=*/90000, /*frameDuration=*/3000);
 
     UINT16 seqNum = 0;
     UINT32 timestamp = 0;
@@ -1196,8 +1024,7 @@ TEST_P(H264JitterBufferIntegrationTest, markerPacketFirstAtTimestampZeroNoDouble
     // the original content byte-for-byte (post-pass content check).
     ASSERT_GE(mReceivedFrames.size(), 1u);
     EXPECT_EQ(TEST_FRAME_FULL, mReceivedFrames[0].flags);
-    EXPECT_EQ(0u, mReceivedFrames[0].timestamp) << "Frame 0 should have timestamp 0";
-    // verifyFullFramesMatchOriginals();
+    EXPECT_EQ(0u, mReceivedFrames[0].sendPts) << "Frame 0 should have timestamp 0";
 }
 
 // Test: Single dropped packet in first frame delays all subsequent frames
@@ -1234,7 +1061,9 @@ TEST_P(H264JitterBufferIntegrationTest, DISABLED_jitterBufferDeficiencyBenchmark
 
         cleanupTest();
         initializeH264JitterBuffer();
-        loadFramesFromSamples("../samples/h264SampleFrames", NUM_FRAMES);
+        mOriginalFrames = loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", NUM_FRAMES,
+                                               RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                                               /*timescale=*/90000, /*frameDuration=*/3000);
         packetizeAllFrames();
 
         auto dropIndices = generateDropIndices((UINT32) mAllPackets.size(), PACKET_LOSS_RATE, 12345);
@@ -1263,7 +1092,9 @@ TEST_P(H264JitterBufferIntegrationTest, DISABLED_jitterBufferDeficiencyBenchmark
 
         cleanupTest();
         initializeH264JitterBuffer();
-        loadFramesFromSamples("../samples/h264SampleFrames", NUM_FRAMES);
+        mOriginalFrames = loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", NUM_FRAMES,
+                                               RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                                               /*timescale=*/90000, /*frameDuration=*/3000);
         packetizeAllFrames();
 
         auto dropIndices = generateDropIndices((UINT32) mAllPackets.size(), PACKET_LOSS_RATE, 54321);
@@ -1293,7 +1124,9 @@ TEST_P(H264JitterBufferIntegrationTest, DISABLED_jitterBufferDeficiencyBenchmark
 
         cleanupTest();
         initializeH264JitterBuffer();
-        loadFramesFromSamples("../samples/h264SampleFrames", NUM_FRAMES);
+        mOriginalFrames = loadFramesFromFolder((PCHAR) "../samples/h264SampleFrames", NUM_FRAMES,
+                                               RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+                                               /*timescale=*/90000, /*frameDuration=*/3000);
         packetizeAllFrames();
 
         std::set<UINT32> dropIndices;
