@@ -30,6 +30,8 @@ typedef struct {
     UINT16 tailSequenceNumber;
     UINT32 headTimestamp;
     BOOL hasDelivered; // whether any frame has been delivered
+    UINT16 nextExpectedSeqNum; // first seq of next frame, inferred from previous frame's marker bit
+    BOOL nextExpectedSeqValid; // whether nextExpectedSeqNum is set
     PRtpPacket pktRing[RT_PKT_RING_SIZE];
     UINT32 processedTimestamps[RT_PROCESSED_TS_RING_SIZE]; // ring buffer of delivered/dropped timestamps
     UINT32 processedTsHead;                                // next write index
@@ -276,8 +278,12 @@ static BOOL rtTryMarkFrameComplete(PRealTimeJitterBufferInternal pInternal, PRtF
     if (!gapFound && present == pFrame->packetCount) {
         pFrame->hasEnd = TRUE;
         pFrame->lastSeqNum = (UINT16) (fenceSeq - 1);
+        DLOGD("rtFence: COMPLETE ts=%u seq=[%u..%u] fence=%u present=%u",
+              pFrame->timestamp, pFrame->firstSeqNum, pFrame->lastSeqNum, fenceSeq, present);
         return TRUE;
     }
+    DLOGD("rtFence: INCOMPLETE ts=%u firstSeq=%u fence=%u present=%u pktCount=%u gapFound=%d",
+          pFrame->timestamp, pFrame->firstSeqNum, fenceSeq, present, pFrame->packetCount, gapFound);
     return FALSE;
 }
 
@@ -367,6 +373,8 @@ STATUS createRealTimeJitterBuffer(FrameReadyFunc onFrameReadyFunc, FrameDroppedF
     pInternal->frameCount = 0;
     pInternal->processedTsHead = 0;
     pInternal->processedTsCount = 0;
+    pInternal->nextExpectedSeqNum = 0;
+    pInternal->nextExpectedSeqValid = FALSE;
 
 CleanUp:
     if (STATUS_FAILED(retStatus) && pInternal != NULL) {
@@ -482,8 +490,9 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
     // Latency tolerance check - discard if too old
     age = rtTimestampAge(pInternal, pRtpPacket->header.timestamp);
     if (age > pInternal->maxLatency) {
-        DLOGS("RealTimeJitterBuffer: discarding packet seq %u ts %u (age %u > maxLatency %llu)", pRtpPacket->header.sequenceNumber,
-              pRtpPacket->header.timestamp, age, pInternal->maxLatency);
+        DLOGD("rtPush: DISCARD-TOO-OLD seq=%u ts=%u age=%u maxLatency=%llu tailTs=%u",
+              pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp,
+              age, pInternal->maxLatency, pInternal->base.tailTimestamp);
         freeRtpPacket(&pRtpPacket);
         if (pPacketDiscarded != NULL) {
             *pPacketDiscarded = TRUE;
@@ -495,6 +504,7 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
     // Check for duplicate - if exists, replace but don't increment packetCount
     pExisting = pInternal->pktRing[pRtpPacket->header.sequenceNumber % RT_PKT_RING_SIZE];
     if (pExisting != NULL && pExisting->header.sequenceNumber == pRtpPacket->header.sequenceNumber) {
+        DLOGD("rtPush: DUPLICATE seq=%u ts=%u", pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp);
         freeRtpPacket(&pExisting);
         pInternal->pktRing[pRtpPacket->header.sequenceNumber % RT_PKT_RING_SIZE] = pRtpPacket;
         // Don't update frame entry for duplicates
@@ -507,6 +517,8 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
         // No existing frame entry — check if this timestamp was already delivered/dropped
         BOOL alreadyProcessed = rtIsTimestampProcessed(pInternal, pRtpPacket->header.timestamp);
         if (alreadyProcessed) {
+            DLOGD("rtPush: DISCARD-LATE seq=%u ts=%u (timestamp already delivered/dropped)",
+                  pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp);
             freeRtpPacket(&pRtpPacket);
             if (pPacketDiscarded != NULL) {
                 *pPacketDiscarded = TRUE;
@@ -525,11 +537,34 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
         pInternal->frameCount++;
         pFrame = &pInternal->frames[frameIdx];
         pFrame->timestamp = pRtpPacket->header.timestamp;
-        pFrame->firstSeqNum = pRtpPacket->header.sequenceNumber;
         pFrame->lastSeqNum = pRtpPacket->header.sequenceNumber;
         pFrame->packetCount = 0;
         pFrame->hasStart = FALSE;
         pFrame->hasEnd = FALSE;
+
+        // If the previous frame ended with a marker bit we know exactly where
+        // this frame must start. Use that as firstSeqNum so any gap between
+        // nextExpectedSeqNum and the first arrived packet makes the frame appear
+        // incomplete and prevents premature delivery.
+        if (pInternal->nextExpectedSeqValid) {
+            UINT16 dist = (UINT16) (pRtpPacket->header.sequenceNumber - pInternal->nextExpectedSeqNum);
+            if (dist > 0 && dist < 512) {
+                // Packet arrived after the expected start — gap exists at the front.
+                DLOGD("rtPush: NEW-FRAME ts=%u firstSeq=%u (expected %u, gap of %u at front)",
+                      pRtpPacket->header.timestamp, pInternal->nextExpectedSeqNum,
+                      pInternal->nextExpectedSeqNum, (UINT32) dist);
+                pFrame->firstSeqNum = pInternal->nextExpectedSeqNum;
+            } else {
+                pFrame->firstSeqNum = pRtpPacket->header.sequenceNumber;
+                DLOGD("rtPush: NEW-FRAME ts=%u firstSeq=%u frameCount=%u",
+                      pRtpPacket->header.timestamp, pRtpPacket->header.sequenceNumber, pInternal->frameCount);
+            }
+            pInternal->nextExpectedSeqValid = FALSE;
+        } else {
+            pFrame->firstSeqNum = pRtpPacket->header.sequenceNumber;
+            DLOGD("rtPush: NEW-FRAME ts=%u firstSeq=%u frameCount=%u",
+                  pRtpPacket->header.timestamp, pRtpPacket->header.sequenceNumber, pInternal->frameCount);
+        }
 
         // Update head if this is earlier
         if (rtTimestampCompare(pInternal, pRtpPacket->header.timestamp, pInternal->headTimestamp) < 0) {
@@ -573,7 +608,14 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
     }
     if (pRtpPacket->header.marker) {
         pFrame->hasEnd = TRUE;
+        DLOGD("rtPush: MARKER seq=%u ts=%u → frame hasEnd frame=[%u..%u] pktCount=%u",
+              pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp,
+              pFrame->firstSeqNum, pFrame->lastSeqNum, pFrame->packetCount);
     }
+    DLOGD("rtPush: PKT seq=%u ts=%u → frame=[%u..%u] pktCount=%u hasStart=%d hasEnd=%d",
+          pRtpPacket->header.sequenceNumber, pRtpPacket->header.timestamp,
+          pFrame->firstSeqNum, pFrame->lastSeqNum, pFrame->packetCount,
+          pFrame->hasStart, pFrame->hasEnd);
 
     // Re-evaluate frame completion after adding a late packet to an existing frame.
     if (!pFrame->hasEnd && pFrame->hasStart && pInternal->frameCount > 1) {
@@ -623,13 +665,18 @@ EvictAndDeliver:
             UINT32 earliestEvictIdx = rtFindEarliestFrameIdx(pInternal);
             age = rtTimestampAge(pInternal, pInternal->frames[earliestEvictIdx].timestamp);
             if (age > pInternal->maxLatency && !rtFrameIsComplete(pInternal, &pInternal->frames[earliestEvictIdx])) {
-                DLOGS("RealTimeJitterBuffer: evicting stale frame ts %u (age %u)", pInternal->frames[earliestEvictIdx].timestamp, age);
+                DLOGD("rtEvict: DROP-STALE ts=%u seq=[%u..%u] pktCount=%u age=%u maxLatency=%llu",
+                      pInternal->frames[earliestEvictIdx].timestamp,
+                      pInternal->frames[earliestEvictIdx].firstSeqNum,
+                      pInternal->frames[earliestEvictIdx].lastSeqNum,
+                      pInternal->frames[earliestEvictIdx].packetCount, age, pInternal->maxLatency);
                 UINT32 evictedTs = pInternal->frames[earliestEvictIdx].timestamp;
                 rtMarkTimestampProcessed(pInternal, evictedTs);
                 pInternal->onFrameDroppedFn(pInternal->customData, pInternal->frames[earliestEvictIdx].firstSeqNum,
                                             pInternal->frames[earliestEvictIdx].lastSeqNum, pInternal->frames[earliestEvictIdx].timestamp);
                 rtFreePacketsInRange(pInternal, pInternal->frames[earliestEvictIdx].firstSeqNum, pInternal->frames[earliestEvictIdx].lastSeqNum);
                 rtRemoveFrame(pInternal, earliestEvictIdx);
+                pInternal->nextExpectedSeqValid = FALSE; // can't trust boundary after a drop
                 pInternal->hasDelivered = TRUE;
                 evicted = TRUE;
                 rtUpdateHead(pInternal);
@@ -652,8 +699,12 @@ EvictAndDeliver:
                 if (!pInternal->hasDelivered && !pInternal->alwaysSinglePacketFrames && pInternal->frameCount <= 1) {
                     break;
                 }
+                DLOGD("rtDeliver: DELIVER ts=%u seq=[%u..%u] pktCount=%u",
+                      pFrame->timestamp, pFrame->firstSeqNum, pFrame->lastSeqNum, pFrame->packetCount);
                 // Calculate frame size
                 UINT32 deliveredTs = pFrame->timestamp;
+                UINT16 deliveredLastSeq = pFrame->lastSeqNum;
+                BOOL deliveredHasEnd = pFrame->hasEnd;
                 rtMarkTimestampProcessed(pInternal, deliveredTs);
                 CHK_STATUS(rtCalcFrameSize(pInternal, pFrame->firstSeqNum, pFrame->lastSeqNum, &frameSize));
                 CHK_STATUS(pInternal->onFrameReadyFn(pInternal->customData, pFrame->firstSeqNum, pFrame->lastSeqNum, frameSize));
@@ -662,6 +713,24 @@ EvictAndDeliver:
                 if (checkIdx < pInternal->frameCount) {
                     rtFreePacketsInRange(pInternal, pInternal->frames[checkIdx].firstSeqNum, pInternal->frames[checkIdx].lastSeqNum);
                     rtRemoveFrame(pInternal, checkIdx);
+                }
+                // If this frame ended with a marker bit, the next frame must start at lastSeqNum+1.
+                // Only arm the flag if no existing frame already starts there (it may have been
+                // created before this delivery fired, e.g. when the triggering packet belonged to
+                // the next frame and arrived before some reordered packets of this frame).
+                if (deliveredHasEnd) {
+                    UINT16 expectedNext = (UINT16) (deliveredLastSeq + 1);
+                    BOOL alreadyCovered = FALSE;
+                    for (i = 0; i < pInternal->frameCount; i++) {
+                        if (pInternal->frames[i].firstSeqNum == expectedNext) {
+                            alreadyCovered = TRUE;
+                            break;
+                        }
+                    }
+                    if (!alreadyCovered) {
+                        pInternal->nextExpectedSeqNum = expectedNext;
+                        pInternal->nextExpectedSeqValid = TRUE;
+                    }
                 }
                 pInternal->hasDelivered = TRUE;
                 rtUpdateHead(pInternal);

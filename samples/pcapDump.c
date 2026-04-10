@@ -14,6 +14,39 @@
 #define PCAP_UDP_HDR_SIZE       8
 #define PCAP_TRANSPORT_HDR_SIZE (PCAP_ETHERNET_HDR_SIZE + PCAP_IPV4_HDR_SIZE + PCAP_UDP_HDR_SIZE)
 
+#define MAX_SSRC_TRACK 16
+
+typedef struct {
+    UINT32 ssrc;
+    UINT8 pt;
+    UINT16 lastSeq;
+    BOOL seen;
+    UINT32 gapEvents;
+    UINT32 missingPackets;
+} SsrcTracker;
+
+static SsrcTracker ssrcTable[MAX_SSRC_TRACK];
+static UINT32 ssrcCount = 0;
+
+static SsrcTracker* findOrAddSsrc(UINT32 ssrc, UINT8 pt)
+{
+    UINT32 i;
+    for (i = 0; i < ssrcCount; i++) {
+        if (ssrcTable[i].ssrc == ssrc) {
+            return &ssrcTable[i];
+        }
+    }
+    if (ssrcCount < MAX_SSRC_TRACK) {
+        ssrcTable[ssrcCount].ssrc = ssrc;
+        ssrcTable[ssrcCount].pt = pt;
+        ssrcTable[ssrcCount].seen = FALSE;
+        ssrcTable[ssrcCount].gapEvents = 0;
+        ssrcTable[ssrcCount].missingPackets = 0;
+        return &ssrcTable[ssrcCount++];
+    }
+    return NULL;
+}
+
 static PBYTE findOneByteExtension(PBYTE pExtPayload, UINT32 extLength, UINT8 targetId, PUINT8 pDataLen)
 {
     UINT32 offset = 0;
@@ -410,6 +443,25 @@ INT32 main(INT32 argc, CHAR* argv[])
 
                 printf("%.3f %s RTP pt=%u seq=%u ts=%u ssrc=0x%08x size=%u", timeSec, direction, pt, seq, timestamp, ssrc, payloadLen);
 
+                // Sequence gap detection
+                SsrcTracker* pTracker = findOrAddSsrc(ssrc, pt);
+                if (pTracker != NULL) {
+                    if (pTracker->seen) {
+                        UINT16 expected = (UINT16)(pTracker->lastSeq + 1);
+                        if (seq != expected) {
+                            UINT16 gap = (UINT16)(seq - expected);
+                            if (gap < 0x8000U) { // forward gap, not reorder
+                                printf(" *** GAP: missing %u packet%s (seq %u..%u) ***", gap, gap == 1 ? "" : "s", expected,
+                                       (UINT16)(seq - 1));
+                                pTracker->gapEvents++;
+                                pTracker->missingPackets += gap;
+                            }
+                        }
+                    }
+                    pTracker->lastSeq = seq;
+                    pTracker->seen = TRUE;
+                }
+
                 if (extension) {
                     UINT32 csrcOffset = 12 + cc * 4;
                     if (payloadLen > csrcOffset + 4) {
@@ -567,6 +619,23 @@ INT32 main(INT32 argc, CHAR* argv[])
                 subIdx++;
             }
             continue;
+        }
+    }
+
+    printf("\n=== RTP Sequence Gaps ===\n");
+    {
+        UINT32 i;
+        UINT32 totalGapEvents = 0, totalMissing = 0;
+        for (i = 0; i < ssrcCount; i++) {
+            totalGapEvents += ssrcTable[i].gapEvents;
+            totalMissing += ssrcTable[i].missingPackets;
+            printf("  ssrc=0x%08x pt=%-3u  gap_events=%-4u  missing_packets=%u\n", ssrcTable[i].ssrc, ssrcTable[i].pt,
+                   ssrcTable[i].gapEvents, ssrcTable[i].missingPackets);
+        }
+        if (ssrcCount == 0) {
+            printf("  (no RTP streams)\n");
+        } else {
+            printf("  TOTAL: gap_events=%u  missing_packets=%u\n", totalGapEvents, totalMissing);
         }
     }
 

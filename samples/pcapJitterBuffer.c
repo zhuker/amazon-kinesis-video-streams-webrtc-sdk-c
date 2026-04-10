@@ -6,8 +6,10 @@
  * Packets are paced according to pcap record timestamps to simulate
  * real-time delivery.
  *
- * Usage: pcapJitterBuffer [-v] <pcap-file> [max-latency-ms]
+ * Usage: pcapJitterBuffer [-v] [-s] [-o <output.h264>] <pcap-file> [max-latency-ms]
  *   -v             verbose: print each RTP packet as it is fed to the jitter buffer
+ *   -s             summary: print one line per frame (pcap time, rtp_ts, seq, size, NAL types)
+ *   -o <file>      write raw Annex-B H.264 stream to <file>
  *   max-latency-ms defaults to 32
  */
 
@@ -68,6 +70,10 @@ typedef struct {
     UINT32 droppedCount;
     UINT32 firstRtpTimestamp;
     BOOL firstTimestampSet;
+    UINT64 firstPcapTimestampUs;
+    FILE* pOutputFile;
+    UINT64 bytesWritten;
+    BOOL summarize;
 } AppContext, *PAppContext;
 
 static const char* getNalTypeName(UINT8 nalType)
@@ -76,6 +82,93 @@ static const char* getNalTypeName(UINT8 nalType)
         return nalUnitTypeNames[nalType];
     }
     return "Unknown";
+}
+
+/* NAL summary: run-length encode consecutive same-type NAL units, e.g. "2xNON-IDR,SEI" */
+#define MAX_NAL_RUNS     32
+#define NAL_SUMMARY_SIZE 256
+
+static VOID summarizeNalTypes(PBYTE pData, UINT32 size, char* pBuf, UINT32 bufSize)
+{
+    struct {
+        UINT8 type;
+        UINT32 count;
+    } runs[MAX_NAL_RUNS];
+    UINT32 numRuns = 0;
+    UINT32 offset = 0;
+
+    while (offset < size) {
+        UINT32 scLen = 0;
+        if (offset + 4 <= size && pData[offset] == 0 && pData[offset + 1] == 0 && pData[offset + 2] == 0 && pData[offset + 3] == 1) {
+            scLen = 4;
+        } else if (offset + 3 <= size && pData[offset] == 0 && pData[offset + 1] == 0 && pData[offset + 2] == 1) {
+            scLen = 3;
+        }
+
+        if (scLen == 0) {
+            offset++;
+            continue;
+        }
+
+        UINT32 nalStart = offset + scLen;
+        if (nalStart >= size) {
+            break;
+        }
+
+        UINT8 nalType = pData[nalStart] & 0x1F;
+        if (numRuns > 0 && runs[numRuns - 1].type == nalType) {
+            runs[numRuns - 1].count++;
+        } else if (numRuns < MAX_NAL_RUNS) {
+            runs[numRuns].type = nalType;
+            runs[numRuns].count = 1;
+            numRuns++;
+        }
+
+        UINT32 nalEnd = size;
+        for (UINT32 i = nalStart + 1; i + 2 < size; i++) {
+            if (pData[i] == 0 && pData[i + 1] == 0 && (pData[i + 2] == 1 || (i + 3 < size && pData[i + 2] == 0 && pData[i + 3] == 1))) {
+                nalEnd = i;
+                break;
+            }
+        }
+        offset = nalEnd;
+    }
+
+    UINT32 pos = 0;
+    for (UINT32 i = 0; i < numRuns && pos < bufSize - 1; i++) {
+        if (i > 0 && pos < bufSize - 2) {
+            pBuf[pos++] = ',';
+        }
+        if (runs[i].count > 1) {
+            INT32 w = snprintf(pBuf + pos, bufSize - pos, "%ux", runs[i].count);
+            if (w > 0) {
+                pos += (UINT32) w;
+            }
+        }
+        INT32 w = snprintf(pBuf + pos, bufSize - pos, "%s", getNalTypeName(runs[i].type));
+        if (w > 0) {
+            pos += (UINT32) w;
+        }
+    }
+    if (numRuns == 0) {
+        snprintf(pBuf, bufSize, "(none)");
+    } else {
+        pBuf[pos] = '\0';
+    }
+}
+
+static VOID printFrameSummaryLine(PBYTE pData, UINT32 size, UINT32 rtpTimestamp, UINT64 pcapReceiveTimeUs, UINT64 firstPcapTimestampUs,
+                                  UINT32 frameIndex, UINT16 seqStart, UINT16 seqEnd)
+{
+    char nalSummary[NAL_SUMMARY_SIZE];
+    summarizeNalTypes(pData, size, nalSummary, SIZEOF(nalSummary));
+    DOUBLE pcapTimeSec = (DOUBLE)(pcapReceiveTimeUs - firstPcapTimestampUs) / 1000000.0;
+    if (seqStart == seqEnd) {
+        printf("frame=%u pcap=%.3fs rtp_ts=%u seq=%u size=%u nals=%s\n", frameIndex, pcapTimeSec, rtpTimestamp, seqStart, size, nalSummary);
+    } else {
+        printf("frame=%u pcap=%.3fs rtp_ts=%u seq=[%u..%u] size=%u nals=%s\n", frameIndex, pcapTimeSec, rtpTimestamp, seqStart, seqEnd, size,
+               nalSummary);
+    }
 }
 
 static VOID printFrameNalUnits(PBYTE pData, UINT32 size, UINT32 rtpTimestamp, UINT32 firstRtpTimestamp, UINT32 frameIndex, UINT16 seqStart,
@@ -157,7 +250,19 @@ static STATUS onFrameReady(UINT64 customData, UINT16 startIndex, UINT16 endIndex
 
     CHK_STATUS(jitterBufferFillFrameData(pCtx->pJitterBuffer, pCtx->pFrameBuffer, frameSize, &filledSize, startIndex, endIndex));
 
-    printFrameNalUnits(pCtx->pFrameBuffer, filledSize, pPacket->header.timestamp, pCtx->firstRtpTimestamp, pCtx->frameCount, startIndex, endIndex);
+    if (pCtx->pOutputFile != NULL && filledSize > 0) {
+        fwrite(pCtx->pFrameBuffer, 1, filledSize, pCtx->pOutputFile);
+        pCtx->bytesWritten += filledSize;
+    }
+
+    if (pCtx->summarize) {
+        UINT64 pcapUs = pPacket->receivedTime / 10;
+        printFrameSummaryLine(pCtx->pFrameBuffer, filledSize, pPacket->header.timestamp, pcapUs, pCtx->firstPcapTimestampUs, pCtx->frameCount,
+                              startIndex, endIndex);
+    } else {
+        printFrameNalUnits(pCtx->pFrameBuffer, filledSize, pPacket->header.timestamp, pCtx->firstRtpTimestamp, pCtx->frameCount, startIndex,
+                           endIndex);
+    }
     pCtx->frameCount++;
 
 CleanUp:
@@ -199,6 +304,10 @@ static STATUS onFrameDropped(UINT64 customData, UINT16 startIndex, UINT16 endInd
     jitterBufferFillPartialFrameData(pCtx->pJitterBuffer, pCtx->pFrameBuffer, partialSize, &filledSize, startIndex, endIndex);
 
     if (filledSize > 0) {
+        if (pCtx->pOutputFile != NULL) {
+            fwrite(pCtx->pFrameBuffer, 1, filledSize, pCtx->pOutputFile);
+            pCtx->bytesWritten += filledSize;
+        }
         printf("PARTIAL frame=%u time=%.3fs rtp_ts=%u seq=[%u..%u] size=%u\n", pCtx->frameCount, timeSec, timestamp, startIndex, endIndex,
                filledSize);
         printFrameNalUnits(pCtx->pFrameBuffer, filledSize, timestamp, pCtx->firstRtpTimestamp, pCtx->frameCount, startIndex, endIndex);
@@ -223,19 +332,32 @@ INT32 main(INT32 argc, CHAR* argv[])
     UINT32 rtpPackets = 0;
     UINT32 pliCount = 0;
     BOOL verbose = FALSE;
+    const char* outputPath = NULL;
 
     MEMSET(&ctx, 0, SIZEOF(ctx));
 
-    // Parse arguments: optional -v flag, then pcap file, then optional max-latency-ms
+    // Parse arguments: optional -v / -o flags, then pcap file, then optional max-latency-ms
     INT32 argIdx = 1;
     if (argIdx < argc && strcmp(argv[argIdx], "-v") == 0) {
         verbose = TRUE;
         argIdx++;
     }
 
+    if (argIdx + 1 < argc && strcmp(argv[argIdx], "-o") == 0) {
+        outputPath = argv[argIdx + 1];
+        argIdx += 2;
+    }
+
+    if (argIdx < argc && strcmp(argv[argIdx], "-s") == 0) {
+        ctx.summarize = TRUE;
+        argIdx++;
+    }
+
     if (argIdx >= argc) {
-        printf("Usage: %s [-v] <pcap-file> [max-latency-ms]\n", argv[0]);
+        printf("Usage: %s [-v] [-s] [-o <output.h264>] <pcap-file> [max-latency-ms]\n", argv[0]);
         printf("  -v             verbose: print each RTP packet as it is fed to the jitter buffer\n");
+        printf("  -s             summary: print one line per frame (pcap time, rtp_ts, seq, size, NAL types)\n");
+        printf("  -o <file>      write raw Annex-B H.264 stream to <file>\n");
         printf("  max-latency-ms defaults to 32\n");
         return 1;
     }
@@ -272,6 +394,16 @@ INT32 main(INT32 argc, CHAR* argv[])
         printf("ERROR: Not a valid PCAP file (bad magic)\n");
         retStatus = STATUS_INVALID_ARG;
         goto CleanUp;
+    }
+
+    if (outputPath != NULL) {
+        ctx.pOutputFile = fopen(outputPath, "wb");
+        if (ctx.pOutputFile == NULL) {
+            printf("ERROR: Cannot open output file %s\n", outputPath);
+            retStatus = STATUS_OPEN_FILE_FAILED;
+            goto CleanUp;
+        }
+        printf("Writing H.264 output to %s\n", outputPath);
     }
 
     UINT64 maxLatency100ns = (UINT64) maxLatencyMs * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
@@ -386,6 +518,7 @@ INT32 main(INT32 argc, CHAR* argv[])
         if (firstPcapTimestamp) {
             firstPcapTimestampUs = pcapTimestampUs;
             firstPcapTimestamp = FALSE;
+            ctx.firstPcapTimestampUs = pcapTimestampUs;
         }
 
         // createRtpPacketFromBytes takes ownership of the buffer, so we must
@@ -435,6 +568,9 @@ INT32 main(INT32 argc, CHAR* argv[])
     printf("  Frames delivered:   %u\n", ctx.frameCount);
     printf("  Frames dropped:     %u\n", ctx.droppedCount);
     printf("  PLI packets:        %u\n", pliCount);
+    if (ctx.pOutputFile != NULL) {
+        printf("  H.264 bytes out:    %" PRIu64 "\n", ctx.bytesWritten);
+    }
 
 CleanUp:
     if (ctx.pJitterBuffer != NULL) {
@@ -444,6 +580,9 @@ CleanUp:
     SAFE_MEMFREE(pPacketBuf);
     if (fp != NULL) {
         fclose(fp);
+    }
+    if (ctx.pOutputFile != NULL) {
+        fclose(ctx.pOutputFile);
     }
     deinitKvsWebRtc();
 
