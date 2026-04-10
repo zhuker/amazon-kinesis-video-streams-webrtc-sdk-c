@@ -89,6 +89,8 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
     // Track intact frames that were incorrectly dropped (jitter buffer deficiency)
     UINT32 mIntactFramesDropped;
 
+    PJitterBuffer mJitterBuffer;
+
     // Configuration
     UINT32 mMtu;
     UINT32 mClockRate;

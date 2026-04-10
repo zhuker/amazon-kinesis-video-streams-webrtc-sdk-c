@@ -43,13 +43,6 @@ STATUS createRtpPacketWithSeqNum(UINT16 seqNum, PRtpPacket* ppRtpPacket);
 
 class WebRtcClientTestBase : public ::testing::Test {
   public:
-    PUINT32 mExpectedFrameSizeArr;
-    PBYTE* mPExpectedFrameArr;
-    UINT32 mExpectedFrameCount;
-    PUINT32 mExpectedDroppedFrameTimestampArr;
-    UINT32 mExpectedDroppedFrameCount;
-    PRtpPacket* mPRtpPackets;
-    UINT32 mRtpPacketCount;
     SIGNALING_CLIENT_HANDLE mSignalingClientHandle;
     std::vector<std::thread> threads;
     std::mutex lock;
@@ -167,71 +160,6 @@ class WebRtcClientTestBase : public ::testing::Test {
 
 #endif
 
-    static STATUS testFrameReadyFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex, UINT32 frameSize)
-    {
-        WebRtcClientTestBase* base = (WebRtcClientTestBase*) customData;
-        UINT32 filledSize;
-        EXPECT_GT(base->mExpectedFrameCount, base->mReadyFrameIndex);
-        EXPECT_EQ(base->mExpectedFrameSizeArr[base->mReadyFrameIndex], frameSize);
-        if (base->mFrame != NULL) {
-            MEMFREE(base->mFrame);
-            base->mFrame = NULL;
-        }
-        base->mFrame = (PBYTE) MEMALLOC(frameSize);
-        EXPECT_EQ(STATUS_SUCCESS, jitterBufferFillFrameData(base->mJitterBuffer, base->mFrame, frameSize, &filledSize, startIndex, endIndex));
-        EXPECT_EQ(frameSize, filledSize);
-        EXPECT_EQ(0, MEMCMP(base->mPExpectedFrameArr[base->mReadyFrameIndex], base->mFrame, frameSize));
-        base->mReadyFrameIndex++;
-        return STATUS_SUCCESS;
-    }
-
-    static STATUS testFrameDroppedFunc(UINT64 customData, UINT16 startIndex, UINT16 endIndex, UINT32 timestamp)
-    {
-        UNUSED_PARAM(startIndex);
-        UNUSED_PARAM(endIndex);
-        auto* base = (WebRtcClientTestBase*) customData;
-        EXPECT_GT(base->mExpectedDroppedFrameCount, base->mDroppedFrameIndex);
-        EXPECT_EQ(base->mExpectedDroppedFrameTimestampArr[base->mDroppedFrameIndex], timestamp);
-        base->mDroppedFrameIndex++;
-        return STATUS_SUCCESS;
-    }
-
-    static STATUS testDepayRtpFunc(PBYTE payload, UINT32 payloadLength, PBYTE outBuffer, PUINT32 pBufferSize, PBOOL pIsStart)
-    {
-        ENTERS();
-        STATUS retStatus = STATUS_SUCCESS;
-        UINT32 bufferSize = 0;
-        BOOL sizeCalculationOnly = (outBuffer == NULL);
-
-        UNUSED_PARAM(pIsStart);
-        CHK(payload != NULL && pBufferSize != NULL, STATUS_NULL_ARG);
-        CHK(payloadLength > 0, retStatus);
-
-        bufferSize = payloadLength;
-
-        // Only return size if given buffer is NULL
-        CHK(!sizeCalculationOnly, retStatus);
-        CHK(payloadLength <= *pBufferSize, STATUS_BUFFER_TOO_SMALL);
-
-        MEMCPY(outBuffer, payload, payloadLength);
-
-    CleanUp:
-        if (STATUS_FAILED(retStatus) && sizeCalculationOnly) {
-            bufferSize = 0;
-        }
-
-        if (pBufferSize != NULL) {
-            *pBufferSize = bufferSize;
-        }
-
-        if (pIsStart != NULL) {
-            *pIsStart = (payload[payloadLength] != 0);
-        }
-
-        LEAVES();
-        return retStatus;
-    }
-
     static STATUS createRetryStrategyFn(PKvsRetryStrategy pKvsRetryStrategy)
     {
         STATUS retStatus = STATUS_SUCCESS;
@@ -340,9 +268,6 @@ class WebRtcClientTestBase : public ::testing::Test {
     virtual void SetUp();
     virtual void TearDown();
     PCHAR GetTestName();
-    VOID initializeJitterBuffer(UINT32, UINT32, UINT32, BOOL useRealTime = FALSE);
-    VOID clearJitterBufferForTest();
-    VOID setPayloadToFree();
 
 #ifdef ENABLE_SIGNALING
     PAwsCredentialProvider mTestCredentialProvider;
@@ -364,11 +289,6 @@ class WebRtcClientTestBase : public ::testing::Test {
     CHAR mChannelArn[MAX_ARN_LEN + 1];
     CHAR mStreamArn[MAX_ARN_LEN + 1];
     CHAR mKmsKeyId[MAX_ARN_LEN + 1];
-
-    PJitterBuffer mJitterBuffer;
-    PBYTE mFrame;
-    UINT32 mReadyFrameIndex;
-    UINT32 mDroppedFrameIndex;
 
     ChannelInfo mChannelInfo;
     SignalingClientCallbacks mSignalingClientCallbacks;

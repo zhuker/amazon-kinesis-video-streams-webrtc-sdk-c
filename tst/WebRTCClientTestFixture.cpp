@@ -51,10 +51,6 @@ WebRtcClientTestBase::WebRtcClientTestBase()
 void WebRtcClientTestBase::SetUp()
 {
     DLOGI("\nSetting up test: %s\n", GetTestName());
-    mReadyFrameIndex = 0;
-    mDroppedFrameIndex = 0;
-    mExpectedFrameCount = 0;
-    mExpectedDroppedFrameCount = 0;
     noNewThreads = FALSE;
 
     SET_INSTRUMENTED_ALLOCATORS();
@@ -126,70 +122,6 @@ void WebRtcClientTestBase::TearDown()
 #endif
 
     EXPECT_EQ(STATUS_SUCCESS, RESET_INSTRUMENTED_ALLOCATORS());
-}
-
-VOID WebRtcClientTestBase::initializeJitterBuffer(UINT32 expectedFrameCount, UINT32 expectedDroppedFrameCount, UINT32 rtpPacketCount,
-                                                   BOOL useRealTime)
-{
-    UINT32 i, timestamp;
-    if (useRealTime) {
-        EXPECT_EQ(STATUS_SUCCESS,
-                  createRealTimeJitterBuffer(testFrameReadyFunc, testFrameDroppedFunc, testDepayRtpFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY,
-                                             TEST_JITTER_BUFFER_CLOCK_RATE, (UINT64) this, FALSE, &mJitterBuffer));
-    } else {
-        EXPECT_EQ(STATUS_SUCCESS,
-                  createJitterBuffer(testFrameReadyFunc, testFrameDroppedFunc, testDepayRtpFunc, DEFAULT_JITTER_BUFFER_MAX_LATENCY,
-                                     TEST_JITTER_BUFFER_CLOCK_RATE, (UINT64) this, FALSE, &mJitterBuffer));
-    }
-    mExpectedFrameCount = expectedFrameCount;
-    mFrame = NULL;
-    if (expectedFrameCount > 0) {
-        mPExpectedFrameArr = (PBYTE*) MEMALLOC(SIZEOF(PBYTE) * expectedFrameCount);
-        mExpectedFrameSizeArr = (PUINT32) MEMALLOC(SIZEOF(UINT32) * expectedFrameCount);
-    }
-    mExpectedDroppedFrameCount = expectedDroppedFrameCount;
-    if (expectedDroppedFrameCount > 0) {
-        mExpectedDroppedFrameTimestampArr = (PUINT32) MEMALLOC(SIZEOF(UINT32) * expectedDroppedFrameCount);
-    }
-
-    mPRtpPackets = (PRtpPacket*) MEMALLOC(SIZEOF(PRtpPacket) * rtpPacketCount);
-    mRtpPacketCount = rtpPacketCount;
-
-    // Assume timestamp is on time unit ms for test
-    for (i = 0, timestamp = 0; i < rtpPacketCount; i++, timestamp += 200) {
-        EXPECT_EQ(STATUS_SUCCESS,
-                  createRtpPacket(2, FALSE, FALSE, 0, FALSE, 96, i, timestamp, 0x1234ABCD, NULL, 0, 0, NULL, NULL, 0, mPRtpPackets + i));
-    }
-}
-
-VOID WebRtcClientTestBase::setPayloadToFree()
-{
-    UINT32 i;
-    for (i = 0; i < mRtpPacketCount; i++) {
-        mPRtpPackets[i]->pRawPacket = mPRtpPackets[i]->payload;
-    }
-}
-
-VOID WebRtcClientTestBase::clearJitterBufferForTest()
-{
-    UINT32 i;
-    EXPECT_EQ(STATUS_SUCCESS, freeJitterBuffer(&mJitterBuffer));
-    if (mExpectedFrameCount > 0) {
-        for (i = 0; i < mExpectedFrameCount; i++) {
-            MEMFREE(mPExpectedFrameArr[i]);
-        }
-        MEMFREE(mPExpectedFrameArr);
-        MEMFREE(mExpectedFrameSizeArr);
-    }
-    if (mExpectedDroppedFrameCount > 0) {
-        MEMFREE(mExpectedDroppedFrameTimestampArr);
-    }
-    MEMFREE(mPRtpPackets);
-    EXPECT_EQ(mExpectedFrameCount, mReadyFrameIndex);
-    EXPECT_EQ(mExpectedDroppedFrameCount, mDroppedFrameIndex);
-    if (mFrame != NULL) {
-        MEMFREE(mFrame);
-    }
 }
 
 // Connect two RtcPeerConnections, and wait for them to be connected
