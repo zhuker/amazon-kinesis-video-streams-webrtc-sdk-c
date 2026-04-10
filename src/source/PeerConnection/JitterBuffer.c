@@ -809,6 +809,16 @@ CleanUp:
     return retStatus;
 }
 
+static STATUS freeRtpPacketHashEntry(UINT64 customData, PHashEntry pEntry)
+{
+    UNUSED_PARAM(customData);
+    if (pEntry != NULL && pEntry->value != 0) {
+        PRtpPacket pPacket = (PRtpPacket) pEntry->value;
+        freeRtpPacket(&pPacket);
+    }
+    return STATUS_SUCCESS;
+}
+
 static STATUS defaultDestroy(PJitterBuffer* ppJitterBuffer)
 {
     ENTERS();
@@ -838,6 +848,11 @@ static STATUS defaultDestroy(PJitterBuffer* ppJitterBuffer)
         }
         defaultDropBufferData((PJitterBuffer) pInternal, pInternal->headSequenceNumber, pInternal->tailSequenceNumber, 0);
     }
+    // Free any RtpPackets that remain in the hash table. Reordered packets can be
+    // inserted with sequence numbers outside [headSequenceNumber, tailSequenceNumber]
+    // (e.g. a late packet arriving after its frame has already been delivered), and
+    // the range-based defaultDropBufferData above won't reach them.
+    hashTableIterateEntries(pInternal->pPkgBufferHashTable, 0, freeRtpPacketHashEntry);
     hashTableFree(pInternal->pPkgBufferHashTable);
 
     SAFE_MEMFREE(*ppJitterBuffer);
