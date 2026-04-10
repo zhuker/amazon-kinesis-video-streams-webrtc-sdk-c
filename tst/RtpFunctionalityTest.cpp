@@ -1019,6 +1019,118 @@ TEST_F(RtpFunctionalityTest, exactlyMaxNalusPerFrameSucceeds)
     EXPECT_GT(payloadArray.payloadSubLenSize, 0);
 }
 
+// Regression: depayH264FromRtpPayload's output `isStart` must reflect H.264 frame-start
+// semantics (SPS/PPS/SEI/AUD, or slice with first_mb_in_slice == 0), not just "any packet
+// that begins a NALU". Previously STAP-A / single-NAL packets returned TRUE unconditionally,
+// causing the jitter buffer to believe a frame had its start packet even when a leading
+// FU-A fragment had been lost.
+TEST_F(RtpFunctionalityTest, depayH264FrameStartDetection)
+{
+    BYTE depayBuf[2048];
+    UINT32 depayLen;
+    BOOL isStart;
+
+    // --- 1. Single-NAL SPS: frame start ---
+    {
+        BYTE pkt[] = {0x67, 0x42, 0x00, 0x1E}; // type=7 SPS
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_TRUE(isStart);
+    }
+
+    // --- 2. Single-NAL non-IDR slice with first_mb_in_slice == 0: frame start ---
+    // slice byte 1 = 0x80 -> first bit '1' -> ue(v) code 0 -> first_mb_in_slice = 0
+    {
+        BYTE pkt[] = {0x61, 0x80, 0x00, 0x00}; // type=1 slice
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_TRUE(isStart);
+    }
+
+    // --- 3. Single-NAL non-IDR slice with first_mb_in_slice != 0: NOT a frame start ---
+    // slice byte 1 = 0x40 -> bits '010' -> first zero, then '1' terminator, then 1 value bit '0'
+    // -> ue(v) code 1 -> first_mb_in_slice = 1
+    {
+        BYTE pkt[] = {0x61, 0x40, 0x00, 0x00};
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_FALSE(isStart);
+    }
+
+    // --- 4. STAP-A containing SPS + PPS: frame start ---
+    {
+        BYTE pkt[] = {
+            0x78,                   // STAP-A indicator (NRI=0x60 | 24)
+            0x00, 0x04,             // size=4
+            0x67, 0x42, 0x00, 0x1E, // SPS
+            0x00, 0x03,             // size=3
+            0x68, 0xCE, 0x38        // PPS
+        };
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_TRUE(isStart);
+    }
+
+    // --- 5. STAP-A containing only slices with first_mb_in_slice != 0: NOT a frame start ---
+    // This is the critical case that used to return TRUE incorrectly.
+    {
+        BYTE pkt[] = {
+            0x78,             // STAP-A indicator
+            0x00, 0x03,       // size=3
+            0x61, 0x40, 0x00, // slice, first_mb_in_slice = 1
+            0x00, 0x03,       // size=3
+            0x61, 0x40, 0x00  // slice, first_mb_in_slice = 1
+        };
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_FALSE(isStart);
+    }
+
+    // --- 6. FU-A start fragment of IDR slice with first_mb_in_slice == 0: frame start ---
+    {
+        BYTE pkt[] = {
+            0x7C,      // FU-A indicator (NRI=0x60 | 28)
+            0x85,      // FU header: S=1, type=5 (IDR)
+            0x80, 0x00 // slice_header: first_mb_in_slice=0
+        };
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_TRUE(isStart);
+    }
+
+    // --- 7. FU-A start fragment of slice with first_mb_in_slice != 0: NOT frame start ---
+    {
+        BYTE pkt[] = {
+            0x7C,      // FU-A indicator
+            0x81,      // FU header: S=1, type=1 (non-IDR slice)
+            0x40, 0x00 // first_mb_in_slice = 1
+        };
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_FALSE(isStart);
+    }
+
+    // --- 8. FU-A middle fragment: never a frame start ---
+    {
+        BYTE pkt[] = {
+            0x7C, // FU-A indicator
+            0x05, // FU header: S=0, E=0, type=5
+            0xFF, 0xFF
+        };
+        depayLen = sizeof(depayBuf);
+        isStart = TRUE;
+        EXPECT_EQ(STATUS_SUCCESS, depayH264FromRtpPayload(pkt, sizeof(pkt), depayBuf, &depayLen, &isStart));
+        EXPECT_FALSE(isStart);
+    }
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

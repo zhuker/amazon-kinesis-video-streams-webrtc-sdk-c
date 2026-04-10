@@ -15,6 +15,94 @@ typedef struct {
 // STAP-A format: 1 byte header + (2 bytes size + nalu data) for each NAL
 #define STAP_A_NALU_OVERHEAD 2 // 2 bytes for size field per NAL
 
+// Read the first unsigned Exp-Golomb ue(v) code from an H.264 RBSP bitstream.
+// pData points at the NALU byte *after* the 1-byte NALU header (i.e. start of the
+// slice_header RBSP). nBytes is the number of bytes available. Handles the
+// emulation-prevention byte (0x03 after two zero bytes) inline.
+// Returns TRUE on success and writes the decoded value to *pValue.
+static BOOL h264ReadUeGolomb(PBYTE pData, UINT32 nBytes, PUINT32 pValue)
+{
+    UINT32 bitPos = 0;
+    UINT32 zeroBits = 0;
+    UINT32 value = 0;
+    UINT32 i;
+    // Cap scan length — slice header's first_mb_in_slice is tiny; 8 bytes is plenty
+    // to cover any realistic leading zero run and the value bits. This also bounds work.
+    UINT32 maxBits = (nBytes < 8 ? nBytes : 8) * 8;
+
+    // Count leading zero bits
+    while (bitPos < maxBits) {
+        UINT32 byteIdx = bitPos >> 3;
+        // Skip emulation-prevention byte: when we see 00 00 03, the 03 must be dropped.
+        if (byteIdx >= 2 && pData[byteIdx] == 0x03 && pData[byteIdx - 1] == 0x00 && pData[byteIdx - 2] == 0x00) {
+            bitPos += 8;
+            continue;
+        }
+        if ((pData[byteIdx] >> (7 - (bitPos & 7))) & 1) {
+            break;
+        }
+        zeroBits++;
+        bitPos++;
+    }
+    if (bitPos >= maxBits || zeroBits >= 32) {
+        return FALSE;
+    }
+    bitPos++; // consume the terminating 1 bit
+    // Read `zeroBits` value bits
+    if (bitPos + zeroBits > maxBits) {
+        return FALSE;
+    }
+    for (i = 0; i < zeroBits; i++) {
+        UINT32 byteIdx = bitPos >> 3;
+        if (byteIdx >= 2 && pData[byteIdx] == 0x03 && pData[byteIdx - 1] == 0x00 && pData[byteIdx - 2] == 0x00) {
+            bitPos += 8;
+            if (bitPos + (zeroBits - i) > maxBits) {
+                return FALSE;
+            }
+            byteIdx = bitPos >> 3;
+        }
+        value = (value << 1) | ((pData[byteIdx] >> (7 - (bitPos & 7))) & 1);
+        bitPos++;
+    }
+    *pValue = (1u << zeroBits) - 1 + value;
+    return TRUE;
+}
+
+// Decide whether a single H.264 NALU marks the start of a new access unit (frame).
+// pNalu points to the NALU starting with its 1-byte header; naluLen is the total NALU length.
+// For VCL slices (types 1 and 5), returns TRUE only if slice_header.first_mb_in_slice == 0.
+// For SPS/PPS/SEI/AUD, returns TRUE unconditionally (they precede a new picture).
+static BOOL h264NaluIsFrameStart(PBYTE pNalu, UINT32 naluLen)
+{
+    UINT8 naluType;
+    UINT32 firstMb = 0;
+
+    if (pNalu == NULL || naluLen == 0) {
+        return FALSE;
+    }
+    naluType = *pNalu & NAL_TYPE_MASK;
+    switch (naluType) {
+        case H264_NALU_TYPE_SPS:
+        case H264_NALU_TYPE_PPS:
+        case H264_NALU_TYPE_SEI:
+        case H264_NALU_TYPE_AUD:
+            return TRUE;
+        case H264_NALU_TYPE_SLICE:
+        case H264_NALU_TYPE_IDR:
+            // slice_header starts right after the 1-byte NALU header.
+            // first_mb_in_slice is the first ue(v) code in the RBSP.
+            if (naluLen < 2) {
+                return FALSE;
+            }
+            if (!h264ReadUeGolomb(pNalu + 1, naluLen - 1, &firstMb)) {
+                return FALSE;
+            }
+            return firstMb == 0;
+        default:
+            return FALSE;
+    }
+}
+
 // Helper function to create a STAP-A packet from multiple NAL units
 static STATUS createStapAPayload(NaluInfo* pNaluInfos, UINT32 naluCount, PPayloadArray pPayloadArray, PUINT32 pFilledLength,
                                  PUINT32 pFilledSubLenSize)
@@ -456,6 +544,7 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
     UINT8 indicator = 0;
     BOOL sizeCalculationOnly = (pNaluData == NULL);
     BOOL isStartingPacket = FALSE;
+    BOOL isFrameStart = FALSE;
     PBYTE pCurPtr = pRawPacket;
     static BYTE start4ByteCode[] = {0x00, 0x00, 0x00, 0x01};
     static BYTE start3ByteCode[] = {0x00, 0x00, 0x01};
@@ -466,7 +555,9 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
     //   Input:  if non-NULL and *pIsStart == FALSE, this is NOT the first NAL in the frame
     //           -> use 3-byte start codes instead of 4-byte for the leading NAL.
     //           NULL or *pIsStart == TRUE -> use 4-byte (backward compatible default).
-    //   Output: set to TRUE if this packet starts a new NAL (FU-A start, single NAL, STAP).
+    //   Output: set to TRUE if this packet begins a new access unit (frame). For VCL slice
+    //           NALUs this requires slice_header.first_mb_in_slice == 0; for SPS/PPS/SEI/AUD
+    //           it is unconditional; for FU-A non-start fragments it is always FALSE.
     BOOL useShortStartCode = (pIsStart != NULL && *pIsStart == FALSE);
     PBYTE startCode = useShortStartCode ? start3ByteCode : start4ByteCode;
     UINT32 startCodeSize = useShortStartCode ? SIZEOF(start3ByteCode) : SIZEOF(start4ByteCode);
@@ -485,6 +576,20 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             isStartingPacket = (*pCurPtr & (1 << 7)) != 0;
             if (isStartingPacket) {
                 naluLength = packetLength - FU_A_HEADER_SIZE + 1;
+                // A FU-A start fragment is a frame start only if the underlying NALU
+                // type says so. For slice/IDR, parse first_mb_in_slice from the fragment
+                // payload (which begins at FU_A_HEADER_SIZE; the original NAL header was
+                // stripped by the packetizer, so slice_header bytes start there directly).
+                if (naluType == H264_NALU_TYPE_SPS || naluType == H264_NALU_TYPE_PPS || naluType == H264_NALU_TYPE_SEI ||
+                    naluType == H264_NALU_TYPE_AUD) {
+                    isFrameStart = TRUE;
+                } else if (naluType == H264_NALU_TYPE_SLICE || naluType == H264_NALU_TYPE_IDR) {
+                    UINT32 firstMb = 0;
+                    if (packetLength > FU_A_HEADER_SIZE &&
+                        h264ReadUeGolomb(pRawPacket + FU_A_HEADER_SIZE, packetLength - FU_A_HEADER_SIZE, &firstMb)) {
+                        isFrameStart = (firstMb == 0);
+                    }
+                }
             } else {
                 naluLength = packetLength - FU_A_HEADER_SIZE;
             }
@@ -502,6 +607,10 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
                 // First NAL in packet uses startCode (4-byte if first in frame, 3-byte otherwise),
                 // subsequent NALs in STAP always use 3-byte
                 naluLength += subNaluSize + (firstNaluInStap ? startCodeSize : SIZEOF(start3ByteCode));
+                // If any contained NALU is a frame start, this STAP-A begins a frame.
+                if (!isFrameStart && h264NaluIsFrameStart(pCurPtr, subNaluSize)) {
+                    isFrameStart = TRUE;
+                }
                 firstNaluInStap = FALSE;
                 pCurPtr += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
@@ -514,6 +623,9 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
                 subNaluSize = getUnalignedInt16BigEndian(pCurPtr);
                 pCurPtr += SIZEOF(UINT16);
                 naluLength += subNaluSize + (firstNaluInStap ? startCodeSize : SIZEOF(start3ByteCode));
+                if (!isFrameStart && h264NaluIsFrameStart(pCurPtr, subNaluSize)) {
+                    isFrameStart = TRUE;
+                }
                 firstNaluInStap = FALSE;
                 pCurPtr += subNaluSize;
             } while (subNaluSize > 0 && pCurPtr < pRawPacket + packetLength);
@@ -523,6 +635,7 @@ STATUS depayH264FromRtpPayload(PBYTE pRawPacket, UINT32 packetLength, PBYTE pNal
             // Single NALU https://tools.ietf.org/html/rfc6184#section-5.6
             naluLength = packetLength;
             isStartingPacket = TRUE;
+            isFrameStart = h264NaluIsFrameStart(pRawPacket, packetLength);
     }
 
     if (isStartingPacket && indicator != STAP_A_INDICATOR && indicator != STAP_B_INDICATOR) {
@@ -624,7 +737,7 @@ CleanUp:
     }
 
     if (pIsStart != NULL) {
-        *pIsStart = isStartingPacket;
+        *pIsStart = isFrameStart;
     }
 
     LEAVES();
