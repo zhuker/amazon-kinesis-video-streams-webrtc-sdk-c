@@ -2,6 +2,139 @@
 
 #include "../Include_i.h"
 
+#define RTCP_SENDER_REPORT_LEN   (RTCP_PACKET_HEADER_LEN + 24)
+#define RTCP_RECEIVER_REPORT_LEN (RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN)
+
+STATUS rtcpBuildSenderReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 currentTime, PBYTE pOutBuffer, PUINT32 pPacketLen)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT64 ntpTime, rtpTime;
+    UINT32 packetCount, octetCount, ssrc;
+
+    CHK(pKvsRtpTransceiver != NULL && pKvsRtpTransceiver->pJitterBuffer != NULL && pOutBuffer != NULL && pPacketLen != NULL, STATUS_NULL_ARG);
+    CHK(*pPacketLen >= RTCP_SENDER_REPORT_LEN, STATUS_BUFFER_TOO_SMALL);
+
+    // Only issue an SR if we have actually started sending media (see RFC 3550 §6.4).
+    // Signal "nothing to send" by setting *pPacketLen to 0.
+    if (pKvsRtpTransceiver->sender.firstFrameWallClockTime == 0 ||
+        currentTime - pKvsRtpTransceiver->sender.firstFrameWallClockTime < 2500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND) {
+        *pPacketLen = 0;
+        CHK(FALSE, retStatus);
+    }
+
+    ssrc = pKvsRtpTransceiver->sender.ssrc;
+    ntpTime = convertTimestampToNTP(currentTime);
+    rtpTime = pKvsRtpTransceiver->sender.rtpTimeOffset +
+        CONVERT_TIMESTAMP_TO_RTP(pKvsRtpTransceiver->pJitterBuffer->clockRate, currentTime - pKvsRtpTransceiver->sender.firstFrameWallClockTime);
+
+    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+    packetCount = pKvsRtpTransceiver->outboundStats.sent.packetsSent;
+    octetCount = pKvsRtpTransceiver->outboundStats.sent.bytesSent;
+    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
+
+    DLOGV("sender report %u %" PRIu64 " %" PRIu64 " : %u packets %u bytes", ssrc, ntpTime, rtpTime, packetCount, octetCount);
+
+    pOutBuffer[0] = RTCP_PACKET_VERSION_VAL << 6;
+    pOutBuffer[RTCP_PACKET_TYPE_OFFSET] = RTCP_PACKET_TYPE_SENDER_REPORT;
+    putUnalignedInt16BigEndian(pOutBuffer + RTCP_PACKET_LEN_OFFSET, (RTCP_SENDER_REPORT_LEN / RTCP_PACKET_LEN_WORD_SIZE) - 1);
+    putUnalignedInt32BigEndian(pOutBuffer + 4, ssrc);
+    putUnalignedInt64BigEndian(pOutBuffer + 8, ntpTime);
+    putUnalignedInt32BigEndian(pOutBuffer + 16, rtpTime);
+    putUnalignedInt32BigEndian(pOutBuffer + 20, packetCount);
+    putUnalignedInt32BigEndian(pOutBuffer + 24, octetCount);
+
+    *pPacketLen = RTCP_SENDER_REPORT_LEN;
+
+CleanUp:
+    LEAVES();
+    return retStatus;
+}
+
+STATUS rtcpBuildReceiverReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 currentTime, PBYTE pOutBuffer, PUINT32 pPacketLen)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    UINT32 rrExtMax, rrExpected, rrReceived, rrLost, rrExpectedInterval, rrReceivedInterval, rrLostInterval;
+    UINT8 rrFraction;
+    INT32 rrCumulativeLost;
+    UINT32 rrLastSRNtpMid;
+    UINT64 rrLastSRReceivedTime;
+    UINT32 ssrc;
+
+    CHK(pKvsRtpTransceiver != NULL && pKvsRtpTransceiver->pJitterBuffer != NULL && pOutBuffer != NULL && pPacketLen != NULL, STATUS_NULL_ARG);
+    CHK(*pPacketLen >= RTCP_RECEIVER_REPORT_LEN, STATUS_BUFFER_TOO_SMALL);
+
+    // Signal "nothing to send" by setting *pPacketLen to 0.
+    if (pKvsRtpTransceiver->jitterBufferSsrc == 0 || !pKvsRtpTransceiver->rrSeqInitialized) {
+        *pPacketLen = 0;
+        CHK(FALSE, retStatus);
+    }
+
+    ssrc = pKvsRtpTransceiver->sender.ssrc;
+
+    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+    rrExtMax = pKvsRtpTransceiver->rrCycles + pKvsRtpTransceiver->rrMaxSeq;
+    rrExpected = rrExtMax - pKvsRtpTransceiver->rrBaseSeq + 1;
+    rrReceived = (UINT32) pKvsRtpTransceiver->inboundStats.received.packetsReceived;
+    rrLost = rrExpected - rrReceived;
+
+    rrExpectedInterval = rrExpected - pKvsRtpTransceiver->rrExpectedPrior;
+    pKvsRtpTransceiver->rrExpectedPrior = rrExpected;
+    rrReceivedInterval = rrReceived - pKvsRtpTransceiver->rrReceivedPrior;
+    pKvsRtpTransceiver->rrReceivedPrior = rrReceived;
+    rrLostInterval = rrExpectedInterval - rrReceivedInterval;
+
+    if (rrExpectedInterval == 0 || rrLostInterval == 0) {
+        rrFraction = 0;
+    } else {
+        rrFraction = (UINT8) ((rrLostInterval << 8) / rrExpectedInterval);
+    }
+
+    // Clamp cumulative lost to 24-bit signed range [-0x800000, 0x7FFFFF] per RFC 3550 §A.3.
+    if ((INT32) rrLost > 0x7FFFFF) {
+        rrCumulativeLost = 0x7FFFFF;
+    } else if ((INT32) rrLost < -0x800000) {
+        rrCumulativeLost = -0x800000;
+    } else {
+        rrCumulativeLost = (INT32) rrLost;
+    }
+    rrLastSRNtpMid = pKvsRtpTransceiver->lastSRNtpMid;
+    rrLastSRReceivedTime = pKvsRtpTransceiver->lastSRReceivedTime;
+    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
+
+    MEMSET(pOutBuffer, 0, RTCP_RECEIVER_REPORT_LEN);
+    pOutBuffer[0] = (RTCP_PACKET_VERSION_VAL << 6) | 1; // V=2, RC=1
+    pOutBuffer[RTCP_PACKET_TYPE_OFFSET] = RTCP_PACKET_TYPE_RECEIVER_REPORT;
+    putUnalignedInt16BigEndian(pOutBuffer + RTCP_PACKET_LEN_OFFSET, (RTCP_RECEIVER_REPORT_LEN / RTCP_PACKET_LEN_WORD_SIZE) - 1);
+    putUnalignedInt32BigEndian(pOutBuffer + 4, ssrc); // sender SSRC (our SSRC)
+    // Report block
+    putUnalignedInt32BigEndian(pOutBuffer + 8, pKvsRtpTransceiver->jitterBufferSsrc); // SSRC_1 (source)
+    pOutBuffer[12] = rrFraction;
+    pOutBuffer[13] = (rrCumulativeLost >> 16) & 0xFF;
+    pOutBuffer[14] = (rrCumulativeLost >> 8) & 0xFF;
+    pOutBuffer[15] = rrCumulativeLost & 0xFF;
+    putUnalignedInt32BigEndian(pOutBuffer + 16, rrExtMax);                                             // extended highest sequence number
+    putUnalignedInt32BigEndian(pOutBuffer + 20, (UINT32) (pKvsRtpTransceiver->pJitterBuffer->jitter)); // interarrival jitter
+    putUnalignedInt32BigEndian(pOutBuffer + 24, rrLastSRNtpMid);                                       // LSR
+
+    // DLSR: delay since last SR in 1/65536 sec units
+    if (rrLastSRReceivedTime != 0) {
+        UINT64 dlsrTime = currentTime - rrLastSRReceivedTime;
+        UINT32 dlsr = (UINT32) KVS_CONVERT_TIMESCALE(dlsrTime, HUNDREDS_OF_NANOS_IN_A_SECOND, DLSR_TIMESCALE);
+        putUnalignedInt32BigEndian(pOutBuffer + 28, dlsr);
+    }
+
+    DLOGV("receiver report ssrc: %u src: %u frac: %u lost: %d seq: %u", ssrc, pKvsRtpTransceiver->jitterBufferSsrc, rrFraction, rrCumulativeLost,
+          rrExtMax);
+
+    *pPacketLen = RTCP_RECEIVER_REPORT_LEN;
+
+CleanUp:
+    LEAVES();
+    return retStatus;
+}
+
 // TODO handle FIR packet https://tools.ietf.org/html/rfc2032#section-5.2.1
 static STATUS onRtcpFIRPacket(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerConnection)
 {

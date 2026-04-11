@@ -16,6 +16,15 @@ STATUS updateTwccHashTable(PTwccManager, PINT64, PUINT64, PUINT64, PUINT64, PUIN
 STATUS sendRtcpPLI(PKvsPeerConnection pKvsPeerConnection, UINT32 senderSsrc, UINT32 mediaSsrc);
 STATUS sendRtcpFIR(PKvsPeerConnection pKvsPeerConnection, UINT32 senderSsrc, UINT32 mediaSsrc, UINT8* pSeqNum);
 
+// Build unencrypted RTCP Sender Report into pOutBuffer; on success *pPacketLen holds bytes written.
+// Returns STATUS_SUCCESS if a report was written, STATUS_NOT_READY if the transceiver has not yet sent
+// any media (no SR is emitted in that case).
+STATUS rtcpBuildSenderReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 currentTime, PBYTE pOutBuffer, PUINT32 pPacketLen);
+
+// Build unencrypted RTCP Receiver Report into pOutBuffer; on success *pPacketLen holds bytes written.
+// Returns STATUS_SUCCESS if a report was written, STATUS_NOT_READY if nothing has been received yet.
+STATUS rtcpBuildReceiverReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 currentTime, PBYTE pOutBuffer, PUINT32 pPacketLen);
+
 // TWCC feedback generation (receiver side)
 STATUS createTwccReceiverManager(PTwccReceiverManager* ppManager);
 STATUS freeTwccReceiverManager(PTwccReceiverManager* ppManager);
