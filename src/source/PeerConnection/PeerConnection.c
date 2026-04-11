@@ -368,12 +368,14 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
         pTransceiver = (PKvsRtpTransceiver) item;
 
         if (pTransceiver->jitterBufferSsrc == ssrc) {
+            BOOL firstPacket = !pTransceiver->rrSeqInitialized;
             packetsReceived++;
 
-            if (!pTransceiver->rrSeqInitialized) {
+            if (firstPacket) {
                 rrInitSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
+            } else {
+                rrUpdateSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
             }
-            rrUpdateSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
 
             // https://tools.ietf.org/html/rfc3550#section-6.4.1
             // https://tools.ietf.org/html/rfc3550#appendix-A.8
@@ -383,9 +385,15 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
             arrival = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, pTransceiver->pJitterBuffer->clockRate);
             r_ts = pRtpPacket->header.timestamp;
             transit = arrival - r_ts;
-            delta = transit - pTransceiver->pJitterBuffer->transit;
-            pTransceiver->pJitterBuffer->transit = transit;
-            pTransceiver->pJitterBuffer->jitter += (1. / 16.) * ((DOUBLE) ABS(delta) - pTransceiver->pJitterBuffer->jitter);
+            if (firstPacket) {
+                // RFC 3550 §A.8: seed transit on first packet, skip the D(i-1,i) update.
+                pTransceiver->pJitterBuffer->transit = (UINT64) transit;
+                pTransceiver->pJitterBuffer->jitter = 0.0;
+            } else {
+                delta = transit - (INT64) pTransceiver->pJitterBuffer->transit;
+                pTransceiver->pJitterBuffer->transit = (UINT64) transit;
+                pTransceiver->pJitterBuffer->jitter += (ABS(delta) - pTransceiver->pJitterBuffer->jitter) / 16.0;
+            }
 
             headerBytesReceived += RTP_HEADER_LEN(pRtpPacket);
             bytesReceived += pRtpPacket->rawPacketLength - RTP_HEADER_LEN(pRtpPacket);
@@ -878,15 +886,44 @@ CleanUp:
     return retStatus;
 }
 
+// srtp_protect_rtcp() needs room for auth tag + SRTP trailer past the RTCP payload.
+#define RTCP_SRTP_ENCRYPT_OVERHEAD (SRTP_AUTH_TAG_OVERHEAD + SRTP_MAX_TRAILER_LEN + 4)
+
+// Max builder output: RR (4 header + 4 sender SSRC + 24 report block = 32)
+// is larger than SR (4 header + 24 body = 28).
+#define RTCP_MAX_REPORT_BODY_LEN (RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN)
+
+static STATUS sendBuiltRtcpReport(PKvsPeerConnection pKvsPeerConnection, PBYTE pReportBody, UINT32 reportLen)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PBYTE rawPacket = NULL;
+    UINT32 allocSize = reportLen + RTCP_SRTP_ENCRYPT_OVERHEAD;
+    UINT32 encryptLen = reportLen;
+
+    CHK(NULL != (rawPacket = (PBYTE) MEMALLOC(allocSize)), STATUS_NOT_ENOUGH_MEMORY);
+    MEMCPY(rawPacket, pReportBody, reportLen);
+
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, rawPacket, reportLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
+    }
+
+    CHK_STATUS(encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &encryptLen));
+    CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, encryptLen));
+
+CleanUp:
+    SAFE_MEMFREE(rawPacket);
+    return retStatus;
+}
+
 STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData)
 {
     ENTERS();
     UNUSED_PARAM(timerId);
     STATUS retStatus = STATUS_SUCCESS;
-    BOOL ready = FALSE;
-    UINT64 ntpTime, rtpTime, delay;
-    UINT32 packetCount, octetCount, packetLen, allocSize, ssrc;
-    PBYTE rawPacket = NULL;
+    UINT64 delay;
+    UINT32 ssrc;
+    BYTE reportBody[RTCP_MAX_REPORT_BODY_LEN];
+    UINT32 reportLen;
     PKvsPeerConnection pKvsPeerConnection = NULL;
 
     PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) customData;
@@ -896,130 +933,21 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
     ssrc = pKvsRtpTransceiver->sender.ssrc;
     DLOGS("rtcpReportsCallback %" PRIu64 " ssrc: %u rtxssrc: %u", currentTime, ssrc, pKvsRtpTransceiver->sender.rtxSsrc);
 
-    // check if ice agent is connected, reschedule in 200msec if not
-    ready = pKvsPeerConnection->pSrtpSession != NULL && pKvsRtpTransceiver->sender.firstFrameWallClockTime != 0 &&
-        currentTime - pKvsRtpTransceiver->sender.firstFrameWallClockTime >= 2500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
-    if (!ready) {
-        DLOGV("sender report no frames sent %u", ssrc);
-    } else {
-        // create rtcp sender report packet
-        // https://tools.ietf.org/html/rfc3550#section-6.4.1
-        ntpTime = convertTimestampToNTP(currentTime);
-        rtpTime = pKvsRtpTransceiver->sender.rtpTimeOffset +
-            CONVERT_TIMESTAMP_TO_RTP(pKvsRtpTransceiver->pJitterBuffer->clockRate, currentTime - pKvsRtpTransceiver->sender.firstFrameWallClockTime);
-        MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
-        packetCount = pKvsRtpTransceiver->outboundStats.sent.packetsSent;
-        octetCount = pKvsRtpTransceiver->outboundStats.sent.bytesSent;
-        MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
-        DLOGV("sender report %u %" PRIu64 " %" PRIu64 " : %u packets %u bytes", ssrc, ntpTime, rtpTime, packetCount, octetCount);
-        packetLen = RTCP_PACKET_HEADER_LEN + 24;
-
-        // srtp_protect_rtcp() in encryptRtcpPacket() assumes memory availability to write 10 bytes of authentication tag and
-        // SRTP_MAX_TRAILER_LEN + 4 following the actual rtcp Packet payload
-        allocSize = packetLen + SRTP_AUTH_TAG_OVERHEAD + SRTP_MAX_TRAILER_LEN + 4;
-        CHK(NULL != (rawPacket = (PBYTE) MEMALLOC(allocSize)), STATUS_NOT_ENOUGH_MEMORY);
-        rawPacket[0] = RTCP_PACKET_VERSION_VAL << 6;
-        rawPacket[RTCP_PACKET_TYPE_OFFSET] = RTCP_PACKET_TYPE_SENDER_REPORT;
-        putUnalignedInt16BigEndian(rawPacket + RTCP_PACKET_LEN_OFFSET,
-                                   (packetLen / RTCP_PACKET_LEN_WORD_SIZE) - 1); // The length of this RTCP packet in 32-bit words minus one
-        putUnalignedInt32BigEndian(rawPacket + 4, ssrc);
-        putUnalignedInt64BigEndian(rawPacket + 8, ntpTime);
-        putUnalignedInt32BigEndian(rawPacket + 16, rtpTime);
-        putUnalignedInt32BigEndian(rawPacket + 20, packetCount);
-        putUnalignedInt32BigEndian(rawPacket + 24, octetCount);
-
-        // PCAP: capture unencrypted outbound RTCP (Sender Report)
-        if (pKvsPeerConnection->pPcapDump != NULL) {
-            pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, rawPacket, packetLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
-        }
-
-        CHK_STATUS(encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
-        CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen));
-    }
-
-    // Send RTCP Receiver Report if we are receiving media on this transceiver
-    if (pKvsPeerConnection->pSrtpSession != NULL && pKvsRtpTransceiver->jitterBufferSsrc != 0 && pKvsRtpTransceiver->rrSeqInitialized) {
-        UINT32 rrExtMax, rrExpected, rrReceived, rrLost, rrExpectedInterval, rrReceivedInterval, rrLostInterval;
-        UINT8 rrFraction;
-        INT32 rrCumulativeLost;
-        UINT32 rrPacketLen;
-        UINT32 rrLastSRNtpMid;
-        UINT64 rrLastSRReceivedTime;
-        BYTE rrPacket[RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN]; // header + sender SSRC + 1 report block
-
-        MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
-        rrExtMax = pKvsRtpTransceiver->rrCycles + pKvsRtpTransceiver->rrMaxSeq;
-        rrExpected = rrExtMax - pKvsRtpTransceiver->rrBaseSeq + 1;
-        rrReceived = (UINT32) pKvsRtpTransceiver->inboundStats.received.packetsReceived;
-
-        rrLost = rrExpected - rrReceived;
-
-        rrExpectedInterval = rrExpected - pKvsRtpTransceiver->rrExpectedPrior;
-        pKvsRtpTransceiver->rrExpectedPrior = rrExpected;
-        rrReceivedInterval = rrReceived - pKvsRtpTransceiver->rrReceivedPrior;
-        pKvsRtpTransceiver->rrReceivedPrior = rrReceived;
-        rrLostInterval = rrExpectedInterval - rrReceivedInterval;
-
-        if (rrExpectedInterval == 0 || rrLostInterval == 0) {
-            rrFraction = 0;
+    if (pKvsPeerConnection->pSrtpSession != NULL) {
+        // Sender Report — only emitted once media has been sent (RFC 3550 §6.4)
+        reportLen = sizeof(reportBody);
+        CHK_STATUS(rtcpBuildSenderReport(pKvsRtpTransceiver, currentTime, reportBody, &reportLen));
+        if (reportLen > 0) {
+            CHK_STATUS(sendBuiltRtcpReport(pKvsPeerConnection, reportBody, reportLen));
         } else {
-            rrFraction = (UINT8) ((rrLostInterval << 8) / rrExpectedInterval);
+            DLOGV("sender report no frames sent %u", ssrc);
         }
 
-        // Clamp cumulative lost to 24-bit signed range [-0x800000, 0x7FFFFF]
-        if ((INT32) rrLost > 0x7FFFFF) {
-            rrCumulativeLost = 0x7FFFFF;
-        } else if ((INT32) rrLost < -0x800000) {
-            rrCumulativeLost = -0x800000;
-        } else {
-            rrCumulativeLost = (INT32) rrLost;
-        }
-        rrLastSRNtpMid = pKvsRtpTransceiver->lastSRNtpMid;
-        rrLastSRReceivedTime = pKvsRtpTransceiver->lastSRReceivedTime;
-        MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
-
-        rrPacketLen = sizeof(rrPacket);
-        MEMSET(rrPacket, 0, rrPacketLen);
-        rrPacket[0] = (RTCP_PACKET_VERSION_VAL << 6) | 1; // V=2, RC=1
-        rrPacket[RTCP_PACKET_TYPE_OFFSET] = RTCP_PACKET_TYPE_RECEIVER_REPORT;
-        putUnalignedInt16BigEndian(rrPacket + RTCP_PACKET_LEN_OFFSET, (rrPacketLen / RTCP_PACKET_LEN_WORD_SIZE) - 1);
-        putUnalignedInt32BigEndian(rrPacket + 4, ssrc); // sender SSRC (our SSRC)
-        // Report block
-        putUnalignedInt32BigEndian(rrPacket + 8, pKvsRtpTransceiver->jitterBufferSsrc); // SSRC_1 (source)
-        rrPacket[12] = rrFraction;
-        rrPacket[13] = (rrCumulativeLost >> 16) & 0xFF;
-        rrPacket[14] = (rrCumulativeLost >> 8) & 0xFF;
-        rrPacket[15] = rrCumulativeLost & 0xFF;
-        putUnalignedInt32BigEndian(rrPacket + 16, rrExtMax);                                             // extended highest sequence number
-        putUnalignedInt32BigEndian(rrPacket + 20, (UINT32) (pKvsRtpTransceiver->pJitterBuffer->jitter)); // interarrival jitter
-        putUnalignedInt32BigEndian(rrPacket + 24, rrLastSRNtpMid);                                       // LSR
-
-        // DLSR: delay since last SR in 1/65536 sec units
-        if (rrLastSRReceivedTime != 0) {
-            UINT64 dlsrTime = currentTime - rrLastSRReceivedTime;
-            UINT32 dlsr = (UINT32) KVS_CONVERT_TIMESCALE(dlsrTime, HUNDREDS_OF_NANOS_IN_A_SECOND, DLSR_TIMESCALE);
-            putUnalignedInt32BigEndian(rrPacket + 28, dlsr);
-        }
-
-        DLOGV("receiver report ssrc: %u src: %u frac: %u lost: %d seq: %u", ssrc, pKvsRtpTransceiver->jitterBufferSsrc, rrFraction, rrCumulativeLost,
-              rrExtMax);
-        {
-            UINT32 rrAllocSize = rrPacketLen + SRTP_AUTH_TAG_OVERHEAD + SRTP_MAX_TRAILER_LEN + 4;
-            PBYTE rrRawPacket = (PBYTE) MEMALLOC(rrAllocSize);
-            CHK(rrRawPacket != NULL, STATUS_NOT_ENOUGH_MEMORY);
-            MEMCPY(rrRawPacket, rrPacket, rrPacketLen);
-
-            // PCAP: capture unencrypted outbound RTCP (Receiver Report)
-            if (pKvsPeerConnection->pPcapDump != NULL) {
-                pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, rrRawPacket, rrPacketLen, TRUE, PCAP_PACKET_DIRECTION_SEND);
-            }
-
-            retStatus = encryptRtcpPacket(pKvsPeerConnection->pSrtpSession, rrRawPacket, (PINT32) &rrPacketLen);
-            if (STATUS_SUCCEEDED(retStatus)) {
-                retStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rrRawPacket, rrPacketLen);
-            }
-            SAFE_MEMFREE(rrRawPacket);
-            CHK_STATUS(retStatus);
+        // Receiver Report — only if we are actually receiving media on this transceiver
+        reportLen = sizeof(reportBody);
+        CHK_STATUS(rtcpBuildReceiverReport(pKvsRtpTransceiver, currentTime, reportBody, &reportLen));
+        if (reportLen > 0) {
+            CHK_STATUS(sendBuiltRtcpReport(pKvsPeerConnection, reportBody, reportLen));
         }
     }
 
@@ -1032,7 +960,6 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
 
 CleanUp:
     CHK_LOG_ERR(retStatus);
-    SAFE_MEMFREE(rawPacket);
 
     LEAVES();
     return retStatus;
