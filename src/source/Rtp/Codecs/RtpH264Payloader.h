@@ -21,6 +21,14 @@ extern "C" {
 #define STAP_B_INDICATOR     25
 #define NAL_TYPE_MASK        31
 
+// H.264 NALU types (ITU-T H.264 Table 7-1) used for frame-start detection
+#define H264_NALU_TYPE_SLICE 1
+#define H264_NALU_TYPE_IDR   5
+#define H264_NALU_TYPE_SEI   6
+#define H264_NALU_TYPE_SPS   7
+#define H264_NALU_TYPE_PPS   8
+#define H264_NALU_TYPE_AUD   9
+
 /*
  *   0                   1                   2                   3
  *   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
