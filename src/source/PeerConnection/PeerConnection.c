@@ -368,12 +368,14 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
         pTransceiver = (PKvsRtpTransceiver) item;
 
         if (pTransceiver->jitterBufferSsrc == ssrc) {
+            BOOL firstPacket = !pTransceiver->rrSeqInitialized;
             packetsReceived++;
 
-            if (!pTransceiver->rrSeqInitialized) {
+            if (firstPacket) {
                 rrInitSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
+            } else {
+                rrUpdateSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
             }
-            rrUpdateSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
 
             // https://tools.ietf.org/html/rfc3550#section-6.4.1
             // https://tools.ietf.org/html/rfc3550#appendix-A.8
@@ -383,9 +385,15 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
             arrival = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, pTransceiver->pJitterBuffer->clockRate);
             r_ts = pRtpPacket->header.timestamp;
             transit = arrival - r_ts;
-            delta = transit - pTransceiver->pJitterBuffer->transit;
-            pTransceiver->pJitterBuffer->transit = transit;
-            pTransceiver->pJitterBuffer->jitter += (1. / 16.) * ((DOUBLE) ABS(delta) - pTransceiver->pJitterBuffer->jitter);
+            if (firstPacket) {
+                // RFC 3550 §A.8: seed transit on first packet, skip the D(i-1,i) update.
+                pTransceiver->pJitterBuffer->transit = (UINT64) transit;
+                pTransceiver->pJitterBuffer->jitter = 0.0;
+            } else {
+                delta = transit - (INT64) pTransceiver->pJitterBuffer->transit;
+                pTransceiver->pJitterBuffer->transit = (UINT64) transit;
+                pTransceiver->pJitterBuffer->jitter += (ABS(delta) - pTransceiver->pJitterBuffer->jitter) / 16.0;
+            }
 
             headerBytesReceived += RTP_HEADER_LEN(pRtpPacket);
             bytesReceived += pRtpPacket->rawPacketLength - RTP_HEADER_LEN(pRtpPacket);

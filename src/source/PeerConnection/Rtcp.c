@@ -55,7 +55,8 @@ STATUS rtcpBuildReceiverReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 cur
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
-    UINT32 rrExtMax, rrExpected, rrReceived, rrLost, rrExpectedInterval, rrReceivedInterval, rrLostInterval;
+    UINT32 rrExtMax, rrExpected, rrReceived, rrExpectedInterval, rrReceivedInterval;
+    INT32 rrLostInterval;
     UINT8 rrFraction;
     INT32 rrCumulativeLost;
     UINT32 rrLastSRNtpMid;
@@ -77,27 +78,27 @@ STATUS rtcpBuildReceiverReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 cur
     rrExtMax = pKvsRtpTransceiver->rrCycles + pKvsRtpTransceiver->rrMaxSeq;
     rrExpected = rrExtMax - pKvsRtpTransceiver->rrBaseSeq + 1;
     rrReceived = (UINT32) pKvsRtpTransceiver->inboundStats.received.packetsReceived;
-    rrLost = rrExpected - rrReceived;
 
     rrExpectedInterval = rrExpected - pKvsRtpTransceiver->rrExpectedPrior;
     pKvsRtpTransceiver->rrExpectedPrior = rrExpected;
     rrReceivedInterval = rrReceived - pKvsRtpTransceiver->rrReceivedPrior;
     pKvsRtpTransceiver->rrReceivedPrior = rrReceived;
-    rrLostInterval = rrExpectedInterval - rrReceivedInterval;
+    // RFC 3550 §A.3: compute lost_interval signed; duplicates/reorder make it <= 0.
+    rrLostInterval = (INT32) rrExpectedInterval - (INT32) rrReceivedInterval;
 
-    if (rrExpectedInterval == 0 || rrLostInterval == 0) {
+    if (rrExpectedInterval == 0 || rrLostInterval <= 0) {
         rrFraction = 0;
     } else {
-        rrFraction = (UINT8) ((rrLostInterval << 8) / rrExpectedInterval);
+        rrFraction = (UINT8) (((UINT32) rrLostInterval << 8) / rrExpectedInterval);
     }
 
-    // Clamp cumulative lost to 24-bit signed range [-0x800000, 0x7FFFFF] per RFC 3550 §A.3.
-    if ((INT32) rrLost > 0x7FFFFF) {
+    // Cumulative lost is a signed 24-bit value per RFC 3550 §6.4.1 (duplicates
+    // can make it negative). Clamp to the 24-bit signed range.
+    rrCumulativeLost = (INT32) rrExpected - (INT32) rrReceived;
+    if (rrCumulativeLost > 0x7FFFFF) {
         rrCumulativeLost = 0x7FFFFF;
-    } else if ((INT32) rrLost < -0x800000) {
+    } else if (rrCumulativeLost < -0x800000) {
         rrCumulativeLost = -0x800000;
-    } else {
-        rrCumulativeLost = (INT32) rrLost;
     }
     rrLastSRNtpMid = pKvsRtpTransceiver->lastSRNtpMid;
     rrLastSRReceivedTime = pKvsRtpTransceiver->lastSRReceivedTime;

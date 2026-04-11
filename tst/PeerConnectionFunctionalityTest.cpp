@@ -2587,6 +2587,9 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
             << "Remote inbound video packetsReceived " << videoRemote.received.packetsReceived << " expected ~" << videoPacketsSent;
         EXPECT_EQ(videoRemote.received.packetsLost, 0) << "Remote inbound video packetsLost " << videoRemote.received.packetsLost;
         EXPECT_GE(videoRemote.received.jitter, 0.0) << "Remote inbound video jitter is negative";
+        // Localhost jitter should be sub-millisecond; a first-packet EWMA seed bug
+        // produces ~47 000 s from a UINT32-saturated wire value.
+        EXPECT_LT(videoRemote.received.jitter, 1.0) << "Remote inbound video jitter " << videoRemote.received.jitter << "s";
         EXPECT_EQ(videoRemote.fractionLost, 0.0) << "Remote inbound video fractionLost " << videoRemote.fractionLost;
 
         // Audio remote inbound
@@ -2602,6 +2605,7 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
             << "Remote inbound audio packetsReceived " << audioRemote.received.packetsReceived << " expected ~" << audioPacketsSent;
         EXPECT_EQ(audioRemote.received.packetsLost, 0) << "Remote inbound audio packetsLost " << audioRemote.received.packetsLost;
         EXPECT_GE(audioRemote.received.jitter, 0.0) << "Remote inbound audio jitter is negative";
+        EXPECT_LT(audioRemote.received.jitter, 1.0) << "Remote inbound audio jitter " << audioRemote.received.jitter << "s";
         EXPECT_EQ(audioRemote.fractionLost, 0.0) << "Remote inbound audio fractionLost " << audioRemote.fractionLost;
     }
 

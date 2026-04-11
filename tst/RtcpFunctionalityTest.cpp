@@ -1074,6 +1074,138 @@ TEST_F(RtcpFunctionalityTest, remoteOutboundStatsFromSRWithRRBlocks)
     freePeerConnection(&pRtcPeerConnection);
 }
 
+// Helpers to decode fields written by rtcpBuildReceiverReport.
+// Byte layout after the 4-byte RTCP header + 4-byte sender SSRC:
+//   [8..11]  SSRC_1
+//   [12]     fraction lost
+//   [13..15] cumulative lost (signed 24-bit)
+//   [16..19] extended highest seq num
+//   [20..23] interarrival jitter
+//   [24..27] LSR
+//   [28..31] DLSR
+static UINT8 rrBlockFracLost(BYTE* buf)
+{
+    return buf[12];
+}
+static INT32 rrBlockCumLost(BYTE* buf)
+{
+    UINT32 u = ((UINT32) buf[13] << 16) | ((UINT32) buf[14] << 8) | buf[15];
+    return (u & 0x800000u) ? (INT32) (u | 0xFF000000u) : (INT32) u;
+}
+static UINT32 rrBlockJitter(BYTE* buf)
+{
+    return getUnalignedInt32BigEndian(buf + 20);
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportReorderedDuplicate)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+    pT->jitterBufferSsrc = 0xabcd1234;
+
+    // Previous interval: 100 expected, 100 received.
+    pT->rrBaseSeq = 0;
+    pT->rrMaxSeq = 199; // rrExpected = 200
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 100;
+    pT->rrReceivedPrior = 100;
+    pT->rrSeqInitialized = TRUE;
+
+    // This interval: 100 expected, 101 received — one reordered duplicate.
+    pT->inboundStats.received.packetsReceived = 201;
+
+    BYTE buf[64];
+    UINT32 len = sizeof(buf);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildReceiverReport(pT, GETTIME(), buf, &len));
+    EXPECT_EQ(32u, len);
+    EXPECT_EQ(0u, rrBlockFracLost(buf)) << "underflow produced pseudo-random fraction";
+    INT32 cum = rrBlockCumLost(buf);
+    EXPECT_TRUE(cum == -1 || cum == 0) << "cum_lost " << cum << " not in {-1, 0}";
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, receiverReportFirstReportEmitsZeroJitter)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+    pT->jitterBufferSsrc = 0xabcd1234;
+
+    pT->rrBaseSeq = 0;
+    pT->rrMaxSeq = 9;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+    pT->inboundStats.received.packetsReceived = 10;
+    pT->pJitterBuffer->jitter = 0.0;
+
+    BYTE buf[64];
+    UINT32 len = sizeof(buf);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildReceiverReport(pT, GETTIME(), buf, &len));
+    EXPECT_EQ(32u, len);
+    EXPECT_EQ(0u, rrBlockFracLost(buf));
+    EXPECT_EQ(0, rrBlockCumLost(buf));
+    EXPECT_EQ(0u, rrBlockJitter(buf));
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+TEST_F(RtcpFunctionalityTest, jitterFirstPacketDoesNotSpike)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+
+    // Simulate the seeding path of sendPacketToRtpReceiver for the first packet.
+    // The pre-fix bug: delta = transit - 0 (huge), jitter seeded with |delta|/16.
+    // The fix: on !rrSeqInitialized, set transit=transit and jitter=0.
+    UINT64 now = GETTIME();
+    INT64 arrival = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, pT->pJitterBuffer->clockRate);
+    INT64 r_ts = 12345;
+    INT64 transit = arrival - r_ts;
+
+    // First packet — must behave as sendPacketToRtpReceiver does now.
+    EXPECT_FALSE(pT->rrSeqInitialized);
+    pT->rrBaseSeq = 100;
+    pT->rrMaxSeq = 100;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+    pT->pJitterBuffer->transit = (UINT64) transit;
+    pT->pJitterBuffer->jitter = 0.0;
+    pT->inboundStats.received.packetsReceived = 1;
+    pT->jitterBufferSsrc = 0xabcd1234;
+
+    BYTE buf[64];
+    UINT32 len = sizeof(buf);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildReceiverReport(pT, now, buf, &len));
+    EXPECT_EQ(0u, rrBlockJitter(buf)) << "first-packet jitter must be zero";
+
+    // Second packet ~20 ms later: small delta, EWMA stays bounded.
+    UINT64 later = now + 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    INT64 arrival2 = KVS_CONVERT_TIMESCALE(later, HUNDREDS_OF_NANOS_IN_A_SECOND, pT->pJitterBuffer->clockRate);
+    INT64 r_ts2 = r_ts + (pT->pJitterBuffer->clockRate * 20 / 1000); // 20 ms in RTP ticks
+    INT64 transit2 = arrival2 - r_ts2;
+    INT64 delta = transit2 - (INT64) pT->pJitterBuffer->transit;
+    pT->pJitterBuffer->transit = (UINT64) transit2;
+    pT->pJitterBuffer->jitter += (ABS(delta) - pT->pJitterBuffer->jitter) / 16.0;
+    pT->inboundStats.received.packetsReceived = 2;
+    pT->rrMaxSeq = 101;
+
+    len = sizeof(buf);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildReceiverReport(pT, later, buf, &len));
+    UINT32 jitter = rrBlockJitter(buf);
+    // Generous upper bound — ~100 ms worth of RTP ticks. The pre-fix bug
+    // produced values in the 10^9+ range.
+    EXPECT_LT(jitter, pT->pJitterBuffer->clockRate / 10u) << "jitter " << jitter << " exceeds 100 ms bound";
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis
