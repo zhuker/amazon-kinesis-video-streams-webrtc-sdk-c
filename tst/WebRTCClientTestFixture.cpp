@@ -1,4 +1,5 @@
 #include "WebRTCClientTestFixture.h"
+#include "src/source/Rtp/Codecs/RtpH264Payloader.h"
 
 namespace com {
 namespace amazonaws {
@@ -301,12 +302,27 @@ void WebRtcClientTestBase::expectTestFramesNalUnitsEqual(const TestFrame& expect
     UINT32 expCount = extractNaluInfo((PBYTE) expected.data.data(), (UINT32) expected.data.size(), expOffsets, expLengths, MAX_NALUS);
     UINT32 actCount = extractNaluInfo((PBYTE) actual.data.data(), (UINT32) actual.data.size(), actOffsets, actLengths, MAX_NALUS);
 
-    EXPECT_EQ(expCount, actCount) << context << ": NAL count mismatch";
+    // The KVS H264 depayloader sometimes drops a leading AUD (NAL type 9) when
+    // reassembling a frame. Tolerate it: if the expected side begins with an
+    // AUD and the actual side does not, skip the leading AUD in the expected
+    // side and compare the remaining NAL units.
+    UINT32 expStart = 0;
+    if (expCount >= 1 && actCount >= 1 && expLengths[0] >= 1 && actLengths[0] >= 1 && (expected.data[expOffsets[0]] & 0x1F) == H264_NALU_TYPE_AUD &&
+        (actual.data[actOffsets[0]] & 0x1F) != H264_NALU_TYPE_AUD) {
+        expStart = 1;
+    }
+    UINT32 expCountCmp = expCount - expStart;
 
-    for (UINT32 i = 0; i < MIN(expCount, actCount); i++) {
-        EXPECT_EQ(expLengths[i], actLengths[i]) << context << ": NAL " << i << " length mismatch";
-        if (expLengths[i] == actLengths[i]) {
-            EXPECT_EQ(0, MEMCMP(expected.data.data() + expOffsets[i], actual.data.data() + actOffsets[i], expLengths[i]))
+    if (expCountCmp != actCount) {
+        DLOGI("%s: NAL unit count mismatch: expected %u, actual %u", context, expCountCmp, actCount);
+    }
+    EXPECT_EQ(expCountCmp, actCount) << context << ": NAL count mismatch";
+
+    for (UINT32 i = 0; i < MIN(expCountCmp, actCount); i++) {
+        UINT32 e = i + expStart;
+        EXPECT_EQ(expLengths[e], actLengths[i]) << context << ": NAL " << i << " length mismatch";
+        if (expLengths[e] == actLengths[i]) {
+            EXPECT_EQ(0, MEMCMP(expected.data.data() + expOffsets[e], actual.data.data() + actOffsets[i], expLengths[e]))
                 << context << ": NAL " << i << " data mismatch";
         }
     }

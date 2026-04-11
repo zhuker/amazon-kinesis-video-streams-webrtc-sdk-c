@@ -812,6 +812,45 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         };
     }
 
+    // For every received FULL frame whose source had no packet loss, verify that
+    // the reassembled NAL units match the original frame's NAL units byte-for-byte
+    // via the shared expectTestFramesNalUnitsEqual helper. Skips frames with any
+    // dropped packets (content comparison is not meaningful there).
+    void verifyReceivedFramesMatchOriginals(const std::set<UINT32>& dropIndices) const
+    {
+        std::map<UINT32, UINT32> tsToFrameIdx;
+        std::map<UINT32, UINT32> droppedPerFrame;
+        for (UINT32 i = 0; i < mAllPackets.size(); i++) {
+            UINT32 frameIdx = mAllPackets[i].frameIndex;
+            tsToFrameIdx[mAllPackets[i].timestamp] = frameIdx;
+            if (dropIndices.find(i) != dropIndices.end()) {
+                droppedPerFrame[frameIdx]++;
+            }
+        }
+
+        UINT32 compared = 0;
+        for (const auto& f : mReceivedFrames) {
+            if (f.flags != TEST_FRAME_FULL) {
+                continue;
+            }
+            UINT32 ts = (UINT32) f.sendPts;
+            auto itIdx = tsToFrameIdx.find(ts);
+            if (itIdx == tsToFrameIdx.end()) {
+                ADD_FAILURE() << "Received FULL frame ts=" << ts << " has no matching source frame";
+                continue;
+            }
+            UINT32 frameIdx = itIdx->second;
+            if (droppedPerFrame[frameIdx] != 0) {
+                continue;
+            }
+            ASSERT_LT(frameIdx, mOriginalFrames.size());
+            std::string ctx = "frame " + std::to_string(frameIdx) + " (ts=" + std::to_string(ts) + ")";
+            expectTestFramesNalUnitsEqual(mOriginalFrames[frameIdx], f, ctx.c_str());
+            compared++;
+        }
+        DLOGI("verifyReceivedFramesMatchOriginals: compared %u frames NAL-by-NAL", compared);
+    }
+
     // Parameterized packet loss test with optional reordering and custom drop pattern
     // @param sampleFolder - folder containing h264 sample frames
     // @param numFrames - number of frames to load and test
@@ -912,6 +951,10 @@ class H264JitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         // Not EQ because partiallyDelivered frames may be dropped if blocked behind a stale head.
         UINT32 maxExpectedReceived = analysis.framesIntact + analysis.framesPartiallyDelivered;
         EXPECT_LE(receivedAfterFlush, maxExpectedReceived) << "More frames received than possible";
+
+        if (!isDefaultLowLatency) {
+            verifyReceivedFramesMatchOriginals(dropIndices);
+        }
     }
 };
 
@@ -926,7 +969,7 @@ TEST_P(H264JitterBufferIntegrationTest, perfectDeliveryAllFramesReceived)
 TEST_P(H264JitterBufferIntegrationTest, packetReorderingAllFramesRecovered)
 {
     runPacketLossTest("../samples/girH264", 1000, randomLoss(0.0), 5);
-    // runPacketLossTest("../samples/h264SampleFrames", 1000, randomLoss(0.0), 5);
+    runPacketLossTest("../samples/h264SampleFrames", 1000, randomLoss(0.0), 5);
 }
 
 // Test: 1% packet loss
