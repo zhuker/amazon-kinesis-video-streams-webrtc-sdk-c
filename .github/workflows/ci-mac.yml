@@ -58,7 +58,7 @@ jobs:
           export CC=clang CXX=clang++
           export CMAKE_BUILD_PARALLEL_LEVEL=$(sysctl -n hw.ncpu)
           mkdir -p build-mbedtls && cd build-mbedtls
-          cmake .. -DBUILD_TEST=ON -DBUILD_STATIC_LIBS=ON \
+          cmake .. -DBUILD_TEST=ON -DBUILD_SAMPLE=ON -DBUILD_STATIC_LIBS=ON \
                    -DUSE_OPENSSL=OFF -DUSE_MBEDTLS=ON \
                    -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
                    -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/deps

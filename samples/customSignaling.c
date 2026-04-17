@@ -1,7 +1,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <dirent.h>
-#include "Samples.h"
+#include "SamplesCommon.h"
 
 struct MySession {
     RtcConfiguration rtcConfig;
@@ -138,14 +138,43 @@ INT32 main(INT32 argc, CHAR* argv[])
         sleep(1);
     }
     if (session.connectionState == RTC_PEER_CONNECTION_STATE_CONNECTED) {
-        // send frames
-        SampleConfiguration config = {0};
-        config.streamingSessionListReadLock = MUTEX_CREATE(FALSE);
-        SampleStreamingSession sampleStreamingSession = {0};
-        sampleStreamingSession.pVideoRtcRtpTransceiver = session.transceiver;
-        config.streamingSessionCount = 1;
-        config.sampleStreamingSessionList[0] = &sampleStreamingSession;
-        sendVideoPackets(&config);
+        // Stream H264 sample frames on a loop until the peer disconnects.
+        Frame frame = {0};
+        UINT32 fileIndex = 0;
+        UINT32 frameSize = 0;
+        UINT32 bufferSize = 0;
+        PBYTE pBuffer = NULL;
+        CHAR filePath[MAX_PATH_LEN + 1];
+        UINT64 startTime = GETTIME();
+        UINT64 lastFrameTime = startTime;
+
+        while (session.connectionState == RTC_PEER_CONNECTION_STATE_CONNECTED) {
+            fileIndex = fileIndex % NUMBER_OF_H264_FRAME_FILES + 1;
+            snprintf(filePath, MAX_PATH_LEN, "./h264SampleFrames/frame-%04d.h264", fileIndex);
+
+            if (readFrameFromDisk(NULL, &frameSize, filePath) != STATUS_SUCCESS) {
+                break;
+            }
+            if (frameSize > bufferSize) {
+                pBuffer = (PBYTE) MEMREALLOC(pBuffer, frameSize);
+                if (pBuffer == NULL) {
+                    break;
+                }
+                bufferSize = frameSize;
+            }
+            frame.frameData = pBuffer;
+            frame.size = frameSize;
+            if (readFrameFromDisk(frame.frameData, &frameSize, filePath) != STATUS_SUCCESS) {
+                break;
+            }
+            frame.presentationTs += SAMPLE_VIDEO_FRAME_DURATION;
+            writeFrame(session.transceiver, &frame);
+
+            UINT64 elapsed = lastFrameTime - startTime;
+            THREAD_SLEEP(SAMPLE_VIDEO_FRAME_DURATION - elapsed % SAMPLE_VIDEO_FRAME_DURATION);
+            lastFrameTime = GETTIME();
+        }
+        SAFE_MEMFREE(pBuffer);
     }
 
     return 0;
