@@ -39,21 +39,31 @@ struct WhepSession {
 
 static WhepSession g_session;
 
-static const char* connectionStateToString(RTC_PEER_CONNECTION_STATE state) {
+static const char* connectionStateToString(RTC_PEER_CONNECTION_STATE state)
+{
     switch (state) {
-        case RTC_PEER_CONNECTION_STATE_NONE: return "NONE";
-        case RTC_PEER_CONNECTION_STATE_NEW: return "NEW";
-        case RTC_PEER_CONNECTION_STATE_CONNECTING: return "CONNECTING";
-        case RTC_PEER_CONNECTION_STATE_CONNECTED: return "CONNECTED";
-        case RTC_PEER_CONNECTION_STATE_DISCONNECTED: return "DISCONNECTED";
-        case RTC_PEER_CONNECTION_STATE_FAILED: return "FAILED";
-        case RTC_PEER_CONNECTION_STATE_CLOSED: return "CLOSED";
-        default: return "UNKNOWN";
+        case RTC_PEER_CONNECTION_STATE_NONE:
+            return "NONE";
+        case RTC_PEER_CONNECTION_STATE_NEW:
+            return "NEW";
+        case RTC_PEER_CONNECTION_STATE_CONNECTING:
+            return "CONNECTING";
+        case RTC_PEER_CONNECTION_STATE_CONNECTED:
+            return "CONNECTED";
+        case RTC_PEER_CONNECTION_STATE_DISCONNECTED:
+            return "DISCONNECTED";
+        case RTC_PEER_CONNECTION_STATE_FAILED:
+            return "FAILED";
+        case RTC_PEER_CONNECTION_STATE_CLOSED:
+            return "CLOSED";
+        default:
+            return "UNKNOWN";
     }
 }
 
 // Video streaming thread function
-static void videoStreamingThread(WhepSession* session) {
+static void videoStreamingThread(WhepSession* session)
+{
     Frame frame;
     MEMSET(&frame, 0, SIZEOF(Frame));
     UINT32 fileIndex = 0;
@@ -78,7 +88,7 @@ static void videoStreamingThread(WhepSession* session) {
 
         // Reallocate buffer if needed
         if (frameSize > session->videoBufferSize) {
-            session->pVideoFrameBuffer = (PBYTE)MEMREALLOC(session->pVideoFrameBuffer, frameSize);
+            session->pVideoFrameBuffer = (PBYTE) MEMREALLOC(session->pVideoFrameBuffer, frameSize);
             if (session->pVideoFrameBuffer == NULL) {
                 printf("[WHEP] Failed to allocate video buffer\n");
                 break;
@@ -117,7 +127,8 @@ static void videoStreamingThread(WhepSession* session) {
 }
 
 // Audio streaming thread function
-static void audioStreamingThread(WhepSession* session) {
+static void audioStreamingThread(WhepSession* session)
+{
     Frame frame;
     MEMSET(&frame, 0, SIZEOF(Frame));
     UINT32 fileIndex = 0;
@@ -142,7 +153,7 @@ static void audioStreamingThread(WhepSession* session) {
 
         // Reallocate buffer if needed
         if (frameSize > session->audioBufferSize) {
-            session->pAudioFrameBuffer = (PBYTE)MEMREALLOC(session->pAudioFrameBuffer, frameSize);
+            session->pAudioFrameBuffer = (PBYTE) MEMREALLOC(session->pAudioFrameBuffer, frameSize);
             if (session->pAudioFrameBuffer == NULL) {
                 printf("[WHEP] Failed to allocate audio buffer\n");
                 break;
@@ -180,24 +191,25 @@ static void audioStreamingThread(WhepSession* session) {
 }
 
 // Data channel message callback
-static VOID onDataChannelMessage(UINT64 customData, PRtcDataChannel pDataChannel, BOOL isBinary, PBYTE pMessage, UINT32 messageLen) {
+static VOID onDataChannelMessage(UINT64 customData, PRtcDataChannel pDataChannel, BOOL isBinary, PBYTE pMessage, UINT32 messageLen)
+{
     CHAR msgBuffer[256];
     UINT32 printLen = MIN(messageLen, SIZEOF(msgBuffer) - 1);
     MEMCPY(msgBuffer, pMessage, printLen);
     msgBuffer[printLen] = '\0';
 
-    printf("[WHEP] DataChannel '%s' message (%s, %u bytes): %s\n",
-           pDataChannel->name, isBinary ? "binary" : "text", messageLen, msgBuffer);
+    printf("[WHEP] DataChannel '%s' message (%s, %u bytes): %s\n", pDataChannel->name, isBinary ? "binary" : "text", messageLen, msgBuffer);
 
     // Respond with "pong"
-    STATUS status = dataChannelSend(pDataChannel, FALSE, (PBYTE)"pong", 4);
+    STATUS status = dataChannelSend(pDataChannel, FALSE, (PBYTE) "pong", 4);
     if (STATUS_FAILED(status)) {
         printf("[WHEP] Failed to send pong: 0x%08x\n", status);
     }
 }
 
 // Data channel callback (called when remote peer opens a data channel)
-static VOID onDataChannelCallback(UINT64 customData, PRtcDataChannel pDataChannel) {
+static VOID onDataChannelCallback(UINT64 customData, PRtcDataChannel pDataChannel)
+{
     printf("[WHEP] DataChannel opened: '%s'\n", pDataChannel->name);
 
     STATUS status = dataChannelOnMessage(pDataChannel, customData, onDataChannelMessage);
@@ -207,8 +219,9 @@ static VOID onDataChannelCallback(UINT64 customData, PRtcDataChannel pDataChanne
 }
 
 // ICE candidate callback
-static VOID onIceCandidateCallback(UINT64 customData, PCHAR candidateJson) {
-    WhepSession* session = (WhepSession*)customData;
+static VOID onIceCandidateCallback(UINT64 customData, PCHAR candidateJson)
+{
+    WhepSession* session = (WhepSession*) customData;
 
     if (candidateJson == NULL) {
         printf("[WHEP] ICE gathering complete\n");
@@ -219,8 +232,9 @@ static VOID onIceCandidateCallback(UINT64 customData, PCHAR candidateJson) {
 }
 
 // Connection state change callback
-static VOID onConnectionStateChangeCallback(UINT64 customData, RTC_PEER_CONNECTION_STATE newState) {
-    WhepSession* session = (WhepSession*)customData;
+static VOID onConnectionStateChangeCallback(UINT64 customData, RTC_PEER_CONNECTION_STATE newState)
+{
+    WhepSession* session = (WhepSession*) customData;
 
     printf("[WHEP] Connection state: %s\n", connectionStateToString(newState));
     session->connectionState = newState;
@@ -250,7 +264,8 @@ static VOID onConnectionStateChangeCallback(UINT64 customData, RTC_PEER_CONNECTI
 }
 
 // Handle POST /offer endpoint
-static void handleOffer(WhepSession* session, const std::string& body, httplib::Response& res) {
+static void handleOffer(WhepSession* session, const std::string& body, httplib::Response& res)
+{
     STATUS status = STATUS_SUCCESS;
 
     printf("[WHEP] Received offer (%zu bytes)\n", body.length());
@@ -268,7 +283,7 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
     offerSdp.type = SDP_TYPE_OFFER;
 
     // Copy body to mutable buffer (SDK expects non-const PCHAR)
-    CHAR* offerJson = (CHAR*)MEMALLOC(body.length() + 1);
+    CHAR* offerJson = (CHAR*) MEMALLOC(body.length() + 1);
     if (offerJson == NULL) {
         res.status = 500;
         res.set_content("{\"error\": \"Memory allocation failed\"}", "application/json");
@@ -277,7 +292,7 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
     MEMCPY(offerJson, body.c_str(), body.length());
     offerJson[body.length()] = '\0';
 
-    status = deserializeSessionDescriptionInit(offerJson, (UINT32)body.length(), &offerSdp);
+    status = deserializeSessionDescriptionInit(offerJson, (UINT32) body.length(), &offerSdp);
     MEMFREE(offerJson);
     if (STATUS_FAILED(status)) {
         printf("[WHEP] Failed to parse SDP offer: 0x%08x\n", status);
@@ -296,17 +311,17 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
     }
 
     // Setup callbacks
-    status = peerConnectionOnIceCandidate(session->pPeerConnection, (UINT64)session, onIceCandidateCallback);
+    status = peerConnectionOnIceCandidate(session->pPeerConnection, (UINT64) session, onIceCandidateCallback);
     if (STATUS_FAILED(status)) {
         printf("[WHEP] Failed to set ICE callback: 0x%08x\n", status);
     }
 
-    status = peerConnectionOnConnectionStateChange(session->pPeerConnection, (UINT64)session, onConnectionStateChangeCallback);
+    status = peerConnectionOnConnectionStateChange(session->pPeerConnection, (UINT64) session, onConnectionStateChangeCallback);
     if (STATUS_FAILED(status)) {
         printf("[WHEP] Failed to set connection state callback: 0x%08x\n", status);
     }
 
-    status = peerConnectionOnDataChannel(session->pPeerConnection, (UINT64)session, onDataChannelCallback);
+    status = peerConnectionOnDataChannel(session->pPeerConnection, (UINT64) session, onDataChannelCallback);
     if (STATUS_FAILED(status)) {
         printf("[WHEP] Failed to set data channel callback: 0x%08x\n", status);
     }
@@ -423,7 +438,8 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
 }
 
 // Read file content helper
-static std::string readFileContent(const std::string& path) {
+static std::string readFileContent(const std::string& path)
+{
     std::ifstream file(path);
     if (!file.is_open()) {
         return "";
@@ -434,7 +450,8 @@ static std::string readFileContent(const std::string& path) {
 }
 
 // Setup HTTP routes
-static void setupRoutes(httplib::Server& svr, WhepSession* session) {
+static void setupRoutes(httplib::Server& svr, WhepSession* session)
+{
     // Serve index.html
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
         std::string content = readFileContent("./examples/index.html");
@@ -457,17 +474,6 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session) {
         }
     });
 
-    // Serve InputEvents.js
-    svr.Get("/InputEvents.js", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/InputEvents.js");
-        if (content.empty()) {
-            res.status = 404;
-            res.set_content("File not found", "text/plain");
-        } else {
-            res.set_content(content, "application/javascript");
-        }
-    });
-
     // Return ICE server configuration
     svr.Get("/ice-servers", [session](const httplib::Request&, httplib::Response& res) {
         CHAR json[512];
@@ -476,13 +482,12 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session) {
     });
 
     // Handle WebRTC offer
-    svr.Post("/offer", [session](const httplib::Request& req, httplib::Response& res) {
-        handleOffer(session, req.body, res);
-    });
+    svr.Post("/offer", [session](const httplib::Request& req, httplib::Response& res) { handleOffer(session, req.body, res); });
 }
 
 // Initialize session
-static void initSession(WhepSession* session, const char* stunServer, bool enableAudio) {
+static void initSession(WhepSession* session, const char* stunServer, bool enableAudio)
+{
     MEMSET(session, 0, SIZEOF(WhepSession));
 
     // Configure ICE
@@ -503,7 +508,8 @@ static void initSession(WhepSession* session, const char* stunServer, bool enabl
 }
 
 // Cleanup session
-static void cleanupSession(WhepSession* session) {
+static void cleanupSession(WhepSession* session)
+{
     session->shouldExit.store(true);
 
     // Wait for video thread to stop
@@ -531,7 +537,8 @@ static void cleanupSession(WhepSession* session) {
     }
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[])
+{
     int port = 8080;
     // const char* stunServer = "stun:stun.l.google.com:19302";
     const char* stunServer = "";
@@ -588,4 +595,3 @@ int main(int argc, char* argv[]) {
     printf("[WHEP] Done\n");
     return 0;
 }
-
