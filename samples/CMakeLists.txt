@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.6.3)
 
-project(KinesisVideoWebRTCClientSamples LANGUAGES C)
+project(KinesisVideoWebRTCClientSamples LANGUAGES C CXX)
 
 #set(OPEN_SRC_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/open-source" CACHE PATH "Libraries will be downloaded and build in this directory.")
 
@@ -71,15 +71,40 @@ add_executable(
   Common.c
   kvsWebRTCClientMaster.c)
 target_link_libraries(kvsWebrtcClientMaster kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
-endif ()
 
-if (ENABLE_SIGNALING)
 add_executable(
   kvsWebrtcClientViewer
   Common.c
   kvsWebRTCClientViewer.c)
 target_link_libraries(kvsWebrtcClientViewer kvsWebrtcClient kvsWebrtcSignalingClient ${EXTRA_DEPS} kvsCommonLws kvspicUtils websockets)
 endif ()
+
+# customSignaling / whepServer / whipServer use SamplesCommon.c
+# (no AWS signaling deps) so they build regardless of ENABLE_SIGNALING.
+add_executable(
+        customSignaling
+        SamplesCommon.c
+        customSignaling.c)
+target_link_libraries(customSignaling kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
+
+# WHEP Server (C++ HTTP-based WebRTC egress)
+add_executable(
+        whepServer
+        SamplesCommon.c
+        whepServer.cpp)
+target_link_libraries(whepServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
+set_target_properties(whepServer PROPERTIES CXX_STANDARD 17)
+
+# WHIP Server (C++ HTTP-based WebRTC ingestion per RFC 9725)
+add_executable(
+        whipServer
+        SamplesCommon.c
+        whipServer.cpp)
+target_link_libraries(whipServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
+set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
+
+# Copy examples directory for WHEP/WHIP server static files
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/../examples" DESTINATION .)
 
 add_executable(
         discoverNatBehavior
@@ -127,13 +152,12 @@ if(GST_FOUND AND ENABLE_SIGNALING)
   )
 endif()
 
-if (ENABLE_SIGNALING)
-install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior
+install(TARGETS customSignaling whepServer whipServer discoverNatBehavior
   RUNTIME DESTINATION bin
 )
-else ()
-install(TARGETS discoverNatBehavior
-        RUNTIME DESTINATION bin
+if (ENABLE_SIGNALING)
+install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer
+  RUNTIME DESTINATION bin
 )
 endif ()
 
