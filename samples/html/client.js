@@ -69,6 +69,7 @@ function negotiate() {
         });
     }).then(() => {
         const offer = pc.localDescription;
+        console.log('--- BROWSER OFFER ---\n' + offer.sdp);
         return fetch('/offer', {
             body: JSON.stringify({
                 sdp: offer.sdp,
@@ -82,6 +83,7 @@ function negotiate() {
     }).then((response) => {
         return response.json();
     }).then((answer) => {
+        console.log('--- SERVER ANSWER ---\n' + answer.sdp);
         // Inspect the answer SDP: RED is negotiated iff both sides agreed on a red/48000
         // rtpmap on the audio m= line.
         const offerRedPt = findAudioRedPt(pc.localDescription && pc.localDescription.sdp);

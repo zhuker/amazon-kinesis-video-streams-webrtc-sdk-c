@@ -268,7 +268,7 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
 {
     STATUS status = STATUS_SUCCESS;
 
-    printf("[WHEP] Received offer (%zu bytes)\n", body.length());
+    printf("[WHEP] Received offer (%zu bytes):\n%s\n", body.length(), body.c_str());
 
     // Check if already connected
     if (session->pPeerConnection != NULL) {
@@ -433,7 +433,7 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
         return;
     }
 
-    printf("[WHEP] Sending answer (%u bytes)\n", jsonLen);
+    printf("[WHEP] Sending answer (%u bytes):\n%s\n", jsonLen, session->answerSdp.sdp);
     res.set_content(answerJson, "application/json");
 }
 

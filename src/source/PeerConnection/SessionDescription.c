@@ -286,7 +286,7 @@ STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PHas
                     }
                 }
                 if (fmtpValid) {
-                    DLOGV("Found RED payload type %" PRId64 " (Opus inner PT %" PRId64 ")", parsedPayloadType, opusPtFromCodec);
+                    DLOGI("Found RED payload type %" PRId64 " (Opus inner PT %" PRId64 ") — will advertise RED", parsedPayloadType, opusPtFromCodec);
                     CHK_STATUS(hashTableUpsert(redTable, RTC_RED_CODEC_OPUS, parsedPayloadType));
                 } else {
                     DLOGW("Remote offered RED PT %" PRId64 " but fmtp missing/invalid — falling back to plain Opus", parsedPayloadType);
@@ -405,6 +405,8 @@ STATUS setTransceiverPayloadTypes(PHashTable codecTable, PHashTable rtxTable, PH
                 if (pKvsRtpTransceiver->sender.pRedSenderState == NULL && pKvsRtpTransceiver->pKvsPeerConnection != NULL) {
                     CHK_STATUS(createRedSenderState(pKvsRtpTransceiver->pKvsPeerConnection->redForOpusRedundancy, (UINT8) opusPt,
                                                     &pKvsRtpTransceiver->sender.pRedSenderState));
+                    DLOGI("RED active on Opus transceiver: redPT=%" PRId64 ", opusPT=%" PRId64 ", redundancy=%u", redPt, opusPt,
+                          pKvsRtpTransceiver->pKvsPeerConnection->redForOpusRedundancy);
                 }
             }
         } else if (pKvsRtpTransceiver != NULL && redNegotiated && pKvsRtpTransceiver->transceiver.receiver.track.codec == RTC_CODEC_OPUS) {

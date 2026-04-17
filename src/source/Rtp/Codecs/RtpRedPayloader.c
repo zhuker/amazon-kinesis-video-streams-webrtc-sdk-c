@@ -142,6 +142,19 @@ STATUS createPayloadForOpusRed(UINT32 mtu, PBYTE opusFrame, UINT32 opusFrameLeng
         CHK(FALSE, retStatus);
     }
 
+    // One-shot log per process: confirms end-to-end that RED wrapping is actually live on the wire.
+    {
+        static BOOL redEmitLogged = FALSE;
+        static BOOL redFallbackLogged = FALSE;
+        if (!fallback && !redEmitLogged) {
+            DLOGI("RED: emitting first RED-wrapped Opus packet (opusLen=%u bodyLen=%u redundancyBlocks=%u)", opusFrameLength, bodyBytes, chosenCount);
+            redEmitLogged = TRUE;
+        } else if (fallback && !redFallbackLogged) {
+            DLOGW("RED: primary Opus frame %u bytes >= %u — falling back to plain Opus under Opus PT", opusFrameLength, RED_MAX_BLOCK_LEN);
+            redFallbackLogged = TRUE;
+        }
+    }
+
     CHK(*pPayloadLength >= bodyBytes && *pPayloadSubLenSize >= 1, STATUS_BUFFER_TOO_SMALL);
 
     pOut = payloadBuffer;
