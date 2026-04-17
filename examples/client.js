@@ -1,5 +1,51 @@
 let pc = null;
 let dc = null, dcInterval = null;
+let statsInterval = null;
+
+// Detect whether audio RED (RFC 2198, red/48000) was negotiated in an SDP blob.
+// Returns the RED payload type number, or null.
+function findAudioRedPt(sdp) {
+    if (!sdp) return null;
+    const lines = sdp.split(/\r?\n/);
+    let inAudio = false;
+    for (const line of lines) {
+        if (line.startsWith('m=')) {
+            inAudio = line.startsWith('m=audio');
+            continue;
+        }
+        if (!inAudio) continue;
+        const m = line.match(/^a=rtpmap:(\d+)\s+red\/48000/i);
+        if (m) return parseInt(m[1], 10);
+    }
+    return null;
+}
+
+// Poll inbound-rtp audio stats and update the FEC readout.
+async function reportFecStats() {
+    if (!pc) return;
+    try {
+        const stats = await pc.getStats();
+        let audioInbound = null;
+        stats.forEach(s => {
+            if (s.type === 'inbound-rtp' && s.kind === 'audio') {
+                audioInbound = s;
+            }
+        });
+        if (!audioInbound) return;
+        const received = audioInbound.fecPacketsReceived ?? 0;
+        const discarded = audioInbound.fecPacketsDiscarded ?? 0;
+        const fecBytes = audioInbound.fecBytesReceived ?? 0;
+        const used = Math.max(0, received - discarded);
+        document.getElementById('fec-packets-received').textContent = received;
+        document.getElementById('fec-packets-discarded').textContent = discarded;
+        document.getElementById('fec-bytes-received').textContent = fecBytes;
+        document.getElementById('fec-packets-used').textContent = used;
+        document.getElementById('fec-efficiency').textContent =
+            received > 0 ? ((used / received) * 100).toFixed(1) + '%' : '—';
+    } catch (e) {
+        console.warn('getStats failed:', e);
+    }
+}
 
 function negotiate() {
     pc.addTransceiver('video', {direction: 'recvonly'});
@@ -36,6 +82,18 @@ function negotiate() {
     }).then((response) => {
         return response.json();
     }).then((answer) => {
+        // Inspect the answer SDP: RED is negotiated iff both sides agreed on a red/48000
+        // rtpmap on the audio m= line.
+        const offerRedPt = findAudioRedPt(pc.localDescription && pc.localDescription.sdp);
+        const answerRedPt = findAudioRedPt(answer.sdp);
+        const redStatusEl = document.getElementById('audio-red-status');
+        if (answerRedPt !== null && offerRedPt !== null) {
+            redStatusEl.textContent = 'yes (PT ' + answerRedPt + ')';
+        } else if (offerRedPt !== null) {
+            redStatusEl.textContent = 'offered but declined by remote';
+        } else {
+            redStatusEl.textContent = 'no';
+        }
         return pc.setRemoteDescription(answer);
     }).catch((e) => {
         alert(e);
@@ -104,12 +162,18 @@ async function start() {
 
     document.getElementById('start').style.display = 'none';
     negotiate();
+    statsInterval = setInterval(reportFecStats, 1000);
     document.getElementById('stop').style.display = 'inline-block';
 }
 
 function stop() {
     document.getElementById('stop').style.display = 'none';
     document.getElementById('start').style.display = 'inline-block';
+
+    if (statsInterval) {
+        clearInterval(statsInterval);
+        statsInterval = null;
+    }
 
     // close data channel
     if (dc) {
