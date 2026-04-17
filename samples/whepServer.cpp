@@ -494,6 +494,7 @@ static void initSession(WhepSession* session, const char* stunServer, bool enabl
     session->rtcConfig.kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = 500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     session->rtcConfig.kvsRtcConfiguration.iceCandidateNominationTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
     session->rtcConfig.kvsRtcConfiguration.iceConnectionCheckTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    session->rtcConfig.kvsRtcConfiguration.useRedForOpus = TRUE;
     if (STRLEN(stunServer) > 0) {
         STRNCPY(session->rtcConfig.iceServers[0].urls, stunServer, MAX_ICE_CONFIG_URI_LEN);
         STRNCPY(session->stunServer, stunServer, SIZEOF(session->stunServer) - 1);
