@@ -49,9 +49,6 @@ async function reportFecStats() {
         document.getElementById('audio-packets-lost').textContent = packetsLost;
         document.getElementById('audio-concealed-samples').textContent = concealedSamples;
         document.getElementById('audio-concealment-events').textContent = concealmentEvents;
-        document.getElementById('fec-packets-received').textContent = audioInbound.fecPacketsReceived ?? 0;
-        document.getElementById('fec-bytes-received').textContent = audioInbound.fecBytesReceived ?? 0;
-        document.getElementById('fec-packets-discarded').textContent = audioInbound.fecPacketsDiscarded ?? 0;
     } catch (e) {
         console.warn('getStats failed:', e);
     }
