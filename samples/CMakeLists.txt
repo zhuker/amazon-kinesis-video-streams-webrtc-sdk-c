@@ -74,6 +74,15 @@ target_link_libraries(kvsWebrtcClientMaster kvsWebrtcClient kvsWebrtcSignalingCl
 endif ()
 
 if (ENABLE_SIGNALING)
+# H264 Jitter Buffer Simulator (standalone, no signaling deps)
+add_executable(
+        h264JitterBufferSim
+        h264JitterBufferSim.cpp)
+target_include_directories(h264JitterBufferSim PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/source)
+target_link_libraries(h264JitterBufferSim kvsWebrtcClient kvspicUtils)
+set_target_properties(h264JitterBufferSim PROPERTIES CXX_STANDARD 17)
+
 add_executable(
   kvsWebrtcClientViewer
   Common.c
@@ -128,7 +137,7 @@ if(GST_FOUND AND ENABLE_SIGNALING)
 endif()
 
 if (ENABLE_SIGNALING)
-install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior
+install(TARGETS kvsWebrtcClientMaster kvsWebrtcClientViewer discoverNatBehavior h264JitterBufferSim
   RUNTIME DESTINATION bin
 )
 else ()
