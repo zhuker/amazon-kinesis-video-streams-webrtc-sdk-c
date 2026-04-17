@@ -59,7 +59,7 @@ void WebRtcClientTestBase::SetUp()
     mLogLevel = LOG_LEVEL_DEBUG;
 
     PCHAR logLevelStr = GETENV(DEBUG_LOG_LEVEL_ENV_VAR);
-    if (logLevelStr != NULL) {
+    if (logLevelStr != NULL && STRLEN(logLevelStr) > 0) {
         ASSERT_EQ(STATUS_SUCCESS, STRTOUI32(logLevelStr, NULL, 10, &mLogLevel));
     }
 
