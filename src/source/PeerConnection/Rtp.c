@@ -152,6 +152,10 @@ STATUS freeKvsRtpTransceiver(PKvsRtpTransceiver* ppKvsRtpTransceiver)
         freeRetransmitter(&pKvsRtpTransceiver->sender.retransmitter);
     }
 
+    if (pKvsRtpTransceiver->sender.pRedSenderState != NULL) {
+        freeRedSenderState(&pKvsRtpTransceiver->sender.pRedSenderState);
+    }
+
     freeRollingBufferConfig(pKvsRtpTransceiver->pRollingBufferConfig);
 
     MUTEX_FREE(pKvsRtpTransceiver->statsLock);
@@ -329,6 +333,8 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
     MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
     locked = TRUE;
     CHK(pKvsPeerConnection->pSrtpSession != NULL, STATUS_SRTP_NOT_READY_YET); // Discard packets till SRTP is ready
+    BOOL useOpusRed = FALSE;
+    UINT8 effectivePayloadType = pKvsRtpTransceiver->sender.payloadType;
     switch (pKvsRtpTransceiver->sender.track.codec) {
         case RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE:
             rtpPayloadFunc = createPayloadForH264;
@@ -343,6 +349,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
         case RTC_CODEC_OPUS:
             rtpPayloadFunc = createPayloadForOpus;
             rtpTimestamp = CONVERT_TIMESTAMP_TO_RTP(OPUS_CLOCKRATE, pFrame->presentationTs);
+            useOpusRed = (pKvsRtpTransceiver->sender.redPayloadType != 0 && pKvsRtpTransceiver->sender.pRedSenderState != NULL);
             break;
 
         case RTC_CODEC_MULAW:
@@ -362,27 +369,53 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
 
     rtpTimestamp += randomRtpTimeoffset;
 
-    CHK_STATUS(rtpPayloadFunc(pKvsPeerConnection->MTU, (PBYTE) pFrame->frameData, pFrame->size, NULL, &(pPayloadArray->payloadLength), NULL,
-                              &(pPayloadArray->payloadSubLenSize)));
-    if (pPayloadArray->payloadLength > pPayloadArray->maxPayloadLength) {
-        SAFE_MEMFREE(pPayloadArray->payloadBuffer);
-        pPayloadArray->payloadBuffer = (PBYTE) MEMALLOC(pPayloadArray->payloadLength);
-        pPayloadArray->maxPayloadLength = pPayloadArray->payloadLength;
+    if (useOpusRed) {
+        // Two-call pattern: first NULL for size, then with buffer.
+        BOOL isFallback = FALSE;
+        UINT32 subLenCap = 1;
+        CHK_STATUS(createPayloadForOpusRed(pKvsPeerConnection->MTU, (PBYTE) pFrame->frameData, pFrame->size, (UINT32) rtpTimestamp,
+                                           pKvsRtpTransceiver->sender.pRedSenderState, NULL, &(pPayloadArray->payloadLength), NULL, &subLenCap,
+                                           &isFallback));
+        if (pPayloadArray->payloadLength > pPayloadArray->maxPayloadLength) {
+            SAFE_MEMFREE(pPayloadArray->payloadBuffer);
+            pPayloadArray->payloadBuffer = (PBYTE) MEMALLOC(pPayloadArray->payloadLength);
+            pPayloadArray->maxPayloadLength = pPayloadArray->payloadLength;
+        }
+        pPayloadArray->payloadSubLenSize = 1;
+        if (pPayloadArray->maxPayloadSubLenSize < 1) {
+            SAFE_MEMFREE(pPayloadArray->payloadSubLength);
+            pPayloadArray->payloadSubLength = (PUINT32) MEMALLOC(SIZEOF(UINT32));
+            pPayloadArray->maxPayloadSubLenSize = 1;
+        }
+        UINT32 subLenCap2 = 1;
+        CHK_STATUS(createPayloadForOpusRed(pKvsPeerConnection->MTU, (PBYTE) pFrame->frameData, pFrame->size, (UINT32) rtpTimestamp,
+                                           pKvsRtpTransceiver->sender.pRedSenderState, pPayloadArray->payloadBuffer, &(pPayloadArray->payloadLength),
+                                           pPayloadArray->payloadSubLength, &subLenCap2, &isFallback));
+        pPayloadArray->payloadSubLenSize = 1;
+        effectivePayloadType = isFallback ? pKvsRtpTransceiver->sender.opusPayloadTypeForRed : pKvsRtpTransceiver->sender.redPayloadType;
+    } else {
+        CHK_STATUS(rtpPayloadFunc(pKvsPeerConnection->MTU, (PBYTE) pFrame->frameData, pFrame->size, NULL, &(pPayloadArray->payloadLength), NULL,
+                                  &(pPayloadArray->payloadSubLenSize)));
+        if (pPayloadArray->payloadLength > pPayloadArray->maxPayloadLength) {
+            SAFE_MEMFREE(pPayloadArray->payloadBuffer);
+            pPayloadArray->payloadBuffer = (PBYTE) MEMALLOC(pPayloadArray->payloadLength);
+            pPayloadArray->maxPayloadLength = pPayloadArray->payloadLength;
+        }
+        if (pPayloadArray->payloadSubLenSize > pPayloadArray->maxPayloadSubLenSize) {
+            SAFE_MEMFREE(pPayloadArray->payloadSubLength);
+            pPayloadArray->payloadSubLength = (PUINT32) MEMALLOC(pPayloadArray->payloadSubLenSize * SIZEOF(UINT32));
+            pPayloadArray->maxPayloadSubLenSize = pPayloadArray->payloadSubLenSize;
+        }
+        CHK_STATUS(rtpPayloadFunc(pKvsPeerConnection->MTU, (PBYTE) pFrame->frameData, pFrame->size, pPayloadArray->payloadBuffer,
+                                  &(pPayloadArray->payloadLength), pPayloadArray->payloadSubLength, &(pPayloadArray->payloadSubLenSize)));
     }
-    if (pPayloadArray->payloadSubLenSize > pPayloadArray->maxPayloadSubLenSize) {
-        SAFE_MEMFREE(pPayloadArray->payloadSubLength);
-        pPayloadArray->payloadSubLength = (PUINT32) MEMALLOC(pPayloadArray->payloadSubLenSize * SIZEOF(UINT32));
-        pPayloadArray->maxPayloadSubLenSize = pPayloadArray->payloadSubLenSize;
-    }
-    CHK_STATUS(rtpPayloadFunc(pKvsPeerConnection->MTU, (PBYTE) pFrame->frameData, pFrame->size, pPayloadArray->payloadBuffer,
-                              &(pPayloadArray->payloadLength), pPayloadArray->payloadSubLength, &(pPayloadArray->payloadSubLenSize)));
     pPacketList = (PRtpPacket) MEMALLOC(pPayloadArray->payloadSubLenSize * SIZEOF(RtpPacket));
 
     if (!pKvsRtpTransceiver->sender.seqInitialized) {
         pKvsRtpTransceiver->sender.initialSequenceNumber = pKvsRtpTransceiver->sender.sequenceNumber;
         pKvsRtpTransceiver->sender.seqInitialized = TRUE;
     }
-    CHK_STATUS(constructRtpPackets(pPayloadArray, pKvsRtpTransceiver->sender.payloadType, pKvsRtpTransceiver->sender.sequenceNumber, rtpTimestamp,
+    CHK_STATUS(constructRtpPackets(pPayloadArray, effectivePayloadType, pKvsRtpTransceiver->sender.sequenceNumber, rtpTimestamp,
                                    pKvsRtpTransceiver->sender.ssrc, pPacketList, pPayloadArray->payloadSubLenSize));
     pKvsRtpTransceiver->sender.sequenceNumber = GET_UINT16_SEQ_NUM(pKvsRtpTransceiver->sender.sequenceNumber + pPayloadArray->payloadSubLenSize);
 

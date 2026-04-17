@@ -496,9 +496,18 @@ static STATUS rtPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PBOOL p
         goto EvictAndDeliver;
     }
 
-    // Check for duplicate - if exists, replace but don't increment packetCount
+    // Check for duplicate - if exists, replace but don't increment packetCount.
+    // RED synthetic-vs-real dedup: real always wins over synthetic.
     pExisting = pInternal->pktRing[pRtpPacket->header.sequenceNumber % RT_PKT_RING_SIZE];
     if (pExisting != NULL && pExisting->header.sequenceNumber == pRtpPacket->header.sequenceNumber) {
+        if (!pExisting->isSynthetic && pRtpPacket->isSynthetic) {
+            // Existing real, incoming synthetic → drop incoming.
+            freeRtpPacket(&pRtpPacket);
+            if (pPacketDiscarded != NULL) {
+                *pPacketDiscarded = TRUE;
+            }
+            goto EvictAndDeliver;
+        }
         freeRtpPacket(&pExisting);
         pInternal->pktRing[pRtpPacket->header.sequenceNumber % RT_PKT_RING_SIZE] = pRtpPacket;
         // Don't update frame entry for duplicates
@@ -627,7 +636,8 @@ EvictAndDeliver:
             UINT32 earliestEvictIdx = rtFindEarliestFrameIdx(pInternal);
             age = rtTimestampAge(pInternal, pInternal->frames[earliestEvictIdx].timestamp);
             if (age > pInternal->maxLatency && !rtFrameIsComplete(pInternal, &pInternal->frames[earliestEvictIdx])) {
-                DLOGS("RealTimeJitterBuffer: evicting stale frame ts %u (age %u)", pInternal->frames[earliestEvictIdx].timestamp, age);
+                DLOGD("RealTimeJitterBuffer: evicting stale frame ts %u (age %u > maxLatency %llu)", pInternal->frames[earliestEvictIdx].timestamp,
+                      age, pInternal->maxLatency);
                 UINT32 evictedTs = pInternal->frames[earliestEvictIdx].timestamp;
                 rtMarkTimestampProcessed(pInternal, evictedTs);
                 pInternal->onFrameDroppedFn(pInternal->customData, pInternal->frames[earliestEvictIdx].firstSeqNum,

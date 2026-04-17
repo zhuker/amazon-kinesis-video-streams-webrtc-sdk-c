@@ -290,6 +290,7 @@ extern "C" {
 #define STATUS_RTP_INPUT_MTU_TOO_SMALL    STATUS_RTP_BASE + 0x00000002
 #define STATUS_RTP_INVALID_NALU           STATUS_RTP_BASE + 0x00000003
 #define STATUS_RTP_INVALID_EXTENSION_LEN  STATUS_RTP_BASE + 0x00000004
+#define STATUS_RTP_INVALID_RED_PACKET     STATUS_RTP_BASE + 0x00000005
 /*!@} */
 
 /////////////////////////////////////////////////////
@@ -1292,6 +1293,15 @@ typedef struct {
     BOOL useRealTimeJitterBuffer; //!< Use the real-time jitter buffer implementation which tracks frames independently by timestamp,
                                   //!< aggressively evicts stale incomplete frames, and delivers complete frames without head-of-line blocking.
                                   //!< Frames are still delivered in RTP timestamp order.
+
+    BOOL useRedForOpus; //!< Enable RFC 2198 RED packetization for Opus. When TRUE and the remote peer advertises
+                        //!< red/48000/2 with fmtp:<redPT> <opusPT>/<opusPT>, the SDK advertises and uses RED on the
+                        //!< sender side and splits inbound RED packets on the receiver side transparently to the
+                        //!< application. When the remote does not advertise RED the SDK falls back to plain Opus.
+                        //!< Default: FALSE.
+
+    UINT8 redForOpusRedundancy; //!< Number of prior Opus frames carried as redundancy in each RED packet. Clamped to 1..9.
+                                //!< If 0, defaults to 1 (Chrome/libwebrtc default). Ignored when useRedForOpus is FALSE.
 
 #ifdef ENABLE_STATS_CALCULATION_CONTROL
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined

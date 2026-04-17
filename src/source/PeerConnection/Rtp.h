@@ -53,6 +53,12 @@ typedef struct {
     UINT64 lastKnownFrameCount;
     UINT64 lastKnownFrameCountTime; // 100ns precision
 
+    // RFC 2198 RED sender-side state. redPayloadType=0 means RED was not negotiated
+    // for this transceiver; the plain-Opus path is taken instead.
+    UINT8 redPayloadType;
+    UINT8 opusPayloadTypeForRed;
+    PRedSenderState pRedSenderState;
+
 } RtcRtpSender, *PRtcRtpSender;
 
 typedef struct {
@@ -108,6 +114,12 @@ typedef struct {
     UINT64 lastSRReceivedTime; // wallclock (100ns) when last SR was received
 
     UINT8 firSequenceNumber;
+
+    // RFC 2198 RED receiver-side state. When non-zero, inbound packets whose PT equals
+    // receiverRedPayloadType are split into synthetic per-Opus-frame packets before the
+    // jitter buffer.
+    UINT8 receiverRedPayloadType;
+    UINT8 receiverOpusPayloadType;
 } KvsRtpTransceiver, *PKvsRtpTransceiver;
 
 STATUS createKvsRtpTransceiver(RTC_RTP_TRANSCEIVER_DIRECTION, PKvsPeerConnection, UINT32, UINT32, PRtcMediaStreamTrack, PJitterBuffer, RTC_CODEC,

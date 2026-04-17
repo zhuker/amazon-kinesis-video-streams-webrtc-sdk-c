@@ -47,6 +47,9 @@ extern "C" {
 #define DEFAULT_PAYLOAD_VP8     (UINT64) 96
 #define DEFAULT_PAYLOAD_H264    (UINT64) 125
 #define DEFAULT_PAYLOAD_H265    (UINT64) 127
+// Dynamic PT for RFC 2198 RED carrying Opus. Matches Chrome/libwebrtc convention.
+#define DEFAULT_PAYLOAD_RED (UINT64) 63
+#define RED_VALUE           "red/48000"
 
 #define DEFAULT_PAYLOAD_MULAW_STR (PCHAR) "0"
 #define DEFAULT_PAYLOAD_ALAW_STR  (PCHAR) "8"
@@ -83,10 +86,10 @@ extern "C" {
 
 #define CODEC_RTPMAP_PAYLOAD_TYPES_HASH_TABLE_BUCKET_LENGTH 2
 
-STATUS setPayloadTypesFromOffer(PHashTable, PHashTable, PSessionDescription);
-STATUS setPayloadTypesForOffer(PHashTable);
+STATUS setPayloadTypesFromOffer(PHashTable, PHashTable, PHashTable, PSessionDescription);
+STATUS setPayloadTypesForOffer(PHashTable, PHashTable, BOOL useRedForOpus);
 
-STATUS setTransceiverPayloadTypes(PHashTable, PHashTable, PDoubleList);
+STATUS setTransceiverPayloadTypes(PHashTable, PHashTable, PHashTable, PDoubleList);
 STATUS populateSessionDescription(PKvsPeerConnection, PSessionDescription, PSessionDescription);
 STATUS findTransceiversByRemoteDescription(PKvsPeerConnection, PSessionDescription, PHashTable, PHashTable);
 STATUS setReceiversSsrc(PSessionDescription, PDoubleList);
