@@ -13,4 +13,10 @@ CMakeLists.txt.user
 *.vscode
 *.swp
 venv/
-
+cmake-*
+build-*
+open-source*
+android-test-app/app/.cxx
+android-test-app/.gradle
+.cache
+.claude
