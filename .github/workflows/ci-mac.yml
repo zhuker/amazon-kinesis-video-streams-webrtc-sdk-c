@@ -63,6 +63,25 @@ jobs:
                    -DENABLE_SIGNALING=OFF -DENABLE_SELF_CONTAINED=ON -DENABLE_AWS_SDK_IN_TESTS=OFF \
                    -DOPEN_SRC_INSTALL_PREFIX=$(pwd)/deps
           make -j$(sysctl -n hw.ncpu)
+          # Verify expected binaries were built as Mach-O arm64 executables.
+          # With ENABLE_SIGNALING=OFF, Master/Viewer are not built.
+          for exe in tst/webrtc_client_test \
+                     samples/customSignaling \
+                     samples/whepServer \
+                     samples/whipServer \
+                     samples/discoverNatBehavior \
+                     samples/pcapJitterBuffer \
+                     samples/pcapGcc \
+                     samples/pcapDump; do
+            if [ ! -x "$exe" ]; then
+              echo "Missing or non-executable: $exe"
+              exit 1
+            fi
+            file "$exe" | grep -q "Mach-O 64-bit executable arm64" || {
+              echo "Not a Mach-O arm64 executable: $(file "$exe")"
+              exit 1
+            }
+          done
           timeout 600 ./tst/webrtc_client_test --gtest_break_on_failure
         shell: bash
 
