@@ -142,28 +142,6 @@ STATUS createPayloadForOpusRed(UINT32 mtu, PBYTE opusFrame, UINT32 opusFrameLeng
         CHK(FALSE, retStatus);
     }
 
-    // One-shot logs per process: confirm end-to-end that RED wrapping is actually live on the wire.
-    // We log both the very first emit (for signal that writeFrame is running) and the first emit
-    // that actually carries a redundant block (for signal that the ring filled).
-    {
-        static BOOL redFirstEmitLogged = FALSE;
-        static BOOL redWithRedundancyLogged = FALSE;
-        static BOOL redFallbackLogged = FALSE;
-        if (!fallback && !redFirstEmitLogged) {
-            DLOGI("RED: emitting first RED-wrapped Opus packet (opusLen=%u bodyLen=%u redundancyBlocks=%u)", opusFrameLength, bodyBytes, chosenCount);
-            redFirstEmitLogged = TRUE;
-        }
-        if (!fallback && !redWithRedundancyLogged && chosenCount > 0) {
-            DLOGI("RED: first packet carrying redundancy (opusLen=%u bodyLen=%u redundancyBlocks=%u) — RED is live on the wire", opusFrameLength,
-                  bodyBytes, chosenCount);
-            redWithRedundancyLogged = TRUE;
-        }
-        if (fallback && !redFallbackLogged) {
-            DLOGW("RED: primary Opus frame %u bytes >= %u — falling back to plain Opus under Opus PT", opusFrameLength, RED_MAX_BLOCK_LEN);
-            redFallbackLogged = TRUE;
-        }
-    }
-
     CHK(*pPayloadLength >= bodyBytes && *pPayloadSubLenSize >= 1, STATUS_BUFFER_TOO_SMALL);
 
     pOut = payloadBuffer;
