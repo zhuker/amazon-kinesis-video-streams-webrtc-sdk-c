@@ -419,7 +419,7 @@ static void setupRoutes(httplib::Server& svr, WhipSession* session)
 {
     // Serve whipIndex.html at root
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/whipIndex.html");
+        std::string content = readFileContent("./html/whipIndex.html");
         if (content.empty()) {
             res.status = 404;
             res.set_content("   File not found", "text/plain");
@@ -430,7 +430,7 @@ static void setupRoutes(httplib::Server& svr, WhipSession* session)
 
     // Serve whipClient.js
     svr.Get("/whipClient.js", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/whipClient.js");
+        std::string content = readFileContent("./html/whipClient.js");
         if (content.empty()) {
             res.status = 404;
             res.set_content("File not found", "text/plain");

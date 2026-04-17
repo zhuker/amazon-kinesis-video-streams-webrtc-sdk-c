@@ -454,7 +454,7 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session)
 {
     // Serve index.html
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/index.html");
+        std::string content = readFileContent("./html/index.html");
         if (content.empty()) {
             res.status = 404;
             res.set_content("File not found", "text/plain");
@@ -465,7 +465,7 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session)
 
     // Serve client.js
     svr.Get("/client.js", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/client.js");
+        std::string content = readFileContent("./html/client.js");
         if (content.empty()) {
             res.status = 404;
             res.set_content("File not found", "text/plain");
@@ -474,10 +474,15 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session)
         }
     });
 
-    // Return ICE server configuration
+    // Return ICE server configuration. Emit an empty list when no STUN is configured
+    // so the browser's RTCPeerConnection constructor doesn't reject an empty URL.
     svr.Get("/ice-servers", [session](const httplib::Request&, httplib::Response& res) {
         CHAR json[512];
-        SNPRINTF(json, SIZEOF(json), "[{\"urls\": \"%s\"}]", session->stunServer);
+        if (STRLEN(session->stunServer) > 0) {
+            SNPRINTF(json, SIZEOF(json), "[{\"urls\": \"%s\"}]", session->stunServer);
+        } else {
+            SNPRINTF(json, SIZEOF(json), "[]");
+        }
         res.set_content(json, "application/json");
     });
 

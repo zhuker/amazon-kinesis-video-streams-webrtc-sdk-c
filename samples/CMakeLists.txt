@@ -64,6 +64,8 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h264SampleFrames" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/bbbH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/girH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h265SampleFrames" DESTINATION .)
+# html assets served by the WHEP/WHIP servers
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/html" DESTINATION .)
 
 if (ENABLE_SIGNALING)
 add_executable(
@@ -102,9 +104,6 @@ add_executable(
         whipServer.cpp)
 target_link_libraries(whipServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
 set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
-
-# Copy examples directory for WHEP/WHIP server static files
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/../examples" DESTINATION .)
 
 add_executable(
         discoverNatBehavior
