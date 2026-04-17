@@ -569,6 +569,7 @@ int main(int argc, char* argv[])
 
     // Initialize KVS WebRTC SDK
     printf("[WHEP] Initializing WebRTC SDK...\n");
+    SET_LOGGER_LOG_LEVEL(LOG_LEVEL_INFO);
     STATUS status = initKvsWebRtc();
     if (STATUS_FAILED(status)) {
         printf("[WHEP] Failed to initialize WebRTC SDK: 0x%08x\n", status);
