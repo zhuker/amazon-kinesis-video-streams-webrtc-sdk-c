@@ -20,7 +20,10 @@ function findAudioRedPt(sdp) {
     return null;
 }
 
-// Poll inbound-rtp audio stats and update the FEC readout.
+// Poll inbound-rtp audio stats. With RED on, each wire packet should average
+// ~1 + 4 + 160*(N+1) bytes. Chrome's audio-RED path does not populate the
+// fec* counters, but packetsDiscarded rises whenever a redundant block arrives
+// after its primary (the common case under no loss) — so it's a reliable proxy.
 async function reportFecStats() {
     if (!pc) return;
     try {
@@ -32,16 +35,23 @@ async function reportFecStats() {
             }
         });
         if (!audioInbound) return;
-        const received = audioInbound.fecPacketsReceived ?? 0;
-        const discarded = audioInbound.fecPacketsDiscarded ?? 0;
-        const fecBytes = audioInbound.fecBytesReceived ?? 0;
-        const used = Math.max(0, received - discarded);
-        document.getElementById('fec-packets-received').textContent = received;
-        document.getElementById('fec-packets-discarded').textContent = discarded;
-        document.getElementById('fec-bytes-received').textContent = fecBytes;
-        document.getElementById('fec-packets-used').textContent = used;
-        document.getElementById('fec-efficiency').textContent =
-            received > 0 ? ((used / received) * 100).toFixed(1) + '%' : '—';
+        const packetsReceived = audioInbound.packetsReceived ?? 0;
+        const bytesReceived = audioInbound.bytesReceived ?? 0;
+        const packetsDiscarded = audioInbound.packetsDiscarded ?? 0;
+        const packetsLost = audioInbound.packetsLost ?? 0;
+        const concealedSamples = audioInbound.concealedSamples ?? 0;
+        const concealmentEvents = audioInbound.concealmentEvents ?? 0;
+        const avg = packetsReceived > 0 ? (bytesReceived / packetsReceived).toFixed(1) : '—';
+        document.getElementById('audio-packets-received').textContent = packetsReceived;
+        document.getElementById('audio-bytes-received').textContent = bytesReceived;
+        document.getElementById('audio-avg-packet-bytes').textContent = avg;
+        document.getElementById('audio-packets-discarded').textContent = packetsDiscarded;
+        document.getElementById('audio-packets-lost').textContent = packetsLost;
+        document.getElementById('audio-concealed-samples').textContent = concealedSamples;
+        document.getElementById('audio-concealment-events').textContent = concealmentEvents;
+        document.getElementById('fec-packets-received').textContent = audioInbound.fecPacketsReceived ?? 0;
+        document.getElementById('fec-bytes-received').textContent = audioInbound.fecBytesReceived ?? 0;
+        document.getElementById('fec-packets-discarded').textContent = audioInbound.fecPacketsDiscarded ?? 0;
     } catch (e) {
         console.warn('getStats failed:', e);
     }
