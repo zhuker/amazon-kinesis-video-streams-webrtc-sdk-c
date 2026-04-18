@@ -191,8 +191,12 @@ static STATUS rtCalcFrameSize(PRealTimeJitterBufferInternal pInternal, UINT16 fi
 // Check if a frame is complete
 static BOOL rtFrameIsComplete(PRealTimeJitterBufferInternal pInternal, PRtFrameEntry pFrame)
 {
+    // RFC 7587 §4.2: an Opus transmitter SHALL set the RTP marker bit to 0,
+    // so hasEnd (which is derived from the marker bit) is unreliable for
+    // single-packet-per-frame codecs. Any packet that has been placed into
+    // the frame entry IS the complete frame.
     if (pInternal->alwaysSinglePacketFrames) {
-        return pFrame->hasEnd;
+        return pFrame->packetCount > 0;
     }
     if (!pFrame->hasStart || !pFrame->hasEnd) {
         return FALSE;

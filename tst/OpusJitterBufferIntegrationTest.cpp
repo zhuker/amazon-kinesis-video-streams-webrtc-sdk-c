@@ -624,7 +624,12 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         // one frame duration per swapped packet. Anything larger indicates
         // the buffer is waiting for a marker bit that an RFC 7587-compliant
         // Opus sender will never set. Only checked on the real-time buffer.
-        if (useRealTime) {
+        // Only enforce the tight latency budget on the real-time buffer at
+        // the 32 ms tier. At 5000 ms latency the buffer legitimately holds
+        // reordered frames much longer (trading latency for completeness)
+        // so it's not a useful bound there; the default buffer has broader
+        // deficiencies we already gate above.
+        if (useRealTime && maxLatencyMs == 32) {
             DOUBLE latencyBudgetMs = (maxReorderDistance > 0) ? 10.0 : 1.0;
             EXPECT_LT(avgDelayMs, latencyBudgetMs) << "Average frame delivery latency too high — jitter buffer is likely waiting for "
                                                       "the RTP marker bit, but RFC 7587 §4.2 mandates marker=0 for Opus";

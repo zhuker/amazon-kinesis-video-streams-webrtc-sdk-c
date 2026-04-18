@@ -628,7 +628,7 @@ static STATUS jitterBufferInternalParse(PJitterBufferInternal pInternal, BOOL bu
             if (curTimestamp == pInternal->headTimestamp) {
                 lastHeadFrameSeqNum = index;
                 seenHeadFramePacket = TRUE;
-                if (pCurPacket->header.marker) {
+                if (pCurPacket->header.marker || pInternal->alwaysSinglePacketFrames) {
                     headFrameEnded = TRUE;
                 }
             }
@@ -651,7 +651,7 @@ static STATUS jitterBufferInternalParse(PJitterBufferInternal pInternal, BOOL bu
                     sawGapSinceLastFrame = FALSE;
                     lastHeadFrameSeqNum = index;
                     seenHeadFramePacket = TRUE;
-                    headFrameEnded = pCurPacket->header.marker;
+                    headFrameEnded = pCurPacket->header.marker || pInternal->alwaysSinglePacketFrames;
                 } else if (seenHeadFramePacket && startDropIndex != index && (pInternal->headTimestamp < earliestAllowedTimestamp || bufferClosed)) {
                     pInternal->onFrameDroppedFn(pInternal->customData, startDropIndex, UINT16_DEC(index), pInternal->headTimestamp);
                     CHK_STATUS(defaultDropBufferData((PJitterBuffer) pInternal, startDropIndex, UINT16_DEC(index), curTimestamp));
@@ -661,7 +661,7 @@ static STATUS jitterBufferInternalParse(PJitterBufferInternal pInternal, BOOL bu
                     sawGapSinceLastFrame = FALSE;
                     lastHeadFrameSeqNum = index;
                     seenHeadFramePacket = TRUE;
-                    headFrameEnded = pCurPacket->header.marker;
+                    headFrameEnded = pCurPacket->header.marker || pInternal->alwaysSinglePacketFrames;
                     startDropIndex = index;
                 } else if (seenHeadFramePacket) {
                     break;
@@ -670,7 +670,7 @@ static STATUS jitterBufferInternalParse(PJitterBufferInternal pInternal, BOOL bu
                     startDropIndex = index;
                     lastHeadFrameSeqNum = index;
                     seenHeadFramePacket = TRUE;
-                    headFrameEnded = pCurPacket->header.marker;
+                    headFrameEnded = pCurPacket->header.marker || pInternal->alwaysSinglePacketFrames;
                     headFrameIsContiguous = TRUE;
                     sawGapSinceLastFrame = FALSE;
                 }
@@ -686,8 +686,11 @@ static STATUS jitterBufferInternalParse(PJitterBufferInternal pInternal, BOOL bu
                 containStartForEarliestFrame = TRUE;
             }
 
+            // RFC 7587 §4.2: an Opus transmitter SHALL set the RTP marker bit
+            // to 0, so single-packet-per-frame codecs cannot rely on the marker
+            // bit to signal frame end — treat the packet itself as end-of-frame.
             if ((pInternal->firstFrameProcessed || pInternal->alwaysSinglePacketFrames) && curTimestamp == pInternal->headTimestamp &&
-                pCurPacket->header.marker && containStartForEarliestFrame && headFrameIsContiguous) {
+                (pCurPacket->header.marker || pInternal->alwaysSinglePacketFrames) && containStartForEarliestFrame && headFrameIsContiguous) {
                 CHK_STATUS(pInternal->onFrameReadyFn(pInternal->customData, startDropIndex, index, curFrameSize));
                 CHK_STATUS(defaultDropBufferData((PJitterBuffer) pInternal, startDropIndex, index, curTimestamp));
                 pInternal->firstFrameProcessed = TRUE;
