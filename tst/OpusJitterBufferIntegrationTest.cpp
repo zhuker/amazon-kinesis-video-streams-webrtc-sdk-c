@@ -17,9 +17,11 @@ namespace webrtcclient {
 #define OPUS_INTEGRATION_TEST_MTU           1200
 #define OPUS_INTEGRATION_TEST_SSRC          0x12345678
 #define OPUS_INTEGRATION_TEST_PAYLOAD_TYPE  111
+#define OPUS_INTEGRATION_TEST_RED_PT        63
 
-// Parameter: <useRealTimeJitterBuffer, maxLatencyMs>
-class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::testing::WithParamInterface<std::tuple<bool, UINT32>> {
+// Parameter: <useRealTimeJitterBuffer, maxLatencyMs, redRedundancy>
+// redRedundancy = 0 disables RED; 1 and 2 are the supported levels.
+class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::testing::WithParamInterface<std::tuple<bool, UINT32, UINT8>> {
   protected:
     // Original opus frames read from disk; one file = one encoded opus frame.
     // loadFramesFromFolder populates data, sendPts (48 kHz RTP ticks in this
@@ -48,6 +50,9 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
     UINT32 mIntactFramesDropped;
 
     PJitterBuffer mJitterBuffer;
+
+    // RED sender state; non-NULL when the current run has useRed=true.
+    PRedSenderState mRedSenderState;
 
     UINT32 countFramesWithFlag(uint32_t flag) const
     {
@@ -86,6 +91,7 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         mTotalFramesSent = 0;
         mIntactFramesDropped = 0;
         mJitterBuffer = NULL;
+        mRedSenderState = NULL;
     }
 
     void TearDown() override
@@ -109,6 +115,9 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         if (mJitterBuffer != NULL) {
             freeJitterBuffer(&mJitterBuffer);
             mJitterBuffer = NULL;
+        }
+        if (mRedSenderState != NULL) {
+            freeRedSenderState(&mRedSenderState);
         }
     }
 
@@ -144,24 +153,46 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         UINT32 packetSize = 0;
         PBYTE rawPacket = NULL;
         UINT32 i = 0;
+        const bool useRed = (std::get<2>(GetParam()) > 0);
+        UINT8 emitPt = OPUS_INTEGRATION_TEST_PAYLOAD_TYPE;
 
-        CHK_STATUS(createPayloadForOpus(mMtu, frameData, frameSize, NULL, &payloadArray.payloadLength, NULL, &payloadArray.payloadSubLenSize));
+        if (useRed) {
+            // Two-call RED pack: first sizing, then real emit. The sender state's
+            // ring retains prior frames so packet N carries packet N-1 as redundancy.
+            BOOL fallback = FALSE;
+            UINT32 subLenCap = 1;
+            CHK_STATUS(createPayloadForOpusRed(mMtu, frameData, frameSize, timestamp, mRedSenderState, NULL, &payloadArray.payloadLength, NULL,
+                                               &subLenCap, &fallback));
+            payloadArray.payloadBuffer = (PBYTE) MEMALLOC(payloadArray.payloadLength);
+            payloadArray.payloadSubLength = (PUINT32) MEMALLOC(SIZEOF(UINT32));
+            CHK(payloadArray.payloadBuffer != NULL && payloadArray.payloadSubLength != NULL, STATUS_NOT_ENOUGH_MEMORY);
+            payloadArray.payloadSubLenSize = 1;
+            UINT32 subLenCap2 = 1;
+            CHK_STATUS(createPayloadForOpusRed(mMtu, frameData, frameSize, timestamp, mRedSenderState, payloadArray.payloadBuffer,
+                                               &payloadArray.payloadLength, payloadArray.payloadSubLength, &subLenCap2, &fallback));
+            payloadArray.payloadSubLenSize = 1;
+            // When fallback (primary >= 1024 B, doesn't fit 10-bit RED length field) the
+            // body is bare Opus under the Opus PT; otherwise use the RED PT.
+            emitPt = fallback ? OPUS_INTEGRATION_TEST_PAYLOAD_TYPE : OPUS_INTEGRATION_TEST_RED_PT;
+        } else {
+            CHK_STATUS(createPayloadForOpus(mMtu, frameData, frameSize, NULL, &payloadArray.payloadLength, NULL, &payloadArray.payloadSubLenSize));
 
-        payloadArray.payloadBuffer = (PBYTE) MEMALLOC(payloadArray.payloadLength);
-        payloadArray.payloadSubLength = (PUINT32) MEMALLOC(payloadArray.payloadSubLenSize * SIZEOF(UINT32));
-        CHK(payloadArray.payloadBuffer != NULL && payloadArray.payloadSubLength != NULL, STATUS_NOT_ENOUGH_MEMORY);
+            payloadArray.payloadBuffer = (PBYTE) MEMALLOC(payloadArray.payloadLength);
+            payloadArray.payloadSubLength = (PUINT32) MEMALLOC(payloadArray.payloadSubLenSize * SIZEOF(UINT32));
+            CHK(payloadArray.payloadBuffer != NULL && payloadArray.payloadSubLength != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
-        CHK_STATUS(createPayloadForOpus(mMtu, frameData, frameSize, payloadArray.payloadBuffer, &payloadArray.payloadLength,
-                                        payloadArray.payloadSubLength, &payloadArray.payloadSubLenSize));
+            CHK_STATUS(createPayloadForOpus(mMtu, frameData, frameSize, payloadArray.payloadBuffer, &payloadArray.payloadLength,
+                                            payloadArray.payloadSubLength, &payloadArray.payloadSubLenSize));
+        }
 
-        // Opus always produces exactly one sub-packet per frame.
+        // Opus/RED both produce exactly one sub-packet per frame.
         CHK(payloadArray.payloadSubLenSize == 1, STATUS_INVALID_OPERATION);
 
         pPacketList = (PRtpPacket) MEMALLOC(payloadArray.payloadSubLenSize * SIZEOF(RtpPacket));
         CHK(pPacketList != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
-        CHK_STATUS(constructRtpPackets(&payloadArray, OPUS_INTEGRATION_TEST_PAYLOAD_TYPE, *pSeqNum, timestamp, OPUS_INTEGRATION_TEST_SSRC,
-                                       pPacketList, payloadArray.payloadSubLenSize));
+        CHK_STATUS(
+            constructRtpPackets(&payloadArray, emitPt, *pSeqNum, timestamp, OPUS_INTEGRATION_TEST_SSRC, pPacketList, payloadArray.payloadSubLenSize));
 
         for (i = 0; i < payloadArray.payloadSubLenSize; i++) {
             pPacketCopy = NULL;
@@ -217,14 +248,35 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
 
     void pushPacketsWithIndices(const std::vector<UINT32>& indices)
     {
+        const bool useRed = (std::get<2>(GetParam()) > 0);
         for (UINT32 idx : indices) {
-            if (idx < mAllPackets.size() && mAllPackets[idx].pPacket != NULL) {
+            if (idx >= mAllPackets.size() || mAllPackets[idx].pPacket == NULL) {
+                continue;
+            }
+            PRtpPacket pWire = mAllPackets[idx].pPacket;
+            mAllPackets[idx].pPacket = NULL;
+
+            if (useRed && pWire->header.payloadType == OPUS_INTEGRATION_TEST_RED_PT) {
+                // Mirror the production receive path: split the RED wire packet into
+                // synthetic per-Opus-frame packets and push each through the JB.
+                PRtpPacket synths[RED_MAX_BLOCKS] = {};
+                UINT32 produced = 0;
+                STATUS s = splitRedRtpPacket(pWire, OPUS_INTEGRATION_TEST_PAYLOAD_TYPE, synths, RED_MAX_BLOCKS, &produced, nullptr);
+                ASSERT_EQ(STATUS_SUCCESS, s);
+                for (UINT32 k = 0; k < produced; k++) {
+                    BOOL discarded = FALSE;
+                    ASSERT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, synths[k], &discarded));
+                    if (!discarded && !synths[k]->isSynthetic) {
+                        mTotalPacketsSent++;
+                    }
+                }
+                freeRtpPacket(&pWire);
+            } else {
                 BOOL discarded = FALSE;
-                ASSERT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, mAllPackets[idx].pPacket, &discarded));
+                ASSERT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, pWire, &discarded));
                 if (!discarded) {
                     mTotalPacketsSent++;
                 }
-                mAllPackets[idx].pPacket = NULL;
             }
         }
     }
@@ -356,6 +408,28 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
             }
         }
         return result;
+    }
+
+    // Drops that RED with the given redundancy level N cannot recover. Packet d is
+    // recoverable if ANY of packets d+1 .. d+N arrived — each of those carries d as
+    // a redundant block because the sender ring retained it.
+    std::set<UINT32> computeUnrecoverableDrops(const std::set<UINT32>& dropIndices, UINT32 totalPackets, UINT8 redundancy) const
+    {
+        std::set<UINT32> unrecoverable;
+        for (UINT32 d : dropIndices) {
+            bool recovered = false;
+            for (UINT8 n = 1; n <= redundancy; n++) {
+                UINT32 candidate = d + n;
+                if (candidate < totalPackets && dropIndices.count(candidate) == 0) {
+                    recovered = true;
+                    break;
+                }
+            }
+            if (!recovered) {
+                unrecoverable.insert(d);
+            }
+        }
+        return unrecoverable;
     }
 
     // Count frames silently lost due to latency eviction.
@@ -533,6 +607,10 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         mIntactFramesDropped = 0;
 
         initializeOpusJitterBuffer();
+        UINT8 redundancy = std::get<2>(GetParam());
+        if (redundancy > 0) {
+            ASSERT_EQ(STATUS_SUCCESS, createRedSenderState(redundancy, OPUS_INTEGRATION_TEST_PAYLOAD_TYPE, &mRedSenderState));
+        }
         mOriginalFrames = loadFramesFromFolder((PCHAR) sampleFolder, numFrames, RTC_CODEC_OPUS,
                                                /*timescale=*/OPUS_INTEGRATION_TEST_CLOCK_RATE,
                                                /*frameDuration=*/OPUS_INTEGRATION_TEST_FRAME_SAMPLES,
@@ -544,7 +622,11 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
 
         auto dropIndices = dropGen(totalPackets);
         auto analysis = analyzeFrameLoss(dropIndices);
-        DLOGI("Frame loss analysis: fullyDropped=%u, intact=%u", analysis.framesFullyDropped, analysis.framesIntact);
+        const bool useRed = (redundancy > 0);
+        const std::set<UINT32> effectiveDrops = useRed ? computeUnrecoverableDrops(dropIndices, totalPackets, redundancy) : dropIndices;
+        const UINT32 effectiveFramesDropped = (UINT32) effectiveDrops.size();
+        DLOGI("Frame loss analysis: fullyDropped=%u, intact=%u, redundancy=%u, effectiveDropped=%u", analysis.framesFullyDropped,
+              analysis.framesIntact, (UINT32) redundancy, effectiveFramesDropped);
 
         std::vector<UINT32> sendIndices;
         if (maxReorderDistance > 0) {
@@ -592,9 +674,11 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         DLOGI("Frames silently lost to latency: %u", silentlyLost);
 
         UINT32 accountedFrames = receivedAfterFlush + droppedAfterFlush;
-        UINT32 expectedAccountedFrames = numFrames - analysis.framesFullyDropped - silentlyLost;
-        DLOGI("Frame accounting: received=%u + dropped=%u = %u, expected=%u (NUM_FRAMES=%u - fullyDropped=%u - silentlyLost=%u)", receivedAfterFlush,
-              droppedAfterFlush, accountedFrames, expectedAccountedFrames, numFrames, analysis.framesFullyDropped, silentlyLost);
+        // With RED on, drops that have the next packet intact are recoverable, so the
+        // frame accounting subtracts only the truly-unrecoverable drops.
+        UINT32 expectedAccountedFrames = numFrames - effectiveFramesDropped - silentlyLost;
+        DLOGI("Frame accounting: received=%u + dropped=%u = %u, expected=%u (NUM_FRAMES=%u - effectiveDropped=%u - silentlyLost=%u)",
+              receivedAfterFlush, droppedAfterFlush, accountedFrames, expectedAccountedFrames, numFrames, effectiveFramesDropped, silentlyLost);
 
         // The default jitter buffer is known to silently lose or double-fire
         // callbacks on reordered frames, and the deficiency is more visible
@@ -605,17 +689,32 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         bool useRealTime = std::get<0>(GetParam());
         bool isDefaultKnownDeficient = !useRealTime && (maxLatencyMs < 5000 || maxReorderDistance > 0);
         if (!isDefaultKnownDeficient) {
-            EXPECT_EQ(expectedAccountedFrames, accountedFrames)
-                << "Frame accounting mismatch: received+dropped=" << accountedFrames << " expected=" << expectedAccountedFrames;
+            if (useRed && maxReorderDistance > 0) {
+                // With RED under reorder, the silently-lost heuristic is a pessimistic
+                // upper bound: a primary that arrives too late to advance the tail may
+                // still have been delivered via a redundant block carried in an earlier-
+                // arriving wire packet. So the accounting becomes a lower bound.
+                EXPECT_GE(accountedFrames, expectedAccountedFrames)
+                    << "Frame accounting regressed: received+dropped=" << accountedFrames << " expected>=" << expectedAccountedFrames;
+                EXPECT_LE(accountedFrames, numFrames - effectiveFramesDropped)
+                    << "Frame accounting exceeded ceiling: received+dropped=" << accountedFrames
+                    << " ceiling=" << (numFrames - effectiveFramesDropped);
+            } else {
+                EXPECT_EQ(expectedAccountedFrames, accountedFrames)
+                    << "Frame accounting mismatch: received+dropped=" << accountedFrames << " expected=" << expectedAccountedFrames;
+            }
         }
 
-        // Upper bound: can't receive more than intact frames. Opus has no
-        // partial-delivery path, so every received frame must correspond to
-        // an intact source packet.
-        EXPECT_LE(receivedAfterFlush, analysis.framesIntact) << "More frames received than possible";
+        // Upper bound: can't receive more than intact frames — except with RED,
+        // where recovered frames also count as received.
+        UINT32 maxReceivable = useRed ? (numFrames - effectiveFramesDropped) : analysis.framesIntact;
+        EXPECT_LE(receivedAfterFlush, maxReceivable) << "More frames received than possible";
 
         if (!isDefaultKnownDeficient) {
-            verifyReceivedFramesMatchOriginals(dropIndices);
+            // With RED, some "dropped" wire packets arrive as redundant blocks, so the
+            // received-payload set includes recovered frames. Suppress the dropIndices
+            // filter in that case — verify against the full originals set instead.
+            verifyReceivedFramesMatchOriginals(useRed ? effectiveDrops : dropIndices);
         }
 
         // Opus is one-packet-per-frame, so with alwaysSinglePacketFrames=TRUE
@@ -696,10 +795,14 @@ TEST_P(OpusJitterBufferIntegrationTest, singleDropInFirstFrameDelaysAll)
     runPacketLossTest("../samples/opusSampleFrames", 500, dropFirstPacket);
 }
 
-INSTANTIATE_TEST_SUITE_P(Default5000ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(false, 5000u)));
-INSTANTIATE_TEST_SUITE_P(Default32ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(false, 32u)));
-INSTANTIATE_TEST_SUITE_P(RealTime5000ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 5000u)));
-INSTANTIATE_TEST_SUITE_P(RealTime32ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 32u)));
+INSTANTIATE_TEST_SUITE_P(Default5000ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(false, 5000u, (UINT8) 0)));
+INSTANTIATE_TEST_SUITE_P(Default32ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(false, 32u, (UINT8) 0)));
+INSTANTIATE_TEST_SUITE_P(RealTime5000ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 5000u, (UINT8) 0)));
+INSTANTIATE_TEST_SUITE_P(RealTime32ms, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 32u, (UINT8) 0)));
+INSTANTIATE_TEST_SUITE_P(RealTime5000msRedN1, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 5000u, (UINT8) 1)));
+INSTANTIATE_TEST_SUITE_P(RealTime32msRedN1, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 32u, (UINT8) 1)));
+INSTANTIATE_TEST_SUITE_P(RealTime5000msRedN2, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 5000u, (UINT8) 2)));
+INSTANTIATE_TEST_SUITE_P(RealTime32msRedN2, OpusJitterBufferIntegrationTest, ::testing::Values(std::make_tuple(true, 32u, (UINT8) 2)));
 
 } // namespace webrtcclient
 } // namespace video
