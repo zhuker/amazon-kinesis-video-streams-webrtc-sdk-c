@@ -54,6 +54,13 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
     // RED sender state; non-NULL when the current run has useRed=true.
     PRedSenderState mRedSenderState;
 
+    // Production-side inbound-RTP FEC counters, mirrored by the test so we can
+    // assert RED behaviour. Incremented in pushPacketsWithIndices and matches
+    // what sendPacketToRtpReceiver would set on the real PeerConnection path.
+    UINT32 mFecPacketsReceived;
+    UINT64 mFecBytesReceived;
+    UINT32 mFecPacketsDiscarded;
+
     UINT32 countFramesWithFlag(uint32_t flag) const
     {
         UINT32 n = 0;
@@ -92,6 +99,9 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         mIntactFramesDropped = 0;
         mJitterBuffer = NULL;
         mRedSenderState = NULL;
+        mFecPacketsReceived = 0;
+        mFecBytesReceived = 0;
+        mFecPacketsDiscarded = 0;
     }
 
     void TearDown() override
@@ -264,9 +274,20 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
                 STATUS s = splitRedRtpPacket(pWire, OPUS_INTEGRATION_TEST_PAYLOAD_TYPE, synths, RED_MAX_BLOCKS, &produced, nullptr);
                 ASSERT_EQ(STATUS_SUCCESS, s);
                 for (UINT32 k = 0; k < produced; k++) {
+                    PRtpPacket pSyn = synths[k];
+                    // Capture before push — jitterBufferPush may free pSyn.
+                    const BOOL wasSynthetic = pSyn->isSynthetic;
+                    const UINT32 synPayloadLen = pSyn->payloadLength;
+                    if (wasSynthetic) {
+                        mFecPacketsReceived++;
+                        mFecBytesReceived += synPayloadLen;
+                    }
                     BOOL discarded = FALSE;
-                    ASSERT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, synths[k], &discarded));
-                    if (!discarded && !synths[k]->isSynthetic) {
+                    ASSERT_EQ(STATUS_SUCCESS, jitterBufferPush(mJitterBuffer, pSyn, &discarded));
+                    if (wasSynthetic && discarded) {
+                        mFecPacketsDiscarded++;
+                    }
+                    if (!discarded && !wasSynthetic) {
                         mTotalPacketsSent++;
                     }
                 }
@@ -709,6 +730,52 @@ class OpusJitterBufferIntegrationTest : public WebRtcClientTestBase, public ::te
         // where recovered frames also count as received.
         UINT32 maxReceivable = useRed ? (numFrames - effectiveFramesDropped) : analysis.framesIntact;
         EXPECT_LE(receivedAfterFlush, maxReceivable) << "More frames received than possible";
+
+        // Tight recovery bound. When RED is on (and we aren't in the fuzzy-reorder case
+        // where silently-lost accounting is pessimistic), the dropped callback should
+        // fire ONLY for frames RED genuinely couldn't save — i.e. at most
+        // effectiveFramesDropped. If more than that fire, a recoverable frame slipped
+        // through to the dropped path instead of being delivered via its redundant copy.
+        if (useRed && maxReorderDistance == 0 && !isDefaultKnownDeficient) {
+            EXPECT_LE(droppedAfterFlush, effectiveFramesDropped)
+                << "With RED, dropped callback should fire at most for unrecoverable frames; " << droppedAfterFlush
+                << " > effectiveDropped=" << effectiveFramesDropped << " — a recoverable frame slipped through to the dropped path";
+        }
+
+        // RED stats parity with production sendPacketToRtpReceiver. Each redundant block
+        // we split out should increment fecPacketsReceived exactly once, its payload
+        // should accumulate in fecBytesReceived, and redundants whose primary already
+        // arrived must be rejected by the JB dedup and counted in fecPacketsDiscarded.
+        if (useRed) {
+            // Every wire packet after the first produces (up to) `redundancy` redundant
+            // blocks. Expected fec count is between (totalPackets - redundancy) (pure
+            // startup-ramp lower bound) and totalPackets * redundancy (fully populated).
+            if (totalPackets > redundancy) {
+                EXPECT_GT(mFecPacketsReceived, 0u) << "RED on but no redundant blocks counted";
+                EXPECT_LE(mFecPacketsReceived, totalPackets * redundancy) << "fecPacketsReceived exceeded theoretical max";
+                EXPECT_GT(mFecBytesReceived, 0u);
+            }
+            EXPECT_LE(mFecPacketsDiscarded, mFecPacketsReceived);
+            DLOGI("RED stats: fecPacketsReceived=%u, fecBytesReceived=%llu, fecPacketsDiscarded=%u", mFecPacketsReceived,
+                  (unsigned long long) mFecBytesReceived, mFecPacketsDiscarded);
+
+            // Tight recovery invariant: redundants that are NOT discarded are exactly
+            // the ones that filled a gap left by a dropped primary. So
+            //   fecPacketsReceived - fecPacketsDiscarded
+            // must equal (originalDrops - effectiveDropped) — the number of drops RED
+            // recovered. Only safe in no-reorder runs (reorder changes arrival order,
+            // breaking the "redundant always arrives after its primary" invariant).
+            if (maxReorderDistance == 0 && !isDefaultKnownDeficient) {
+                UINT32 recoveredByRed = mFecPacketsReceived - mFecPacketsDiscarded;
+                UINT32 expectedRecovered = analysis.framesFullyDropped - effectiveFramesDropped;
+                EXPECT_EQ(recoveredByRed, expectedRecovered) << "fec(received-discarded)=" << recoveredByRed
+                                                             << " should equal frames recovered via "
+                                                                "redundancy ("
+                                                             << expectedRecovered
+                                                             << ") — a redundant either failed to replace its lost primary, or "
+                                                                "was counted as a recovery when its primary actually arrived";
+            }
+        }
 
         if (!isDefaultKnownDeficient) {
             // With RED, some "dropped" wire packets arrive as redundant blocks, so the
