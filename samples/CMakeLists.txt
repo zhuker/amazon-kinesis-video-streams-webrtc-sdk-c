@@ -64,8 +64,17 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h264SampleFrames" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/bbbH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/girH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h265SampleFrames" DESTINATION .)
-# html assets served by the WHEP/WHIP servers
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/html" DESTINATION .)
+
+# Mirror the html/ directory into the build output on every build so edits to
+# index.html / client.js show up without re-running CMake. file(COPY ...) only
+# runs at configure time. The whepServer / whipServer targets below depend on
+# this, so building either one re-syncs the html assets.
+add_custom_target(samples_html ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/html"
+            "${CMAKE_CURRENT_BINARY_DIR}/html"
+    COMMENT "Syncing samples/html → build"
+    VERBATIM)
 
 if (ENABLE_SIGNALING)
 add_executable(
@@ -96,6 +105,7 @@ add_executable(
         whepServer.cpp)
 target_link_libraries(whepServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
 set_target_properties(whepServer PROPERTIES CXX_STANDARD 17)
+add_dependencies(whepServer samples_html)
 
 # WHIP Server (C++ HTTP-based WebRTC ingestion per RFC 9725)
 add_executable(
@@ -104,6 +114,7 @@ add_executable(
         whipServer.cpp)
 target_link_libraries(whipServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
 set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
+add_dependencies(whipServer samples_html)
 
 add_executable(
         discoverNatBehavior

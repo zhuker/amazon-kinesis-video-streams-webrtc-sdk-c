@@ -35,6 +35,7 @@ struct WhepSession {
     std::thread audioThread;
     char stunServer[256];
     bool enableAudio;
+    bool iceLiteMode;
 };
 
 static WhepSession g_session;
@@ -491,7 +492,7 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session)
 }
 
 // Initialize session
-static void initSession(WhepSession* session, const char* stunServer, bool enableAudio)
+static void initSession(WhepSession* session, const char* stunServer, bool enableAudio, bool iceLiteMode)
 {
     MEMSET(session, 0, SIZEOF(WhepSession));
 
@@ -500,6 +501,7 @@ static void initSession(WhepSession* session, const char* stunServer, bool enabl
     session->rtcConfig.kvsRtcConfiguration.iceCandidateNominationTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
     session->rtcConfig.kvsRtcConfiguration.iceConnectionCheckTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
     session->rtcConfig.kvsRtcConfiguration.useRedForOpus = TRUE;
+    session->rtcConfig.kvsRtcConfiguration.iceLiteMode = iceLiteMode ? TRUE : FALSE;
     if (STRLEN(stunServer) > 0) {
         STRNCPY(session->rtcConfig.iceServers[0].urls, stunServer, MAX_ICE_CONFIG_URI_LEN);
         STRNCPY(session->stunServer, stunServer, SIZEOF(session->stunServer) - 1);
@@ -507,6 +509,7 @@ static void initSession(WhepSession* session, const char* stunServer, bool enabl
 
     // Audio config
     session->enableAudio = enableAudio;
+    session->iceLiteMode = iceLiteMode;
 
     // Initialize atomics
     session->iceGatheringDone.store(false);
@@ -549,6 +552,7 @@ int main(int argc, char* argv[])
     // const char* stunServer = "stun:stun.l.google.com:19302";
     const char* stunServer = "";
     bool enableAudio = false;
+    bool iceLiteMode = false;
 
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
@@ -558,11 +562,14 @@ int main(int argc, char* argv[])
             stunServer = argv[++i];
         } else if (strcmp(argv[i], "--audio") == 0) {
             enableAudio = true;
+        } else if (strcmp(argv[i], "--ice-lite") == 0) {
+            iceLiteMode = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("Usage: %s [--port PORT] [--stun STUN_URL] [--audio]\n", argv[0]);
+            printf("Usage: %s [--port PORT] [--stun STUN_URL] [--audio] [--ice-lite]\n", argv[0]);
             printf("  --port PORT     HTTP server port (default: 8080)\n");
-            printf("  --stun STUN_URL STUN server URL (default: stun:stun.l.google.com:19302)\n");
+            printf("  --stun STUN_URL STUN server URL (default: none)\n");
             printf("  --audio         Enable audio streaming (default: disabled)\n");
+            printf("  --ice-lite      Run as an ICE-lite agent (host-only, never probes).\n");
             return 0;
         }
     }
@@ -577,7 +584,7 @@ int main(int argc, char* argv[])
     }
 
     // Initialize session
-    initSession(&g_session, stunServer, enableAudio);
+    initSession(&g_session, stunServer, enableAudio, iceLiteMode);
 
     // Create HTTP server
     httplib::Server svr;
@@ -588,8 +595,9 @@ int main(int argc, char* argv[])
 
     // Start listening
     printf("[WHEP] WHEP Server listening on http://0.0.0.0:%d\n", port);
-    printf("[WHEP] Using STUN server: %s\n", stunServer);
+    printf("[WHEP] Using STUN server: %s\n", STRLEN(stunServer) > 0 ? stunServer : "(none)");
     printf("[WHEP] Audio streaming: %s\n", enableAudio ? "enabled" : "disabled");
+    printf("[WHEP] ICE-lite mode: %s\n", iceLiteMode ? "enabled" : "disabled");
     printf("[WHEP] Open browser to http://localhost:%d and click Start\n", port);
 
     svr.listen("0.0.0.0", port);
