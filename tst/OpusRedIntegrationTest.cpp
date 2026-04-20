@@ -217,14 +217,14 @@ TEST_P(OpusRedIntegrationTest, isolatedLossesAreRecovered)
     }
     deliverAll(drops);
 
-    // Every timestamp should still show up in delivered (or dropped; the RealTimeJB flushes
-    // everything). Union them for the assertion.
+    // Every original timestamp should show up in delivered (or dropped; the RealTimeJB flushes
+    // everything). `seen` may also contain the trailing flush-packet ts we push at the end of
+    // deliverAll to force the classic JB to recognize the last frame as complete, which is
+    // delivery-time behavior we don't care about here.
     std::set<UINT32> seen(mCtx.deliveredTimestamps.begin(), mCtx.deliveredTimestamps.end());
     for (UINT32 t : mCtx.droppedTimestamps) {
         seen.insert(t);
     }
-    EXPECT_EQ(OPUS_RED_TEST_FRAME_COUNT, seen.size());
-    // All N original timestamps must be in the delivered set (RED recovered them).
     for (UINT32 i = 0; i < OPUS_RED_TEST_FRAME_COUNT; i++) {
         UINT32 ts = 1000 + i * OPUS_RED_TEST_TS_INCREMENT;
         EXPECT_NE(seen.find(ts), seen.end()) << "timestamp " << ts << " (frame " << i << ") never delivered";
