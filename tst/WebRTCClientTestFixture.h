@@ -294,7 +294,7 @@ class WebRtcClientTestBase : public ::testing::Test {
     }
 
     bool connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, PCHAR pOfferCertFingerprint = NULL,
-                         PCHAR pAnswerCertFingerprint = NULL);
+                         PCHAR pAnswerCertFingerprint = NULL, bool forwardOfferCandidates = true);
     void addTrackToPeerConnection(PRtcPeerConnection pRtcPeerConnection, PRtcMediaStreamTrack track, PRtcRtpTransceiver* transceiver, RTC_CODEC codec,
                                   MEDIA_STREAM_TRACK_KIND kind);
     void getIceServers(PRtcConfiguration pRtcConfiguration);

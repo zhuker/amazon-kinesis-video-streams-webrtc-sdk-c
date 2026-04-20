@@ -72,6 +72,30 @@ TEST_F(PeerConnectionFunctionalityTest, connectFullToLitePeer)
     freePeerConnection(&answerPc);
 }
 
+// With forwardOfferCandidates=false, the full (offerer) peer never emits candidates to the lite (answerer) peer —
+// neither in the initial SDP (trickle mode) nor through the trickle callback. Lite must still reach CONNECTED by
+// learning the full peer's source address via peer-reflexive discovery from the first incoming binding request.
+// This validates RFC 8445 §7.3.1.3 on the lite side.
+TEST_F(PeerConnectionFunctionalityTest, liteConnectsWhenFullEmitsNoCandidates)
+{
+    RtcConfiguration fullCfg{}, liteCfg{};
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+
+    initRtcConfiguration(&fullCfg);
+    initRtcConfiguration(&liteCfg);
+    liteCfg.kvsRtcConfiguration.iceLiteMode = TRUE;
+
+    ASSERT_EQ(createPeerConnection(&fullCfg, &offerPc), STATUS_SUCCESS);
+    ASSERT_EQ(createPeerConnection(&liteCfg, &answerPc), STATUS_SUCCESS);
+
+    EXPECT_TRUE(connectTwoPeers(offerPc, answerPc, NULL, NULL, /*forwardOfferCandidates=*/false));
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+}
+
 // Proves that announcedIpAddress genuinely rewrites the address the full peer probes: the lite peer emits host
 // candidates pointing at an unreachable documentation IP, the full peer tries and fails to send STUN binding
 // requests to it (ENETUNREACH), and both agents end up in FAILED rather than CONNECTED. If the rewrite were purely

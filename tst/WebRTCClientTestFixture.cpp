@@ -129,7 +129,7 @@ void WebRtcClientTestBase::TearDown()
 // in the given amount of time. Return false if they don't go to connected in
 // the expected amounted of time
 bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, PCHAR pOfferCertFingerprint,
-                                           PCHAR pAnswerCertFingerprint)
+                                           PCHAR pAnswerCertFingerprint, bool forwardOfferCandidates)
 {
     RtcSessionDescriptionInit sdp;
     PeerContainer offer;
@@ -154,6 +154,13 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
         }
     };
 
+    // When forwardOfferCandidates is false, the offer peer's candidates are intentionally dropped so the answerer
+    // never learns them and must rely on peer-reflexive discovery from incoming binding requests.
+    auto dropCandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
+        UNUSED_PARAM(customData);
+        UNUSED_PARAM(candidateStr);
+    };
+
     auto onICECandidateHdlrDone = [](UINT64 customData, PCHAR candidateStr) -> void {
         UNUSED_PARAM(customData);
         UNUSED_PARAM(candidateStr);
@@ -164,7 +171,11 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     answer.pc = answerPc;
     answer.client = this;
 
-    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) &answer, onICECandidateHdlr));
+    if (forwardOfferCandidates) {
+        EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) &answer, onICECandidateHdlr));
+    } else {
+        EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, dropCandidateHdlr));
+    }
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) &offer, onICECandidateHdlr));
 
     auto onICEConnectionStateChangeHdlr = [](UINT64 customData, RTC_PEER_CONNECTION_STATE newState) -> void {
