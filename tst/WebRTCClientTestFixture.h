@@ -294,7 +294,14 @@ class WebRtcClientTestBase : public ::testing::Test {
     }
 
     bool connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, PCHAR pOfferCertFingerprint = NULL,
-                         PCHAR pAnswerCertFingerprint = NULL, bool forwardOfferCandidates = true);
+                         PCHAR pAnswerCertFingerprint = NULL);
+
+    // Non-trickle variant: starts gathering on both PCs, waits for each to signal gathering completion, then
+    // exchanges post-gathering SDPs (containing a=candidate lines inline). Optional strip flags remove all
+    // a=candidate: lines from the offer or answer SDP before it is handed to the remote peer — use either to
+    // exercise peer-reflexive discovery on the receiving side. Returns true iff both PCs reach CONNECTED.
+    bool connectTwoPeersNoTrickle(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, bool stripOfferCandidates = false,
+                                  bool stripAnswerCandidates = false);
     void addTrackToPeerConnection(PRtcPeerConnection pRtcPeerConnection, PRtcMediaStreamTrack track, PRtcRtpTransceiver* transceiver, RTC_CODEC codec,
                                   MEDIA_STREAM_TRACK_KIND kind);
     void getIceServers(PRtcConfiguration pRtcConfiguration);

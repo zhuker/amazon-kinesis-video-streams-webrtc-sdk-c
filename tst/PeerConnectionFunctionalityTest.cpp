@@ -72,10 +72,10 @@ TEST_F(PeerConnectionFunctionalityTest, connectFullToLitePeer)
     freePeerConnection(&answerPc);
 }
 
-// With forwardOfferCandidates=false, the full (offerer) peer never emits candidates to the lite (answerer) peer —
-// neither in the initial SDP (trickle mode) nor through the trickle callback. Lite must still reach CONNECTED by
-// learning the full peer's source address via peer-reflexive discovery from the first incoming binding request.
-// This validates RFC 8445 §7.3.1.3 on the lite side.
+// Non-trickle exchange where the full (offerer) peer's offer SDP is handed to lite with every a=candidate: line
+// stripped. Lite never sees the full peer's advertised addresses — neither in the SDP nor via trickle, since
+// there is no trickle channel. Lite must still reach CONNECTED by learning the full peer's source address via
+// peer-reflexive discovery from the first incoming binding request. Validates RFC 8445 §7.3.1.3 on the lite side.
 TEST_F(PeerConnectionFunctionalityTest, liteConnectsWhenFullEmitsNoCandidates)
 {
     RtcConfiguration fullCfg{}, liteCfg{};
@@ -88,7 +88,7 @@ TEST_F(PeerConnectionFunctionalityTest, liteConnectsWhenFullEmitsNoCandidates)
     ASSERT_EQ(createPeerConnection(&fullCfg, &offerPc), STATUS_SUCCESS);
     ASSERT_EQ(createPeerConnection(&liteCfg, &answerPc), STATUS_SUCCESS);
 
-    EXPECT_TRUE(connectTwoPeers(offerPc, answerPc, NULL, NULL, /*forwardOfferCandidates=*/false));
+    EXPECT_TRUE(connectTwoPeersNoTrickle(offerPc, answerPc, /*stripOfferCandidates=*/true));
 
     closePeerConnection(offerPc);
     closePeerConnection(answerPc);

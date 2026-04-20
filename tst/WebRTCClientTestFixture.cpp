@@ -129,7 +129,7 @@ void WebRtcClientTestBase::TearDown()
 // in the given amount of time. Return false if they don't go to connected in
 // the expected amounted of time
 bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, PCHAR pOfferCertFingerprint,
-                                           PCHAR pAnswerCertFingerprint, bool forwardOfferCandidates)
+                                           PCHAR pAnswerCertFingerprint)
 {
     RtcSessionDescriptionInit sdp;
     PeerContainer offer;
@@ -154,13 +154,6 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
         }
     };
 
-    // When forwardOfferCandidates is false, the offer peer's candidates are intentionally dropped so the answerer
-    // never learns them and must rely on peer-reflexive discovery from incoming binding requests.
-    auto dropCandidateHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
-        UNUSED_PARAM(customData);
-        UNUSED_PARAM(candidateStr);
-    };
-
     auto onICECandidateHdlrDone = [](UINT64 customData, PCHAR candidateStr) -> void {
         UNUSED_PARAM(customData);
         UNUSED_PARAM(candidateStr);
@@ -171,11 +164,7 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     answer.pc = answerPc;
     answer.client = this;
 
-    if (forwardOfferCandidates) {
-        EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) &answer, onICECandidateHdlr));
-    } else {
-        EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, dropCandidateHdlr));
-    }
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) &answer, onICECandidateHdlr));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) &offer, onICECandidateHdlr));
 
     auto onICEConnectionStateChangeHdlr = [](UINT64 customData, RTC_PEER_CONNECTION_STATE newState) -> void {
@@ -219,6 +208,88 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
 
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, onICECandidateHdlrDone));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) 0, onICECandidateHdlrDone));
+
+    return ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) == 2;
+}
+
+// Non-trickle variant of connectTwoPeers. See header for parameter semantics.
+bool WebRtcClientTestBase::connectTwoPeersNoTrickle(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, bool stripOfferCandidates,
+                                                    bool stripAnswerCandidates)
+{
+    RtcSessionDescriptionInit sdp;
+    SIZE_T offerDoneGather = 0, answerDoneGather = 0;
+    UINT64 timeout;
+
+    auto onDoneGatherHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
+        if (candidateStr == NULL) {
+            ATOMIC_STORE((PSIZE_T) customData, 1);
+        }
+    };
+    auto onDoneHdlrFinal = [](UINT64 customData, PCHAR candidateStr) -> void {
+        UNUSED_PARAM(customData);
+        UNUSED_PARAM(candidateStr);
+    };
+
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) &offerDoneGather, onDoneGatherHdlr));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) &answerDoneGather, onDoneGatherHdlr));
+
+    auto onStateChangeHdlr = [](UINT64 customData, RTC_PEER_CONNECTION_STATE newState) -> void {
+        ATOMIC_INCREMENT((PSIZE_T) customData + newState);
+    };
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnConnectionStateChange(offerPc, (UINT64) this->stateChangeCount, onStateChangeHdlr));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnConnectionStateChange(answerPc, (UINT64) this->stateChangeCount, onStateChangeHdlr));
+
+    // Kick gathering on both PCs. Passing a MEMSET'd SDP with no payload is the idiomatic way this codebase starts
+    // gathering outside of the normal createOffer/createAnswer path.
+    MEMSET(&sdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(offerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(answerPc, &sdp));
+
+    timeout = GETTIME() + KVS_ICE_GATHER_REFLEXIVE_AND_RELAYED_CANDIDATE_TIMEOUT + 2 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    while ((ATOMIC_LOAD(&offerDoneGather) == 0 || ATOMIC_LOAD(&answerDoneGather) == 0) && GETTIME() < timeout) {
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+    }
+    EXPECT_GT(ATOMIC_LOAD(&offerDoneGather), 0u);
+    EXPECT_GT(ATOMIC_LOAD(&answerDoneGather), 0u);
+
+    // Remove every a=candidate: line (including the trailing CRLF) from an SDP string in-place.
+    auto stripCandidates = [](PCHAR sdpStr) {
+        std::string s(sdpStr);
+        size_t pos = 0;
+        while ((pos = s.find("a=candidate:", pos)) != std::string::npos) {
+            size_t end = s.find("\r\n", pos);
+            if (end == std::string::npos) {
+                s.erase(pos);
+                break;
+            }
+            s.erase(pos, end - pos + 2);
+        }
+        STRNCPY(sdpStr, s.c_str(), MAX_SESSION_DESCRIPTION_INIT_SDP_LEN);
+        sdpStr[MAX_SESSION_DESCRIPTION_INIT_SDP_LEN] = '\0';
+    };
+
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(offerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(offerPc, &sdp));
+    if (stripOfferCandidates) {
+        stripCandidates(sdp.sdp);
+    }
+    EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(answerPc, &sdp));
+
+    EXPECT_EQ(STATUS_SUCCESS, createAnswer(answerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(answerPc, &sdp));
+    if (stripAnswerCandidates) {
+        stripCandidates(sdp.sdp);
+    }
+    EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(offerPc, &sdp));
+
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2 &&
+         ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]) == 0;
+         i++) {
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+    }
+
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, onDoneHdlrFinal));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) 0, onDoneHdlrFinal));
 
     return ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) == 2;
 }
