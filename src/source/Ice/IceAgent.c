@@ -849,23 +849,31 @@ STATUS iceAgentShutdown(PIceAgent pIceAgent)
     UINT64 turnShutdownTimeout;
     PTurnConnection turnConnections[KVS_ICE_MAX_RELAY_CANDIDATE_COUNT];
     UINT32 turnConnectionCount = 0;
+    UINT32 stateTimerTask = MAX_UINT32, keepAliveTask = MAX_UINT32, gatheringTask = MAX_UINT32;
 
     CHK(pIceAgent != NULL, STATUS_NULL_ARG);
     CHK(!ATOMIC_EXCHANGE_BOOL(&pIceAgent->shutdown, TRUE), retStatus);
 
-    if (pIceAgent->iceAgentStateTimerTask != MAX_UINT32) {
-        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceAgentStateTimerTask, (UINT64) pIceAgent));
-        pIceAgent->iceAgentStateTimerTask = MAX_UINT32;
-    }
+    // Capture and clear the timer-task handles under the lock to synchronize with timer callbacks that may be
+    // self-cancelling (writing MAX_UINT32 under the same lock). Cancel outside the lock to avoid blocking on a
+    // running callback that is itself waiting for this lock.
+    MUTEX_LOCK(pIceAgent->lock);
+    stateTimerTask = pIceAgent->iceAgentStateTimerTask;
+    pIceAgent->iceAgentStateTimerTask = MAX_UINT32;
+    keepAliveTask = pIceAgent->keepAliveTimerTask;
+    pIceAgent->keepAliveTimerTask = MAX_UINT32;
+    gatheringTask = pIceAgent->iceCandidateGatheringTimerTask;
+    pIceAgent->iceCandidateGatheringTimerTask = MAX_UINT32;
+    MUTEX_UNLOCK(pIceAgent->lock);
 
-    if (pIceAgent->keepAliveTimerTask != MAX_UINT32) {
-        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->keepAliveTimerTask, (UINT64) pIceAgent));
-        pIceAgent->keepAliveTimerTask = MAX_UINT32;
+    if (stateTimerTask != MAX_UINT32) {
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, stateTimerTask, (UINT64) pIceAgent));
     }
-
-    if (pIceAgent->iceCandidateGatheringTimerTask != MAX_UINT32) {
-        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, pIceAgent->iceCandidateGatheringTimerTask, (UINT64) pIceAgent));
-        pIceAgent->iceCandidateGatheringTimerTask = MAX_UINT32;
+    if (keepAliveTask != MAX_UINT32) {
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, keepAliveTask, (UINT64) pIceAgent));
+    }
+    if (gatheringTask != MAX_UINT32) {
+        CHK_STATUS(timerQueueCancelTimer(pIceAgent->timerQueueHandle, gatheringTask, (UINT64) pIceAgent));
     }
 
     MUTEX_LOCK(pIceAgent->lock);
