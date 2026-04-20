@@ -213,8 +213,8 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
 }
 
 // Non-trickle variant of connectTwoPeers. See header for parameter semantics.
-bool WebRtcClientTestBase::connectTwoPeersNoTrickle(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, bool stripOfferCandidates,
-                                                    bool stripAnswerCandidates)
+bool WebRtcClientTestBase::connectTwoPeersNoTrickle(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, bool assumeOfferGathered,
+                                                    bool assumeAnswerGathered)
 {
     RtcSessionDescriptionInit sdp;
     SIZE_T offerDoneGather = 0, answerDoneGather = 0;
@@ -239,46 +239,40 @@ bool WebRtcClientTestBase::connectTwoPeersNoTrickle(PRtcPeerConnection offerPc, 
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnConnectionStateChange(offerPc, (UINT64) this->stateChangeCount, onStateChangeHdlr));
     EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnConnectionStateChange(answerPc, (UINT64) this->stateChangeCount, onStateChangeHdlr));
 
-    // Kick gathering on both PCs. Passing a MEMSET'd SDP with no payload is the idiomatic way this codebase starts
-    // gathering outside of the normal createOffer/createAnswer path.
+    // Produce the offer SDP BEFORE gathering starts. populateSessionDescription iterates valid local candidates,
+    // and host candidates become VALID synchronously inside iceAgentInitHostCandidate; calling createOffer after
+    // setLocalDescription would bake them in regardless of whether we then call
+    // peerConnectionGetCurrentLocalDescription. Capturing the offer before gathering gives us a guaranteed-bare
+    // offer SDP that we can optionally refresh with candidates after gathering completes.
     MEMSET(&sdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(offerPc, &sdp));
+
     EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(offerPc, &sdp));
     EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(answerPc, &sdp));
 
+    // Wait only for sides that are supposed to publish candidates in their SDP.
     timeout = GETTIME() + KVS_ICE_GATHER_REFLEXIVE_AND_RELAYED_CANDIDATE_TIMEOUT + 2 * HUNDREDS_OF_NANOS_IN_A_SECOND;
-    while ((ATOMIC_LOAD(&offerDoneGather) == 0 || ATOMIC_LOAD(&answerDoneGather) == 0) && GETTIME() < timeout) {
+    while (GETTIME() < timeout && ((!assumeOfferGathered && ATOMIC_LOAD(&offerDoneGather) == 0) ||
+                                   (!assumeAnswerGathered && ATOMIC_LOAD(&answerDoneGather) == 0))) {
         THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
     }
-    EXPECT_GT(ATOMIC_LOAD(&offerDoneGather), 0u);
-    EXPECT_GT(ATOMIC_LOAD(&answerDoneGather), 0u);
+    if (!assumeOfferGathered) {
+        EXPECT_GT(ATOMIC_LOAD(&offerDoneGather), 0u);
+    }
+    if (!assumeAnswerGathered) {
+        EXPECT_GT(ATOMIC_LOAD(&answerDoneGather), 0u);
+    }
 
-    // Remove every a=candidate: line (including the trailing CRLF) from an SDP string in-place.
-    auto stripCandidates = [](PCHAR sdpStr) {
-        std::string s(sdpStr);
-        size_t pos = 0;
-        while ((pos = s.find("a=candidate:", pos)) != std::string::npos) {
-            size_t end = s.find("\r\n", pos);
-            if (end == std::string::npos) {
-                s.erase(pos);
-                break;
-            }
-            s.erase(pos, end - pos + 2);
-        }
-        STRNCPY(sdpStr, s.c_str(), MAX_SESSION_DESCRIPTION_INIT_SDP_LEN);
-        sdpStr[MAX_SESSION_DESCRIPTION_INIT_SDP_LEN] = '\0';
-    };
-
-    EXPECT_EQ(STATUS_SUCCESS, createOffer(offerPc, &sdp));
-    EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(offerPc, &sdp));
-    if (stripOfferCandidates) {
-        stripCandidates(sdp.sdp);
+    // If we waited for the offer side, refresh sdp with its post-gathering description (now has a=candidate
+    // lines). Otherwise leave sdp as the bare offer captured before gathering started.
+    if (!assumeOfferGathered) {
+        EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(offerPc, &sdp));
     }
     EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(answerPc, &sdp));
 
     EXPECT_EQ(STATUS_SUCCESS, createAnswer(answerPc, &sdp));
-    EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(answerPc, &sdp));
-    if (stripAnswerCandidates) {
-        stripCandidates(sdp.sdp);
+    if (!assumeAnswerGathered) {
+        EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(answerPc, &sdp));
     }
     EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(offerPc, &sdp));
 
