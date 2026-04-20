@@ -268,7 +268,7 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
 {
     STATUS status = STATUS_SUCCESS;
 
-    printf("[WHEP] Received offer (%zu bytes)\n", body.length());
+    printf("[WHEP] Received offer (%zu bytes):\n%s\n", body.length(), body.c_str());
 
     // Check if already connected
     if (session->pPeerConnection != NULL) {
@@ -433,7 +433,7 @@ static void handleOffer(WhepSession* session, const std::string& body, httplib::
         return;
     }
 
-    printf("[WHEP] Sending answer (%u bytes)\n", jsonLen);
+    printf("[WHEP] Sending answer (%u bytes):\n%s\n", jsonLen, session->answerSdp.sdp);
     res.set_content(answerJson, "application/json");
 }
 
@@ -454,7 +454,7 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session)
 {
     // Serve index.html
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/index.html");
+        std::string content = readFileContent("./html/index.html");
         if (content.empty()) {
             res.status = 404;
             res.set_content("File not found", "text/plain");
@@ -465,7 +465,7 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session)
 
     // Serve client.js
     svr.Get("/client.js", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/client.js");
+        std::string content = readFileContent("./html/client.js");
         if (content.empty()) {
             res.status = 404;
             res.set_content("File not found", "text/plain");
@@ -474,10 +474,15 @@ static void setupRoutes(httplib::Server& svr, WhepSession* session)
         }
     });
 
-    // Return ICE server configuration
+    // Return ICE server configuration. Emit an empty list when no STUN is configured
+    // so the browser's RTCPeerConnection constructor doesn't reject an empty URL.
     svr.Get("/ice-servers", [session](const httplib::Request&, httplib::Response& res) {
         CHAR json[512];
-        SNPRINTF(json, SIZEOF(json), "[{\"urls\": \"%s\"}]", session->stunServer);
+        if (STRLEN(session->stunServer) > 0) {
+            SNPRINTF(json, SIZEOF(json), "[{\"urls\": \"%s\"}]", session->stunServer);
+        } else {
+            SNPRINTF(json, SIZEOF(json), "[]");
+        }
         res.set_content(json, "application/json");
     });
 
@@ -494,6 +499,7 @@ static void initSession(WhepSession* session, const char* stunServer, bool enabl
     session->rtcConfig.kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = 500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     session->rtcConfig.kvsRtcConfiguration.iceCandidateNominationTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
     session->rtcConfig.kvsRtcConfiguration.iceConnectionCheckTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    session->rtcConfig.kvsRtcConfiguration.useRedForOpus = TRUE;
     if (STRLEN(stunServer) > 0) {
         STRNCPY(session->rtcConfig.iceServers[0].urls, stunServer, MAX_ICE_CONFIG_URI_LEN);
         STRNCPY(session->stunServer, stunServer, SIZEOF(session->stunServer) - 1);
@@ -563,6 +569,7 @@ int main(int argc, char* argv[])
 
     // Initialize KVS WebRTC SDK
     printf("[WHEP] Initializing WebRTC SDK...\n");
+    SET_LOGGER_LOG_LEVEL(LOG_LEVEL_INFO);
     STATUS status = initKvsWebRtc();
     if (STATUS_FAILED(status)) {
         printf("[WHEP] Failed to initialize WebRTC SDK: 0x%08x\n", status);

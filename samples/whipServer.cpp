@@ -43,21 +43,31 @@ struct WhipSession {
 
 static WhipSession g_session;
 
-static const char* connectionStateToString(RTC_PEER_CONNECTION_STATE state) {
+static const char* connectionStateToString(RTC_PEER_CONNECTION_STATE state)
+{
     switch (state) {
-        case RTC_PEER_CONNECTION_STATE_NONE: return "NONE";
-        case RTC_PEER_CONNECTION_STATE_NEW: return "NEW";
-        case RTC_PEER_CONNECTION_STATE_CONNECTING: return "CONNECTING";
-        case RTC_PEER_CONNECTION_STATE_CONNECTED: return "CONNECTED";
-        case RTC_PEER_CONNECTION_STATE_DISCONNECTED: return "DISCONNECTED";
-        case RTC_PEER_CONNECTION_STATE_FAILED: return "FAILED";
-        case RTC_PEER_CONNECTION_STATE_CLOSED: return "CLOSED";
-        default: return "UNKNOWN";
+        case RTC_PEER_CONNECTION_STATE_NONE:
+            return "NONE";
+        case RTC_PEER_CONNECTION_STATE_NEW:
+            return "NEW";
+        case RTC_PEER_CONNECTION_STATE_CONNECTING:
+            return "CONNECTING";
+        case RTC_PEER_CONNECTION_STATE_CONNECTED:
+            return "CONNECTED";
+        case RTC_PEER_CONNECTION_STATE_DISCONNECTED:
+            return "DISCONNECTED";
+        case RTC_PEER_CONNECTION_STATE_FAILED:
+            return "FAILED";
+        case RTC_PEER_CONNECTION_STATE_CLOSED:
+            return "CLOSED";
+        default:
+            return "UNKNOWN";
     }
 }
 
 // Generate a random session ID
-static std::string generateSessionId() {
+static std::string generateSessionId()
+{
     static const char charset[] = "abcdefghijklmnopqrstuvwxyz0123456789";
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -71,19 +81,20 @@ static std::string generateSessionId() {
 }
 
 // Report received bitrate (called periodically)
-static void reportReceivedBitrate(WhipSession* session, UINT64 now) {
+static void reportReceivedBitrate(WhipSession* session, UINT64 now)
+{
     UINT64 elapsed = now - session->lastBitrateReportTime;
     if (elapsed >= HUNDREDS_OF_NANOS_IN_A_SECOND) {
         UINT64 videoBytesDelta = session->videoBytesReceived - session->lastVideoBytesReceived;
         UINT64 audioBytesDelta = session->audioBytesReceived - session->lastAudioBytesReceived;
 
-        DOUBLE elapsedSec = (DOUBLE)elapsed / HUNDREDS_OF_NANOS_IN_A_SECOND;
-        DOUBLE videoBitrate = (DOUBLE)(videoBytesDelta * 8) / elapsedSec;
-        DOUBLE audioBitrate = (DOUBLE)(audioBytesDelta * 8) / elapsedSec;
+        DOUBLE elapsedSec = (DOUBLE) elapsed / HUNDREDS_OF_NANOS_IN_A_SECOND;
+        DOUBLE videoBitrate = (DOUBLE) (videoBytesDelta * 8) / elapsedSec;
+        DOUBLE audioBitrate = (DOUBLE) (audioBytesDelta * 8) / elapsedSec;
         DOUBLE totalBitrate = videoBitrate + audioBitrate;
 
-        printf("[WHIP] Received bitrate: %.2f kbps (video: %.2f kbps, audio: %.2f kbps)\n",
-               totalBitrate / 1000.0, videoBitrate / 1000.0, audioBitrate / 1000.0);
+        printf("[WHIP] Received bitrate: %.2f kbps (video: %.2f kbps, audio: %.2f kbps)\n", totalBitrate / 1000.0, videoBitrate / 1000.0,
+               audioBitrate / 1000.0);
 
         session->lastBitrateReportTime = now;
         session->lastVideoBytesReceived = session->videoBytesReceived;
@@ -92,8 +103,9 @@ static void reportReceivedBitrate(WhipSession* session, UINT64 now) {
 }
 
 // Video frame callback - called when video frame received from browser
-static VOID onVideoFrame(UINT64 customData, PFrame pFrame) {
-    WhipSession* session = (WhipSession*)customData;
+static VOID onVideoFrame(UINT64 customData, PFrame pFrame)
+{
+    WhipSession* session = (WhipSession*) customData;
     session->totalVideoFrames++;
     session->videoBytesReceived += pFrame->size;
 
@@ -108,8 +120,9 @@ static VOID onVideoFrame(UINT64 customData, PFrame pFrame) {
 }
 
 // Audio frame callback - called when audio frame received from browser
-static VOID onAudioFrame(UINT64 customData, PFrame pFrame) {
-    WhipSession* session = (WhipSession*)customData;
+static VOID onAudioFrame(UINT64 customData, PFrame pFrame)
+{
+    WhipSession* session = (WhipSession*) customData;
     session->totalAudioFrames++;
     session->audioBytesReceived += pFrame->size;
 
@@ -123,8 +136,9 @@ static VOID onAudioFrame(UINT64 customData, PFrame pFrame) {
 }
 
 // ICE candidate callback
-static VOID onIceCandidateCallback(UINT64 customData, PCHAR candidateJson) {
-    WhipSession* session = (WhipSession*)customData;
+static VOID onIceCandidateCallback(UINT64 customData, PCHAR candidateJson)
+{
+    WhipSession* session = (WhipSession*) customData;
 
     if (candidateJson == NULL) {
         printf("[WHIP] ICE gathering complete\n");
@@ -135,8 +149,9 @@ static VOID onIceCandidateCallback(UINT64 customData, PCHAR candidateJson) {
 }
 
 // Connection state change callback
-static VOID onConnectionStateChangeCallback(UINT64 customData, RTC_PEER_CONNECTION_STATE newState) {
-    WhipSession* session = (WhipSession*)customData;
+static VOID onConnectionStateChangeCallback(UINT64 customData, RTC_PEER_CONNECTION_STATE newState)
+{
+    WhipSession* session = (WhipSession*) customData;
 
     printf("[WHIP] Connection state: %s\n", connectionStateToString(newState));
     session->connectionState = newState;
@@ -156,8 +171,8 @@ static VOID onConnectionStateChangeCallback(UINT64 customData, RTC_PEER_CONNECTI
         case RTC_PEER_CONNECTION_STATE_FAILED:
         case RTC_PEER_CONNECTION_STATE_CLOSED:
             printf("[WHIP] Connection ended\n");
-            printf("[WHIP] Total video frames received: %llu\n", (unsigned long long)session->totalVideoFrames);
-            printf("[WHIP] Total audio frames received: %llu\n", (unsigned long long)session->totalAudioFrames);
+            printf("[WHIP] Total video frames received: %llu\n", (unsigned long long) session->totalVideoFrames);
+            printf("[WHIP] Total audio frames received: %llu\n", (unsigned long long) session->totalAudioFrames);
             break;
 
         default:
@@ -166,7 +181,8 @@ static VOID onConnectionStateChangeCallback(UINT64 customData, RTC_PEER_CONNECTI
 }
 
 // Handle POST /whip/endpoint (RFC 9725 compliant)
-static void handleWhipOffer(WhipSession* session, const httplib::Request& req, httplib::Response& res) {
+static void handleWhipOffer(WhipSession* session, const httplib::Request& req, httplib::Response& res)
+{
     STATUS status = STATUS_SUCCESS;
 
     // Validate Content-Type per RFC 9725
@@ -210,12 +226,12 @@ static void handleWhipOffer(WhipSession* session, const httplib::Request& req, h
     }
 
     // Setup callbacks
-    status = peerConnectionOnIceCandidate(session->pPeerConnection, (UINT64)session, onIceCandidateCallback);
+    status = peerConnectionOnIceCandidate(session->pPeerConnection, (UINT64) session, onIceCandidateCallback);
     if (STATUS_FAILED(status)) {
         printf("[WHIP] Failed to set ICE callback: 0x%08x\n", status);
     }
 
-    status = peerConnectionOnConnectionStateChange(session->pPeerConnection, (UINT64)session, onConnectionStateChangeCallback);
+    status = peerConnectionOnConnectionStateChange(session->pPeerConnection, (UINT64) session, onConnectionStateChangeCallback);
     if (STATUS_FAILED(status)) {
         printf("[WHIP] Failed to set connection state callback: 0x%08x\n", status);
     }
@@ -254,7 +270,7 @@ static void handleWhipOffer(WhipSession* session, const httplib::Request& req, h
     }
 
     // Register frame callback for video
-    status = transceiverOnFrame(session->pVideoTransceiver, (UINT64)session, onVideoFrame);
+    status = transceiverOnFrame(session->pVideoTransceiver, (UINT64) session, onVideoFrame);
     if (STATUS_FAILED(status)) {
         printf("[WHIP] Failed to register video frame callback: 0x%08x\n", status);
     }
@@ -280,7 +296,7 @@ static void handleWhipOffer(WhipSession* session, const httplib::Request& req, h
         }
 
         // Register frame callback for audio
-        status = transceiverOnFrame(session->pAudioTransceiver, (UINT64)session, onAudioFrame);
+        status = transceiverOnFrame(session->pAudioTransceiver, (UINT64) session, onAudioFrame);
         if (STATUS_FAILED(status)) {
             printf("[WHIP] Failed to register audio frame callback: 0x%08x\n", status);
         }
@@ -347,7 +363,8 @@ static void handleWhipOffer(WhipSession* session, const httplib::Request& req, h
 }
 
 // Handle DELETE /whip/session/{id}
-static void handleWhipDelete(WhipSession* session, const std::string& sessionId, httplib::Response& res) {
+static void handleWhipDelete(WhipSession* session, const std::string& sessionId, httplib::Response& res)
+{
     if (session->sessionId != sessionId) {
         res.status = 404;
         res.set_header("Access-Control-Allow-Origin", "*");
@@ -366,8 +383,8 @@ static void handleWhipDelete(WhipSession* session, const std::string& sessionId,
         session->pPeerConnection = NULL;
     }
 
-    printf("[WHIP] Total video frames received: %llu\n", (unsigned long long)session->totalVideoFrames);
-    printf("[WHIP] Total audio frames received: %llu\n", (unsigned long long)session->totalAudioFrames);
+    printf("[WHIP] Total video frames received: %llu\n", (unsigned long long) session->totalVideoFrames);
+    printf("[WHIP] Total audio frames received: %llu\n", (unsigned long long) session->totalAudioFrames);
 
     // Reset session for next connection
     session->sessionId.clear();
@@ -386,7 +403,8 @@ static void handleWhipDelete(WhipSession* session, const std::string& sessionId,
 }
 
 // Read file content helper
-static std::string readFileContent(const std::string& path) {
+static std::string readFileContent(const std::string& path)
+{
     std::ifstream file(path);
     if (!file.is_open()) {
         return "";
@@ -397,10 +415,11 @@ static std::string readFileContent(const std::string& path) {
 }
 
 // Setup HTTP routes
-static void setupRoutes(httplib::Server& svr, WhipSession* session) {
+static void setupRoutes(httplib::Server& svr, WhipSession* session)
+{
     // Serve whipIndex.html at root
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/whipIndex.html");
+        std::string content = readFileContent("./html/whipIndex.html");
         if (content.empty()) {
             res.status = 404;
             res.set_content("   File not found", "text/plain");
@@ -411,7 +430,7 @@ static void setupRoutes(httplib::Server& svr, WhipSession* session) {
 
     // Serve whipClient.js
     svr.Get("/whipClient.js", [](const httplib::Request&, httplib::Response& res) {
-        std::string content = readFileContent("./examples/whipClient.js");
+        std::string content = readFileContent("./html/whipClient.js");
         if (content.empty()) {
             res.status = 404;
             res.set_content("File not found", "text/plain");
@@ -433,9 +452,7 @@ static void setupRoutes(httplib::Server& svr, WhipSession* session) {
     });
 
     // WHIP endpoint - POST /whip/endpoint (RFC 9725 Section 4.2)
-    svr.Post("/whip/endpoint", [session](const httplib::Request& req, httplib::Response& res) {
-        handleWhipOffer(session, req, res);
-    });
+    svr.Post("/whip/endpoint", [session](const httplib::Request& req, httplib::Response& res) { handleWhipOffer(session, req, res); });
 
     // WHIP session - DELETE /whip/session/{id} (RFC 9725 Section 3)
     svr.Delete(R"(/whip/session/([a-zA-Z0-9]+))", [session](const httplib::Request& req, httplib::Response& res) {
@@ -461,13 +478,15 @@ static void setupRoutes(httplib::Server& svr, WhipSession* session) {
 }
 
 // Initialize session
-static void initSession(WhipSession* session, const char* stunServer, bool enableAudio) {
+static void initSession(WhipSession* session, const char* stunServer, bool enableAudio)
+{
     MEMSET(session, 0, SIZEOF(WhipSession));
 
     // Configure ICE
     session->rtcConfig.kvsRtcConfiguration.iceLocalCandidateGatheringTimeout = 500 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
     session->rtcConfig.kvsRtcConfiguration.iceCandidateNominationTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
     session->rtcConfig.kvsRtcConfiguration.iceConnectionCheckTimeout = 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    session->rtcConfig.kvsRtcConfiguration.useRedForOpus = TRUE;
     STRNCPY(session->rtcConfig.iceServers[0].urls, stunServer, MAX_ICE_CONFIG_URI_LEN);
     STRNCPY(session->stunServer, stunServer, SIZEOF(session->stunServer) - 1);
 
@@ -481,7 +500,8 @@ static void initSession(WhipSession* session, const char* stunServer, bool enabl
 }
 
 // Cleanup session
-static void cleanupSession(WhipSession* session) {
+static void cleanupSession(WhipSession* session)
+{
     session->shouldExit.store(true);
 
     if (session->pPeerConnection != NULL) {
@@ -493,7 +513,8 @@ static void cleanupSession(WhipSession* session) {
     session->shouldExit.~atomic();
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[])
+{
     int port = 8080;
     // const char* stunServer = "stun:stun.l.google.com:19302";
     const char* stunServer = "";

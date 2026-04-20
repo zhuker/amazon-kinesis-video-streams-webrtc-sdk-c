@@ -162,7 +162,7 @@ CleanUp:
 /*
  * Populate map with PayloadTypes if we are offering
  */
-STATUS setPayloadTypesForOffer(PHashTable codecTable)
+STATUS setPayloadTypesForOffer(PHashTable codecTable, PHashTable redTable, BOOL useRedForOpus)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -174,6 +174,10 @@ STATUS setPayloadTypesForOffer(PHashTable codecTable)
     CHK_STATUS(hashTableUpsert(codecTable, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, DEFAULT_PAYLOAD_H264));
     CHK_STATUS(hashTableUpsert(codecTable, RTC_CODEC_H265, DEFAULT_PAYLOAD_H265));
 
+    if (useRedForOpus && redTable != NULL) {
+        CHK_STATUS(hashTableUpsert(redTable, RTC_RED_CODEC_OPUS, DEFAULT_PAYLOAD_RED));
+    }
+
 CleanUp:
     return retStatus;
 }
@@ -183,7 +187,7 @@ CleanUp:
  *
  * Precondition: !pKvsPeerConnection->isOffer
  */
-STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PSessionDescription pSessionDescription)
+STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PHashTable redTable, PSessionDescription pSessionDescription)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -253,6 +257,42 @@ STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PSes
                 CHK_STATUS(hashTableUpsert(codecTable, RTC_CODEC_OPUS, parsedPayloadType));
             }
 
+            // Parse RFC 2198 RED (red/48000) advertised for Opus. We only accept RED when the local
+            // config enabled it (redTable is non-NULL and non-empty is the caller-side gate).
+            if (redTable != NULL && (end = STRCASESTR(attributeValue, RED_VALUE)) != NULL) {
+                // Validate the rtpmap line format: "<redPT> red/48000/<channels>"
+                CHK_STATUS(STRTOUI64(attributeValue, end - 1, 10, &parsedPayloadType));
+                // Look for the associated fmtp. Expected form: "<opusPT>/<opusPT>[/<opusPT>...]"
+                fmtp = fmtpForPayloadType(parsedPayloadType, pSessionDescription);
+                BOOL fmtpValid = FALSE;
+                UINT64 opusPtFromCodec = 0;
+                if (fmtp != NULL && STATUS_SUCCEEDED(hashTableContains(codecTable, RTC_CODEC_OPUS, &supportCodec)) && supportCodec &&
+                    STATUS_SUCCEEDED(hashTableGet(codecTable, RTC_CODEC_OPUS, &opusPtFromCodec))) {
+                    // Split fmtp on '/', verify every token equals opusPtFromCodec.
+                    PCHAR p = fmtp;
+                    UINT64 ptVal = 0;
+                    fmtpValid = TRUE;
+                    while (*p != '\0') {
+                        PCHAR slash = STRCHR(p, '/');
+                        PCHAR tokEnd = (slash != NULL) ? slash : (p + STRLEN(p));
+                        if (STATUS_FAILED(STRTOUI64(p, tokEnd, 10, &ptVal)) || ptVal != opusPtFromCodec) {
+                            fmtpValid = FALSE;
+                            break;
+                        }
+                        if (slash == NULL) {
+                            break;
+                        }
+                        p = slash + 1;
+                    }
+                }
+                if (fmtpValid) {
+                    DLOGV("Found RED payload type %" PRId64 " (Opus inner PT %" PRId64 ")", parsedPayloadType, opusPtFromCodec);
+                    CHK_STATUS(hashTableUpsert(redTable, RTC_RED_CODEC_OPUS, parsedPayloadType));
+                } else {
+                    DLOGW("Remote offered RED PT %" PRId64 " but fmtp missing/invalid — falling back to plain Opus", parsedPayloadType);
+                }
+            }
+
             CHK_STATUS(hashTableContains(codecTable, RTC_CODEC_VP8, &supportCodec));
             if (supportCodec && (end = STRSTR(attributeValue, VP8_VALUE)) != NULL) {
                 CHK_STATUS(STRTOUI64(attributeValue, end - 1, 10, &parsedPayloadType));
@@ -320,13 +360,21 @@ CleanUp:
     return retStatus;
 }
 
-STATUS setTransceiverPayloadTypes(PHashTable codecTable, PHashTable rtxTable, PDoubleList pTransceivers)
+STATUS setTransceiverPayloadTypes(PHashTable codecTable, PHashTable rtxTable, PHashTable redTable, PDoubleList pTransceivers)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
     PDoubleListNode pCurNode = NULL;
     PKvsRtpTransceiver pKvsRtpTransceiver;
     UINT64 data;
+    UINT64 redPt = 0;
+    UINT64 opusPt = 0;
+    BOOL redNegotiated = FALSE;
+
+    if (redTable != NULL && STATUS_SUCCEEDED(hashTableGet(redTable, RTC_RED_CODEC_OPUS, &redPt)) && redPt != 0 &&
+        STATUS_SUCCEEDED(hashTableGet(codecTable, RTC_CODEC_OPUS, &opusPt)) && opusPt != 0) {
+        redNegotiated = TRUE;
+    }
 
     // Loop over Transceivers and set the payloadType (which what we got from the other side)
     // If a codec we want to send wasn't supported by the other return an error
@@ -347,6 +395,22 @@ STATUS setTransceiverPayloadTypes(PHashTable codecTable, PHashTable rtxTable, PD
             if (hashTableGet(rtxTable, pKvsRtpTransceiver->sender.track.codec, &data) == STATUS_SUCCESS) {
                 pKvsRtpTransceiver->sender.rtxPayloadType = (UINT8) data;
             }
+
+            // Wire up RED for Opus transceivers when negotiation resolved both RED and Opus PTs.
+            if (redNegotiated && pKvsRtpTransceiver->sender.track.codec == RTC_CODEC_OPUS) {
+                pKvsRtpTransceiver->sender.redPayloadType = (UINT8) redPt;
+                pKvsRtpTransceiver->sender.opusPayloadTypeForRed = (UINT8) opusPt;
+                pKvsRtpTransceiver->receiverRedPayloadType = (UINT8) redPt;
+                pKvsRtpTransceiver->receiverOpusPayloadType = (UINT8) opusPt;
+                if (pKvsRtpTransceiver->sender.pRedSenderState == NULL && pKvsRtpTransceiver->pKvsPeerConnection != NULL) {
+                    CHK_STATUS(createRedSenderState(pKvsRtpTransceiver->pKvsPeerConnection->redForOpusRedundancy, (UINT8) opusPt,
+                                                    &pKvsRtpTransceiver->sender.pRedSenderState));
+                }
+            }
+        } else if (pKvsRtpTransceiver != NULL && redNegotiated && pKvsRtpTransceiver->transceiver.receiver.track.codec == RTC_CODEC_OPUS) {
+            // RECVONLY transceiver still needs the receive-side RED fields populated.
+            pKvsRtpTransceiver->receiverRedPayloadType = (UINT8) redPt;
+            pKvsRtpTransceiver->receiverOpusPayloadType = (UINT8) opusPt;
         }
 
         if (pKvsRtpTransceiver != NULL) {
@@ -534,8 +598,18 @@ STATUS populateSingleMediaSection(PKvsPeerConnection pKvsPeerConnection, PKvsRtp
             CHK_ERR(amountWritten > 0, STATUS_INTERNAL_ERROR, "Full video media name attribute could not be written");
         }
     } else if (pRtcMediaStreamTrack->kind == MEDIA_STREAM_TRACK_KIND_AUDIO) {
-        amountWritten =
-            SNPRINTF(pSdpMediaDescription->mediaName, SIZEOF(pSdpMediaDescription->mediaName), "audio 9 UDP/TLS/RTP/SAVPF %" PRId64, payloadType);
+        // If RED was negotiated for Opus, advertise both PTs with RED first (so the peer
+        // prefers it in tie-breaks). Otherwise emit just the codec's PT as before.
+        UINT64 redPt = 0;
+        BOOL emitRed = (pRtcMediaStreamTrack->codec == RTC_CODEC_OPUS && pKvsPeerConnection->pRedTable != NULL &&
+                        STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pRedTable, RTC_RED_CODEC_OPUS, &redPt)) && redPt != 0);
+        if (emitRed) {
+            amountWritten = SNPRINTF(pSdpMediaDescription->mediaName, SIZEOF(pSdpMediaDescription->mediaName),
+                                     "audio 9 UDP/TLS/RTP/SAVPF %" PRId64 " %" PRId64, redPt, payloadType);
+        } else {
+            amountWritten =
+                SNPRINTF(pSdpMediaDescription->mediaName, SIZEOF(pSdpMediaDescription->mediaName), "audio 9 UDP/TLS/RTP/SAVPF %" PRId64, payloadType);
+        }
         CHK_ERR(amountWritten > 0, STATUS_INTERNAL_ERROR, "Full audio media name attribute could not be written");
     }
 
@@ -661,6 +735,18 @@ STATUS populateSingleMediaSection(PKvsPeerConnection pKvsPeerConnection, PKvsRtp
     } else if (pRtcMediaStreamTrack->codec == RTC_CODEC_OPUS) {
         if (pKvsPeerConnection->isOffer) {
             currentFmtp = DEFAULT_OPUS_FMTP;
+        }
+
+        // RED rtpmap + fmtp emitted BEFORE Opus so the peer prefers RED.
+        UINT64 redPt = 0;
+        if (pKvsPeerConnection->pRedTable != NULL && STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pRedTable, RTC_RED_CODEC_OPUS, &redPt)) &&
+            redPt != 0) {
+            APPEND_SDP_ATTR("rtpmap", "%" PRId64 " red/48000/2", redPt);
+            // fmtp lists the Opus PT repeated (N+1) times where N is the redundancy level.
+            // For the declarative form we emit two slash-separated PTs (primary + 1 redundant);
+            // the sender-side helper decides per-packet how many slots to use, up to the
+            // per-transceiver RedSenderState->redundancyLevel.
+            APPEND_SDP_ATTR("fmtp", "%" PRId64 " %" PRId64 "/%" PRId64, redPt, payloadType, payloadType);
         }
 
         APPEND_SDP_ATTR("rtpmap", "%" PRId64 " opus/48000/2", payloadType);

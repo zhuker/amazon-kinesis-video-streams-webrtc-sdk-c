@@ -264,7 +264,7 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_NoRtxType)
     EXPECT_EQ(STATUS_SUCCESS, hashTableCreate(&pRtxTable));
     EXPECT_EQ(STATUS_SUCCESS, doubleListCreate(&pTransceivers));
     EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64)(&transceiver)));
-    EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, pTransceivers));
+    EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, NULL, pTransceivers));
     EXPECT_EQ(transceiver.pRollingBufferConfig->rollingBufferDurationSec, DEFAULT_ROLLING_BUFFER_DURATION_IN_SECONDS);
     EXPECT_EQ(transceiver.pRollingBufferConfig->rollingBufferBitratebps, DEFAULT_EXPECTED_VIDEO_BIT_RATE);
     EXPECT_EQ(1, transceiver.sender.payloadType);
@@ -296,7 +296,7 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_HasRtxType)
     EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pRtxTable, RTC_RTX_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, 2));
     EXPECT_EQ(STATUS_SUCCESS, doubleListCreate(&pTransceivers));
     EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64)(&transceiver)));
-    EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, pTransceivers));
+    EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, NULL, pTransceivers));
     EXPECT_EQ(1, transceiver.sender.payloadType);
     EXPECT_EQ(2, transceiver.sender.rtxPayloadType);
     EXPECT_NE((PRtpRollingBuffer) NULL, transceiver.sender.packetBuffer);
@@ -326,7 +326,7 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_HasRtxType_H265)
     EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pRtxTable, RTC_CODEC_H265, 2));
     EXPECT_EQ(STATUS_SUCCESS, doubleListCreate(&pTransceivers));
     EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64)(&transceiver)));
-    EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, pTransceivers));
+    EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, NULL, pTransceivers));
     EXPECT_EQ(1, transceiver.sender.payloadType);
     EXPECT_EQ(2, transceiver.sender.rtxPayloadType);
     EXPECT_NE((PRtpRollingBuffer) NULL, transceiver.sender.packetBuffer);

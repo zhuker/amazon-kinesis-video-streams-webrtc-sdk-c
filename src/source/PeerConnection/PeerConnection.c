@@ -313,6 +313,7 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
     BOOL ownedByJitterBuffer = FALSE, discarded = FALSE;
     UINT64 packetsReceived = 0, packetsFailedDecryption = 0, lastPacketReceivedTimestamp = 0, headerBytesReceived = 0, bytesReceived = 0,
            packetsDiscarded = 0;
+    UINT64 fecPacketsReceived = 0, fecBytesReceivedCount = 0, fecPacketsDiscarded = 0;
     INT64 arrival, r_ts, transit, delta;
 
     CHK(pKvsPeerConnection != NULL && pBuffer != NULL, STATUS_NULL_ARG);
@@ -398,6 +399,51 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
             headerBytesReceived += RTP_HEADER_LEN(pRtpPacket);
             bytesReceived += pRtpPacket->rawPacketLength - RTP_HEADER_LEN(pRtpPacket);
 
+            // RFC 2198 RED split branch. When the inbound packet carries the negotiated RED PT,
+            // expand it into up to (redundancy+1) synthetic packets and feed each through the
+            // jitter buffer. Primary packet keeps the real seqnum/ts; redundant blocks get
+            // synthesized seqnums (seq - distance) and ts (ts - offset) and are tagged
+            // isSynthetic=TRUE so the jitter buffer's dedup can prefer real packets.
+            if (pTransceiver->receiverRedPayloadType != 0 && pRtpPacket->header.payloadType == pTransceiver->receiverRedPayloadType) {
+                PRtpPacket redSynthetics[RED_MAX_BLOCKS] = {};
+                UINT32 produced = 0;
+                UINT32 fecBytes = 0;
+                STATUS splitStatus =
+                    splitRedRtpPacket(pRtpPacket, pTransceiver->receiverOpusPayloadType, redSynthetics, RED_MAX_BLOCKS, &produced, &fecBytes);
+                if (STATUS_SUCCEEDED(splitStatus) && produced > 0) {
+                    UINT32 k;
+                    for (k = 0; k < produced; k++) {
+                        PRtpPacket pSyn = redSynthetics[k];
+                        BOOL synDiscarded = FALSE;
+                        if (pSyn->isSynthetic) {
+                            fecPacketsReceived++;
+                            fecBytesReceivedCount += pSyn->payloadLength;
+                        }
+                        STATUS pushStatus = jitterBufferPush(pTransceiver->pJitterBuffer, pSyn, &synDiscarded);
+                        if (STATUS_FAILED(pushStatus) || synDiscarded) {
+                            if (pSyn->isSynthetic) {
+                                fecPacketsDiscarded++;
+                            } else if (synDiscarded) {
+                                packetsDiscarded++;
+                            }
+                            // jitterBufferPush consumes the packet regardless; if it failed, it still owns the pointer.
+                        }
+                    }
+                    // Outer RED packet is fully consumed; free it now.
+                    freeRtpPacket(&pRtpPacket);
+                    pRtpPacket = NULL;
+                } else {
+                    // Malformed RED — drop the outer packet.
+                    DLOGW("Discarded malformed RED packet (status 0x%08x)", splitStatus);
+                    freeRtpPacket(&pRtpPacket);
+                    pRtpPacket = NULL;
+                    packetsDiscarded++;
+                }
+                lastPacketReceivedTimestamp = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+                ownedByJitterBuffer = TRUE;
+                CHK(FALSE, STATUS_SUCCESS);
+            }
+
             CHK_STATUS(jitterBufferPush(pTransceiver->pJitterBuffer, pRtpPacket, &discarded));
             if (discarded) {
                 packetsDiscarded++;
@@ -421,6 +467,9 @@ CleanUp:
         pTransceiver->inboundStats.bytesReceived += bytesReceived;
         pTransceiver->inboundStats.received.jitter = pTransceiver->pJitterBuffer->jitter / pTransceiver->pJitterBuffer->clockRate;
         pTransceiver->inboundStats.received.packetsDiscarded += packetsDiscarded;
+        pTransceiver->inboundStats.fecPacketsReceived += fecPacketsReceived;
+        pTransceiver->inboundStats.fecBytesReceived += fecBytesReceivedCount;
+        pTransceiver->inboundStats.fecPacketsDiscarded += fecPacketsDiscarded;
         if (pTransceiver->rrSeqInitialized) {
             UINT32 extMax = pTransceiver->rrCycles + pTransceiver->rrMaxSeq;
             UINT32 expected = extMax - pTransceiver->rrBaseSeq + 1;
@@ -1193,6 +1242,7 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     CHK_STATUS(hashTableCreateWithParams(CODEC_HASH_TABLE_BUCKET_COUNT, CODEC_HASH_TABLE_BUCKET_LENGTH, &pKvsPeerConnection->pCodecTable));
     CHK_STATUS(hashTableCreateWithParams(CODEC_HASH_TABLE_BUCKET_COUNT, CODEC_HASH_TABLE_BUCKET_LENGTH, &pKvsPeerConnection->pDataChannels));
     CHK_STATUS(hashTableCreateWithParams(RTX_HASH_TABLE_BUCKET_COUNT, RTX_HASH_TABLE_BUCKET_LENGTH, &pKvsPeerConnection->pRtxTable));
+    CHK_STATUS(hashTableCreateWithParams(RTX_HASH_TABLE_BUCKET_COUNT, RTX_HASH_TABLE_BUCKET_LENGTH, &pKvsPeerConnection->pRedTable));
     CHK_STATUS(doubleListCreate(&(pKvsPeerConnection->pTransceivers)));
     CHK_STATUS(doubleListCreate(&(pKvsPeerConnection->pFakeTransceivers)));
     CHK_STATUS(doubleListCreate(&(pKvsPeerConnection->pAnswerTransceivers)));
@@ -1207,6 +1257,13 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
         ? DEFAULT_JITTER_BUFFER_MAX_LATENCY
         : pConfiguration->kvsRtcConfiguration.jitterBufferMaxLatency;
     pKvsPeerConnection->useRealTimeJitterBuffer = pConfiguration->kvsRtcConfiguration.useRealTimeJitterBuffer;
+    pKvsPeerConnection->useRedForOpus = pConfiguration->kvsRtcConfiguration.useRedForOpus;
+    pKvsPeerConnection->redForOpusRedundancy = pConfiguration->kvsRtcConfiguration.redForOpusRedundancy;
+    if (pKvsPeerConnection->redForOpusRedundancy == 0) {
+        pKvsPeerConnection->redForOpusRedundancy = RED_DEFAULT_REDUNDANCY;
+    } else if (pKvsPeerConnection->redForOpusRedundancy > RED_MAX_REDUNDANCY) {
+        pKvsPeerConnection->redForOpusRedundancy = RED_MAX_REDUNDANCY;
+    }
     ATOMIC_STORE_BOOL(&pKvsPeerConnection->sctpIsEnabled, FALSE);
     ATOMIC_STORE_BOOL(&pKvsPeerConnection->receiveEnabled, TRUE);
 
@@ -1373,6 +1430,7 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     CHK_LOG_ERR(doubleListFree(pKvsPeerConnection->pAnswerTransceivers));
     CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->pCodecTable));
     CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->pRtxTable));
+    CHK_LOG_ERR(hashTableFree(pKvsPeerConnection->pRedTable));
     if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->pSrtpSessionLock)) {
         MUTEX_FREE(pKvsPeerConnection->pSrtpSessionLock);
     }
@@ -1870,9 +1928,11 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
                                   pKvsPeerConnection->isOffer));
 
     if (!pKvsPeerConnection->isOffer) {
-        CHK_STATUS(setPayloadTypesFromOffer(pKvsPeerConnection->pCodecTable, pKvsPeerConnection->pRtxTable, pSessionDescription));
+        CHK_STATUS(setPayloadTypesFromOffer(pKvsPeerConnection->pCodecTable, pKvsPeerConnection->pRtxTable, pKvsPeerConnection->pRedTable,
+                                            pSessionDescription));
     }
-    CHK_STATUS(setTransceiverPayloadTypes(pKvsPeerConnection->pCodecTable, pKvsPeerConnection->pRtxTable, pKvsPeerConnection->pTransceivers));
+    CHK_STATUS(setTransceiverPayloadTypes(pKvsPeerConnection->pCodecTable, pKvsPeerConnection->pRtxTable, pKvsPeerConnection->pRedTable,
+                                          pKvsPeerConnection->pTransceivers));
     CHK_STATUS(setReceiversSsrc(pSessionDescription, pKvsPeerConnection->pTransceivers));
 
     if (NULL != GETENV(DEBUG_LOG_SDP)) {
@@ -1930,7 +1990,7 @@ STATUS createOffer(PRtcPeerConnection pPeerConnection, PRtcSessionDescriptionIni
     ATOMIC_STORE_BOOL(&pKvsPeerConnection->sctpIsEnabled, TRUE);
 #endif
 
-    CHK_STATUS(setPayloadTypesForOffer(pKvsPeerConnection->pCodecTable));
+    CHK_STATUS(setPayloadTypesForOffer(pKvsPeerConnection->pCodecTable, pKvsPeerConnection->pRedTable, pKvsPeerConnection->useRedForOpus));
     CHK_STATUS(populateSessionDescription(pKvsPeerConnection, pKvsPeerConnection->pRemoteSessionDescription, pSessionDescription));
     CHK_STATUS(serializeSessionDescription(pSessionDescription, NULL, &serializeLen));
     CHK(serializeLen <= MAX_SESSION_DESCRIPTION_INIT_SDP_LEN, STATUS_NOT_ENOUGH_MEMORY);

@@ -1,5 +1,58 @@
 let pc = null;
 let dc = null, dcInterval = null;
+let statsInterval = null;
+
+// Detect whether audio RED (RFC 2198, red/48000) was negotiated in an SDP blob.
+// Returns the RED payload type number, or null.
+function findAudioRedPt(sdp) {
+    if (!sdp) return null;
+    const lines = sdp.split(/\r?\n/);
+    let inAudio = false;
+    for (const line of lines) {
+        if (line.startsWith('m=')) {
+            inAudio = line.startsWith('m=audio');
+            continue;
+        }
+        if (!inAudio) continue;
+        const m = line.match(/^a=rtpmap:(\d+)\s+red\/48000/i);
+        if (m) return parseInt(m[1], 10);
+    }
+    return null;
+}
+
+// Poll inbound-rtp audio stats. With RED on, each wire packet should average
+// ~1 + 4 + 160*(N+1) bytes. Chrome's audio-RED path does not populate the
+// fec* counters, but packetsDiscarded rises whenever a redundant block arrives
+// after its primary (the common case under no loss) — so it's a reliable proxy.
+async function reportFecStats() {
+    if (!pc) return;
+    try {
+        const stats = await pc.getStats();
+        let audioInbound = null;
+        stats.forEach(s => {
+            if (s.type === 'inbound-rtp' && s.kind === 'audio') {
+                audioInbound = s;
+            }
+        });
+        if (!audioInbound) return;
+        const packetsReceived = audioInbound.packetsReceived ?? 0;
+        const bytesReceived = audioInbound.bytesReceived ?? 0;
+        const packetsDiscarded = audioInbound.packetsDiscarded ?? 0;
+        const packetsLost = audioInbound.packetsLost ?? 0;
+        const concealedSamples = audioInbound.concealedSamples ?? 0;
+        const concealmentEvents = audioInbound.concealmentEvents ?? 0;
+        const avg = packetsReceived > 0 ? (bytesReceived / packetsReceived).toFixed(1) : '—';
+        document.getElementById('audio-packets-received').textContent = packetsReceived;
+        document.getElementById('audio-bytes-received').textContent = bytesReceived;
+        document.getElementById('audio-avg-packet-bytes').textContent = avg;
+        document.getElementById('audio-packets-discarded').textContent = packetsDiscarded;
+        document.getElementById('audio-packets-lost').textContent = packetsLost;
+        document.getElementById('audio-concealed-samples').textContent = concealedSamples;
+        document.getElementById('audio-concealment-events').textContent = concealmentEvents;
+    } catch (e) {
+        console.warn('getStats failed:', e);
+    }
+}
 
 function negotiate() {
     pc.addTransceiver('video', {direction: 'recvonly'});
@@ -23,6 +76,7 @@ function negotiate() {
         });
     }).then(() => {
         const offer = pc.localDescription;
+        console.log('--- BROWSER OFFER ---\n' + offer.sdp);
         return fetch('/offer', {
             body: JSON.stringify({
                 sdp: offer.sdp,
@@ -36,6 +90,19 @@ function negotiate() {
     }).then((response) => {
         return response.json();
     }).then((answer) => {
+        console.log('--- SERVER ANSWER ---\n' + answer.sdp);
+        // Inspect the answer SDP: RED is negotiated iff both sides agreed on a red/48000
+        // rtpmap on the audio m= line.
+        const offerRedPt = findAudioRedPt(pc.localDescription && pc.localDescription.sdp);
+        const answerRedPt = findAudioRedPt(answer.sdp);
+        const redStatusEl = document.getElementById('audio-red-status');
+        if (answerRedPt !== null && offerRedPt !== null) {
+            redStatusEl.textContent = 'yes (PT ' + answerRedPt + ')';
+        } else if (offerRedPt !== null) {
+            redStatusEl.textContent = 'offered but declined by remote';
+        } else {
+            redStatusEl.textContent = 'no';
+        }
         return pc.setRemoteDescription(answer);
     }).catch((e) => {
         alert(e);
@@ -104,12 +171,18 @@ async function start() {
 
     document.getElementById('start').style.display = 'none';
     negotiate();
+    statsInterval = setInterval(reportFecStats, 1000);
     document.getElementById('stop').style.display = 'inline-block';
 }
 
 function stop() {
     document.getElementById('stop').style.display = 'none';
     document.getElementById('start').style.display = 'inline-block';
+
+    if (statsInterval) {
+        clearInterval(statsInterval);
+        statsInterval = null;
+    }
 
     // close data channel
     if (dc) {

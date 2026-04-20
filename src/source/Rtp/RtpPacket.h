@@ -106,6 +106,11 @@ struct __RtpPacket {
     UINT64 receivedTime;
     // used for twcc time delta calculation
     UINT64 sentTime;
+    // TRUE for synthetic packets produced by the RED depayloader from a redundant
+    // block. Such packets share the outer RTP container's ssrc and (offset-based)
+    // sequence number, but they represent a prior Opus frame and must lose any
+    // dedup race against a real packet carrying the same seqnum.
+    BOOL isSynthetic;
 };
 typedef RtpPacket* PRtpPacket;
 

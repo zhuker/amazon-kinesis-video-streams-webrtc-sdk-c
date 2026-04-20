@@ -534,6 +534,17 @@ static STATUS defaultPush(PJitterBuffer pJitterBuffer, PRtpPacket pRtpPacket, PB
         status = hashTableGet(pInternal->pPkgBufferHashTable, pRtpPacket->header.sequenceNumber, &hashValue);
         pCurPacket = (PRtpPacket) hashValue;
         if (STATUS_SUCCEEDED(status) && pCurPacket != NULL) {
+            // RED synthetic-vs-real dedup:
+            //   existing real + incoming synthetic  → drop incoming (keep real)
+            //   existing synthetic + incoming real  → free existing, install real
+            //   both real or both synthetic         → existing behavior (replace)
+            if (!pCurPacket->isSynthetic && pRtpPacket->isSynthetic) {
+                freeRtpPacket(&pRtpPacket);
+                if (pPacketDiscarded != NULL) {
+                    *pPacketDiscarded = TRUE;
+                }
+                CHK(FALSE, retStatus);
+            }
             freeRtpPacket(&pCurPacket);
             CHK_STATUS(hashTableRemove(pInternal->pPkgBufferHashTable, pRtpPacket->header.sequenceNumber));
         }

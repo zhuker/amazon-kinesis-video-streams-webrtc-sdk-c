@@ -524,10 +524,12 @@ typedef struct {
     UINT64 headerBytesReceived; //!< Total number of RTP header and padding bytes received for this SSRC. This does not include the size of transport
                                 //!< layer headers such as IP or UDP. headerBytesReceived + bytesReceived equals the number of bytes received as
                                 //!< payload over the transport.
-    UINT64 fecPacketsReceived;  //!< TODO Total number of RTP FEC packets received for this SSRC. This counter can also be incremented when receiving
-                                //!< FEC packets in-band with media packets (e.g., with Opus).
+    UINT64 fecPacketsReceived;  //!< Total number of RTP FEC packets received for this SSRC. This counter can also be incremented when receiving
+                                //!< FEC packets in-band with media packets (e.g., with Opus carried in RFC 2198 RED).
+    UINT64 fecBytesReceived;    //!< Total payload bytes of received redundant blocks for this SSRC. For RFC 2198 RED with Opus this excludes the
+                                //!< primary block payload (which counts under bytesReceived).
     UINT64
-    fecPacketsDiscarded;  //!< TODO Total number of RTP FEC packets received for this SSRC where the error correction payload was discarded by the
+    fecPacketsDiscarded;  //!< Total number of RTP FEC packets received for this SSRC where the error correction payload was discarded by the
                           //!< application. This may happen 1. if all the source packets protected by the FEC packet were received or already
                           //!< recovered by a separate FEC packet, or 2. if the FEC packet arrived late, i.e., outside the recovery window, and
                           //!< the lost RTP packets have already been skipped during playout. This is a subset of fecPacketsReceived.
