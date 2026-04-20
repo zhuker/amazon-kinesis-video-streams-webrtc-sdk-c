@@ -72,9 +72,11 @@ TEST_F(PeerConnectionFunctionalityTest, connectFullToLitePeer)
     freePeerConnection(&answerPc);
 }
 
-// Same as above but with announcedIpAddress set on the lite peer. Connection still succeeds over loopback because
-// the SDK listens on the real bind IPs even when announcedIpAddress rewrites the advertised address.
-TEST_F(PeerConnectionFunctionalityTest, connectFullToLitePeerWithAnnouncedIp)
+// Proves that announcedIpAddress genuinely rewrites the address the full peer probes: the lite peer emits host
+// candidates pointing at an unreachable documentation IP, the full peer tries and fails to send STUN binding
+// requests to it (ENETUNREACH), and both agents end up in FAILED rather than CONNECTED. If the rewrite were purely
+// nominal — e.g. the full peer falling back to the lite socket's real bind IP — this test would instead succeed.
+TEST_F(PeerConnectionFunctionalityTest, announcedIpUnreachableConnectionFails)
 {
     RtcConfiguration fullCfg{}, liteCfg{};
     PRtcPeerConnection offerPc = NULL, answerPc = NULL;
@@ -82,16 +84,15 @@ TEST_F(PeerConnectionFunctionalityTest, connectFullToLitePeerWithAnnouncedIp)
     initRtcConfiguration(&fullCfg);
     initRtcConfiguration(&liteCfg);
     liteCfg.kvsRtcConfiguration.iceLiteMode = TRUE;
-    // Announce a non-reachable IP; connectivity should still work because the full peer learns the real reachable
-    // address via peer-reflexive discovery from the first incoming check, rather than trusting the announced IP.
+    // 203.0.113.0/24 is TEST-NET-3 (RFC 5737) — guaranteed not to be in any routing table.
     STRNCPY(liteCfg.kvsRtcConfiguration.announcedIpAddress, "203.0.113.10", KVS_IP_ADDRESS_STRING_BUFFER_LEN - 1);
 
     EXPECT_EQ(createPeerConnection(&fullCfg, &offerPc), STATUS_SUCCESS);
     EXPECT_EQ(createPeerConnection(&liteCfg, &answerPc), STATUS_SUCCESS);
 
-    // May or may not connect depending on whether peer-reflexive discovery salvages the bogus announced IP; either
-    // outcome is acceptable here. The real assertion is that setup/teardown of a lite+announcedIp peer is clean.
-    connectTwoPeers(offerPc, answerPc);
+    EXPECT_FALSE(connectTwoPeers(offerPc, answerPc));
+    EXPECT_EQ(0u, ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]));
+    EXPECT_GT(ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]), 0u);
 
     PKvsPeerConnection pKvsAnswer = (PKvsPeerConnection) answerPc;
     EXPECT_TRUE(pKvsAnswer->pIceAgent->isLiteAgent);
