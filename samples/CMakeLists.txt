@@ -65,15 +65,16 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/bbbH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/girH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h265SampleFrames" DESTINATION .)
 
-# Mirror the html/ directory into the build output on every build so edits to
-# index.html / client.js show up without re-running CMake. file(COPY ...) only
-# runs at configure time. The whepServer / whipServer targets below depend on
-# this, so building either one re-syncs the html assets.
+# Symlink the source html/ directory into the build output so edits to
+# index.html / client.js are picked up live — just refresh the browser, no
+# rebuild or reconfigure needed. We remove any stale copy/directory first so
+# this works cleanly on incremental builds that previously used file(COPY).
 add_custom_target(samples_html ALL
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_CURRENT_BINARY_DIR}/html"
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
             "${CMAKE_CURRENT_SOURCE_DIR}/html"
             "${CMAKE_CURRENT_BINARY_DIR}/html"
-    COMMENT "Syncing samples/html → build"
+    COMMENT "Linking samples/html → build"
     VERBATIM)
 
 if (ENABLE_SIGNALING)
