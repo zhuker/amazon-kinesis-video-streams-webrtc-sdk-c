@@ -2962,6 +2962,76 @@ TEST_F(SdpApiTest, iceLiteAgentAlwaysControlled)
     freePeerConnection(&fullPc);
 }
 
+TEST_F(SdpApiTest, iceLiteWithAnnouncedIpEmitsBothInOffer)
+{
+    RtcConfiguration configuration;
+    PRtcPeerConnection pRtcPeerConnection = nullptr;
+    RtcMediaStreamTrack track;
+    PRtcRtpTransceiver transceiver = nullptr;
+    RtcSessionDescriptionInit offerSdp;
+    SIZE_T gatherDone = 0;
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+    STRNCPY(configuration.kvsRtcConfiguration.announcedIpAddress, "203.0.113.10", KVS_IP_ADDRESS_STRING_BUFFER_LEN - 1);
+
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&configuration, &pRtcPeerConnection));
+
+    track.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
+    track.codec = RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE;
+    STRNCPY(track.streamId, "videoStream", MAX_MEDIA_STREAM_ID_LEN);
+    STRNCPY(track.trackId, "videoTrack", MAX_MEDIA_STREAM_TRACK_ID_LEN);
+
+    EXPECT_EQ(STATUS_SUCCESS, addSupportedCodec(pRtcPeerConnection, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE));
+    EXPECT_EQ(STATUS_SUCCESS, addTransceiver(pRtcPeerConnection, &track, nullptr, &transceiver));
+
+    // Signal gathering completion via the ICE-candidate callback: NULL candidate string means "done".
+    auto onCandidate = [](UINT64 customData, PCHAR candidateStr) -> void {
+        if (candidateStr == NULL) {
+            ATOMIC_INCREMENT((PSIZE_T) customData);
+        }
+    };
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(pRtcPeerConnection, (UINT64) &gatherDone, onCandidate));
+
+    // setLocalDescription triggers gathering; for lite mode it's host-only and completes essentially immediately.
+    MEMSET(&offerSdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(pRtcPeerConnection, &offerSdp));
+    EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(pRtcPeerConnection, &offerSdp));
+
+    UINT64 timeout = GETTIME() + 3 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    while (ATOMIC_LOAD(&gatherDone) == 0 && GETTIME() < timeout) {
+        THREAD_SLEEP(50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
+    ASSERT_GT(ATOMIC_LOAD(&gatherDone), 0u);
+
+    // Get the SDP with candidates populated.
+    MEMSET(&offerSdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(pRtcPeerConnection, &offerSdp));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(pRtcPeerConnection, &offerSdp));
+
+    std::string sdp(offerSdp.sdp);
+    EXPECT_NE(std::string::npos, sdp.find("a=ice-lite"));
+
+    // At least one a=candidate line must carry the announced IP. Scope the substring check to candidate lines so we
+    // don't accidentally match the address appearing elsewhere (e.g. an ICE server URL).
+    bool announcedIpInCandidate = false;
+    auto candidatePos = sdp.find("a=candidate:");
+    ASSERT_NE(std::string::npos, candidatePos);
+    while (candidatePos != std::string::npos) {
+        auto lineEnd = sdp.find("\r\n", candidatePos);
+        std::string line = sdp.substr(candidatePos, lineEnd - candidatePos);
+        if (line.find("203.0.113.10") != std::string::npos) {
+            announcedIpInCandidate = true;
+            break;
+        }
+        candidatePos = sdp.find("a=candidate:", candidatePos + 1);
+    }
+    EXPECT_TRUE(announcedIpInCandidate);
+
+    EXPECT_EQ(STATUS_SUCCESS, closePeerConnection(pRtcPeerConnection));
+    EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

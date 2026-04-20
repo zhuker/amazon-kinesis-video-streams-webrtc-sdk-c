@@ -529,6 +529,25 @@ STATUS iceAgentInitHostCandidate(PIceAgent pIceAgent)
     PSocketConnection pSocketConnection = NULL;
     BOOL locked = FALSE;
 
+    // Parse announcedIpAddress once (if configured). Failing to parse is fatal — silently falling back to the bind IP
+    // would produce candidates the user did not expect.
+    KvsIpAddress announcedIpAddr;
+    BOOL hasAnnouncedIp = FALSE;
+    MEMSET(&announcedIpAddr, 0x00, SIZEOF(KvsIpAddress));
+    if (pIceAgent->kvsRtcConfiguration.announcedIpAddress[0] != '\0') {
+        PCHAR announcedStr = pIceAgent->kvsRtcConfiguration.announcedIpAddress;
+        if (inet_pton(AF_INET, announcedStr, announcedIpAddr.address) == 1) {
+            announcedIpAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
+            hasAnnouncedIp = TRUE;
+        } else if (inet_pton(AF_INET6, announcedStr, announcedIpAddr.address) == 1) {
+            announcedIpAddr.family = KVS_IP_FAMILY_TYPE_IPV6;
+            hasAnnouncedIp = TRUE;
+        } else {
+            DLOGE("Invalid announcedIpAddress '%s' — must be an IPv4 or IPv6 literal", announcedStr);
+            CHK(FALSE, STATUS_INVALID_ARG);
+        }
+    }
+
     for (i = 0; i < pIceAgent->localNetworkInterfaceCount; ++i) {
         pIpAddress = &pIceAgent->localNetworkInterfaces[i];
 
@@ -553,6 +572,13 @@ STATUS iceAgentInitHostCandidate(PIceAgent pIceAgent)
             pTmpIceCandidate->foundation = pIceAgent->foundationCounter++;
             pTmpIceCandidate->pSocketConnection = pSocketConnection;
             pTmpIceCandidate->priority = computeCandidatePriority(pTmpIceCandidate);
+
+            // Presentation-only override for SDP emission; port is taken from the bound socket (pIpAddress->port).
+            if (hasAnnouncedIp && pIpAddress->family == announcedIpAddr.family) {
+                pTmpIceCandidate->hasAnnouncedAddress = TRUE;
+                pTmpIceCandidate->announcedIpAddress = announcedIpAddr;
+                pTmpIceCandidate->announcedIpAddress.port = pIpAddress->port;
+            }
 
             /* Another thread could be calling iceAgentAddRemoteCandidate which triggers createIceCandidatePairs.
              * createIceCandidatePairs will read through localCandidates, since we are mutating localCandidates here,
@@ -1708,8 +1734,7 @@ STATUS iceAgentGatherCandidateTimerCallback(UINT32 timerId, UINT64 currentTime, 
     }
     /* stop scheduling if there is a nominated candidate pair (in cases where the pair does not have relay, which is set via stopGathering flag), no
      * more pending candidate and relay candidates are added or if timeout is reached. */
-    if (ATOMIC_LOAD_BOOL(&pIceAgent->stopGathering) ||
-        (pIceAgent->isLiteAgent && totalCandidateCount > 0 && pendingCandidateCount == 0) ||
+    if (ATOMIC_LOAD_BOOL(&pIceAgent->stopGathering) || (pIceAgent->isLiteAgent && totalCandidateCount > 0 && pendingCandidateCount == 0) ||
         (totalCandidateCount > 0 && pendingCandidateCount == 0 && ATOMIC_LOAD_BOOL(&pIceAgent->addedRelayCandidate)) ||
         currentTime >= pIceAgent->candidateGatheringEndTime) {
         DLOGI("Candidate gathering completed.");
@@ -2573,27 +2598,30 @@ STATUS iceCandidateSerialize(PIceCandidate pIceCandidate, PCHAR pOutputData, PUI
 {
     STATUS retStatus = STATUS_SUCCESS;
     INT32 amountWritten = 0;
+    PKvsIpAddress pIpAddress = NULL;
 
     CHK(pIceCandidate != NULL && pOutputLength != NULL, STATUS_NULL_ARG);
 
+    // Emit the announced IP instead of the real bind address when configured (presentation-only override).
+    pIpAddress = pIceCandidate->hasAnnouncedAddress ? &pIceCandidate->announcedIpAddress : &pIceCandidate->ipAddress;
+
     // TODO FIXME real source of randomness
-    if (IS_IPV4_ADDR(&(pIceCandidate->ipAddress))) {
-        amountWritten = SNPRINTF(pOutputData, pOutputData == NULL ? 0 : *pOutputLength,
-                                 "%u 1 udp %u %d.%d.%d.%d %d typ %s raddr 0.0.0.0 rport 0 generation 0 network-cost 999", pIceCandidate->foundation,
-                                 pIceCandidate->priority, pIceCandidate->ipAddress.address[0], pIceCandidate->ipAddress.address[1],
-                                 pIceCandidate->ipAddress.address[2], pIceCandidate->ipAddress.address[3],
-                                 (UINT16) getInt16(pIceCandidate->ipAddress.port), iceAgentGetCandidateTypeStr(pIceCandidate->iceCandidateType));
+    if (IS_IPV4_ADDR(pIpAddress)) {
+        amountWritten =
+            SNPRINTF(pOutputData, pOutputData == NULL ? 0 : *pOutputLength,
+                     "%u 1 udp %u %d.%d.%d.%d %d typ %s raddr 0.0.0.0 rport 0 generation 0 network-cost 999", pIceCandidate->foundation,
+                     pIceCandidate->priority, pIpAddress->address[0], pIpAddress->address[1], pIpAddress->address[2], pIpAddress->address[3],
+                     (UINT16) getInt16(pIpAddress->port), iceAgentGetCandidateTypeStr(pIceCandidate->iceCandidateType));
     } else {
-        amountWritten = SNPRINTF(pOutputData, pOutputData == NULL ? 0 : *pOutputLength,
-                                 "%u 1 udp %u %02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X "
-                                 "%d typ %s raddr ::/0 rport 0 generation 0 network-cost 999",
-                                 pIceCandidate->foundation, pIceCandidate->priority, pIceCandidate->ipAddress.address[0],
-                                 pIceCandidate->ipAddress.address[1], pIceCandidate->ipAddress.address[2], pIceCandidate->ipAddress.address[3],
-                                 pIceCandidate->ipAddress.address[4], pIceCandidate->ipAddress.address[5], pIceCandidate->ipAddress.address[6],
-                                 pIceCandidate->ipAddress.address[7], pIceCandidate->ipAddress.address[8], pIceCandidate->ipAddress.address[9],
-                                 pIceCandidate->ipAddress.address[10], pIceCandidate->ipAddress.address[11], pIceCandidate->ipAddress.address[12],
-                                 pIceCandidate->ipAddress.address[13], pIceCandidate->ipAddress.address[14], pIceCandidate->ipAddress.address[15],
-                                 (UINT16) getInt16(pIceCandidate->ipAddress.port), iceAgentGetCandidateTypeStr(pIceCandidate->iceCandidateType));
+        amountWritten =
+            SNPRINTF(pOutputData, pOutputData == NULL ? 0 : *pOutputLength,
+                     "%u 1 udp %u %02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X:%02X%02X "
+                     "%d typ %s raddr ::/0 rport 0 generation 0 network-cost 999",
+                     pIceCandidate->foundation, pIceCandidate->priority, pIpAddress->address[0], pIpAddress->address[1], pIpAddress->address[2],
+                     pIpAddress->address[3], pIpAddress->address[4], pIpAddress->address[5], pIpAddress->address[6], pIpAddress->address[7],
+                     pIpAddress->address[8], pIpAddress->address[9], pIpAddress->address[10], pIpAddress->address[11], pIpAddress->address[12],
+                     pIpAddress->address[13], pIpAddress->address[14], pIpAddress->address[15], (UINT16) getInt16(pIpAddress->port),
+                     iceAgentGetCandidateTypeStr(pIceCandidate->iceCandidateType));
     }
 
     CHK_WARN(amountWritten > 0, STATUS_INTERNAL_ERROR, "SNPRINTF failed");
@@ -2641,6 +2669,26 @@ STATUS handleStunPacket(PIceAgent pIceAgent, PBYTE pBuffer, UINT32 bufferLen, PS
             connectivityCheckRequestsReceived++;
             CHK_STATUS(deserializeStunPacket(pBuffer, bufferLen, (PBYTE) pIceAgent->localPassword,
                                              (UINT32) STRLEN(pIceAgent->localPassword) * SIZEOF(CHAR), &pStunPacket));
+
+            // RFC 8445 §7.3.1.1: a lite agent is always controlled. If the remote peer signals ICE-CONTROLLED, that is a
+            // role conflict — reply with a 487 Binding Error Response and do not process the request further.
+            if (pIceAgent->isLiteAgent) {
+                PStunAttributeHeader pIceControlledAttr = NULL;
+                CHK_STATUS(getStunAttribute(pStunPacket, STUN_ATTRIBUTE_TYPE_ICE_CONTROLLED, &pIceControlledAttr));
+                if (pIceControlledAttr != NULL) {
+                    DLOGW("ICE-lite: received Binding Request with ICE-CONTROLLED from remote; replying 487 Role Conflict");
+                    CHK_STATUS(createStunPacket(STUN_PACKET_TYPE_BINDING_RESPONSE_ERROR, pStunPacket->header.transactionId, &pStunResponse));
+                    CHK_STATUS(appendStunErrorCodeAttribute(pStunResponse, (PCHAR) "Role Conflict", 487));
+                    CHK_STATUS(findCandidateWithSocketConnection(pSocketConnection, pIceAgent->localCandidates, &pIceCandidate));
+                    if (pIceCandidate != NULL) {
+                        iceAgentSendStunPacket(pStunResponse, (PBYTE) pIceAgent->localPassword,
+                                               (UINT32) STRLEN(pIceAgent->localPassword) * SIZEOF(CHAR), pIceAgent, pIceCandidate, pSrcAddr);
+                    }
+                    // stop processing; CleanUp will free pStunPacket and pStunResponse
+                    CHK(FALSE, retStatus);
+                }
+            }
+
             CHK_STATUS(createStunPacket(STUN_PACKET_TYPE_BINDING_RESPONSE_SUCCESS, pStunPacket->header.transactionId, &pStunResponse));
             CHK_STATUS(appendStunAddressAttribute(pStunResponse, STUN_ATTRIBUTE_TYPE_XOR_MAPPED_ADDRESS, pSrcAddr));
             CHK_STATUS(appendStunIceControllAttribute(

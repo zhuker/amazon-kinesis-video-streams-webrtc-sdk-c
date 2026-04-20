@@ -12,10 +12,7 @@ extern "C" {
 
 #define MAX_LOCAL_NETWORK_INTERFACE_COUNT 128
 
-// string buffer size for ipv4 and ipv6. Null terminator included.
-// for ipv6: 0000:0000:0000:0000:0000:0000:0000:0000 = 39
-// for ipv4 mapped ipv6: 0000:0000:0000:0000:0000:ffff:192.168.100.228 = 45
-#define KVS_IP_ADDRESS_STRING_BUFFER_LEN 46
+// KVS_IP_ADDRESS_STRING_BUFFER_LEN is defined in the public Include.h (used by announcedIpAddress).
 
 // 000.000.000.000
 #define KVS_MAX_IPV4_ADDRESS_STRING_LEN 15

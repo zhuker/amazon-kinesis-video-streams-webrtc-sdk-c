@@ -436,6 +436,13 @@ extern "C" {
  */
 
 /**
+ * Buffer size for an IPv4 or IPv6 address string, including null terminator.
+ * For IPv6: 0000:0000:0000:0000:0000:0000:0000:0000 = 39
+ * For IPv4-mapped IPv6: 0000:0000:0000:0000:0000:ffff:192.168.100.228 = 45
+ */
+#define KVS_IP_ADDRESS_STRING_BUFFER_LEN 46
+
+/**
  * Maximum allowed channel name length
  */
 #define MAX_CHANNEL_NAME_LEN 256
@@ -1306,6 +1313,15 @@ typedef struct {
     BOOL iceLiteMode; //!< When TRUE, agent operates as ICE-lite (RFC 8445 §2.5).
                       //!< Only host candidates are gathered, no connectivity checks are initiated.
                       //!< The agent always assumes the controlled role.
+                      //!< To deploy an ICE-lite server behind 1:1 NAT or a load balancer, set announcedIpAddress
+                      //!< to the externally reachable IP — lite agents do not gather srflx/relay and otherwise
+                      //!< have no way to learn their public address.
+
+    CHAR announcedIpAddress[KVS_IP_ADDRESS_STRING_BUFFER_LEN]; //!< When non-empty, host candidates emit this address in SDP instead of the real
+                                                               //!< bind address. Sockets still listen on the locally-gathered interface IPs.
+                                                               //!< Accepts an IPv4 or IPv6 literal. Primary use: deploying an ICE-lite server
+                                                               //!< behind 1:1 NAT / a load balancer where the public IP is not assigned to any
+                                                               //!< local interface. Leave empty (default) to emit real interface IPs.
 
 #ifdef ENABLE_STATS_CALCULATION_CONTROL
     BOOL enableIceStats; //!< Control whether ICE agent stats are to be calculated. ENABLE_STATS_CALCULATION_CONTROL compiler flag must be defined

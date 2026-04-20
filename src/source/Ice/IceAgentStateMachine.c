@@ -511,6 +511,8 @@ STATUS fromReadyIceAgentState(UINT64 customData, PUINT64 pState)
     // move to failed state if any error happened.
     CHK_STATUS(pIceAgent->iceAgentStatus);
 
+    // For ICE-lite agents, this also serves as the RFC 7675 consent-freshness signal: any inbound packet (STUN or media)
+    // updates lastDataReceivedTime, and silence past iceDisconnectionTimeout flips state to DISCONNECTED.
     CHK_STATUS(iceAgentStateMachineCheckDisconnection(pIceAgent, &state));
 
     // return early if changing to disconnected state
