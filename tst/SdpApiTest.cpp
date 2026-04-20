@@ -180,7 +180,7 @@ a=msid-semantic: WMS f327e13b-3518-47fc-8b53-9cf74d22d03e
     EXPECT_EQ(serializeSessionDescription(&sessionDescription, buff.get(), &invalid_buffer_len), STATUS_BUFFER_TOO_SMALL);
 
     EXPECT_EQ(serializeSessionDescription(&sessionDescription, buff.get(), &buff_len), STATUS_SUCCESS);
-    EXPECT_STREQ(buff.get(), (PCHAR) (lfToCRLF(sessionDescriptionNoMedia, ARRAY_SIZE(sessionDescriptionNoMedia) - 1).c_str()));
+    EXPECT_STREQ(buff.get(), (PCHAR)(lfToCRLF(sessionDescriptionNoMedia, ARRAY_SIZE(sessionDescriptionNoMedia) - 1).c_str()));
 }
 
 TEST_F(SdpApiTest, serializeSessionDescription_Media)
@@ -263,7 +263,7 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_NoRtxType)
     EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pCodecTable, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, 1));
     EXPECT_EQ(STATUS_SUCCESS, hashTableCreate(&pRtxTable));
     EXPECT_EQ(STATUS_SUCCESS, doubleListCreate(&pTransceivers));
-    EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64) (&transceiver)));
+    EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64)(&transceiver)));
     EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, NULL, pTransceivers));
     EXPECT_EQ(transceiver.pRollingBufferConfig->rollingBufferDurationSec, DEFAULT_ROLLING_BUFFER_DURATION_IN_SECONDS);
     EXPECT_EQ(transceiver.pRollingBufferConfig->rollingBufferBitratebps, DEFAULT_EXPECTED_VIDEO_BIT_RATE);
@@ -295,7 +295,7 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_HasRtxType)
     EXPECT_EQ(STATUS_SUCCESS, hashTableCreate(&pRtxTable));
     EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pRtxTable, RTC_RTX_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, 2));
     EXPECT_EQ(STATUS_SUCCESS, doubleListCreate(&pTransceivers));
-    EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64) (&transceiver)));
+    EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64)(&transceiver)));
     EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, NULL, pTransceivers));
     EXPECT_EQ(1, transceiver.sender.payloadType);
     EXPECT_EQ(2, transceiver.sender.rtxPayloadType);
@@ -325,7 +325,7 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_HasRtxType_H265)
     EXPECT_EQ(STATUS_SUCCESS, hashTableCreate(&pRtxTable));
     EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pRtxTable, RTC_CODEC_H265, 2));
     EXPECT_EQ(STATUS_SUCCESS, doubleListCreate(&pTransceivers));
-    EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64) (&transceiver)));
+    EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64)(&transceiver)));
     EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, NULL, pTransceivers));
     EXPECT_EQ(1, transceiver.sender.payloadType);
     EXPECT_EQ(2, transceiver.sender.rtxPayloadType);
@@ -715,8 +715,7 @@ a=group:BUNDLE 0
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
         track1.codec = RTC_CODEC_VP8;
@@ -742,7 +741,7 @@ a=group:BUNDLE 0
     });
 }
 
-// uses words "audio video data" instead of "0 1 2" for session attributes. Sends an offer, expects the answer sdp
+// uses words "audio video data" instead of "0 1 2" for session attributes. Sends an offer, expects the answer sdp 
 // to contain "audio video data" as sent in the offer
 TEST_F(SdpApiTest, offerWithMediaNameInBundle)
 {
@@ -769,8 +768,7 @@ a=group:BUNDLE audio video data
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
         track1.codec = RTC_CODEC_VP8;
@@ -934,8 +932,7 @@ a=ssrc:331864867 msid:2e3ca9ff-0c7e-4b9d-9471-2ce80de74b84 757d07a0-892a-46e7-a1
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_AUDIO;
         track1.codec = RTC_CODEC_OPUS;
@@ -981,8 +978,7 @@ a=ssrc:331864867 msid:2e3ca9ff-0c7e-4b9d-9471-2ce80de74b84 757d07a0-892a-46e7-a1
         PRtcPeerConnection pRtcPeerConnection = nullptr;
         RtcSessionDescriptionInit offerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         offerSdp.type = SDP_TYPE_OFFER;
         STRNCPY(offerSdp.sdp, (PCHAR) sdp, MAX_SESSION_DESCRIPTION_INIT_SDP_LEN);
@@ -994,6 +990,7 @@ a=ssrc:331864867 msid:2e3ca9ff-0c7e-4b9d-9471-2ce80de74b84 757d07a0-892a-46e7-a1
         EXPECT_EQ(STATUS_SUCCESS, freePeerConnection(&pRtcPeerConnection));
     });
 }
+
 
 // if offer (remote) contains video m-line only then answer (local) should contain video m-line only
 // even if local side has other transceivers, i.e. audio
@@ -1022,8 +1019,7 @@ a=group:BUNDLE 0
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
         track1.codec = RTC_CODEC_VP8;
@@ -1081,8 +1077,7 @@ a=group:BUNDLE 0
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
         track1.codec = RTC_CODEC_VP8;
@@ -1145,8 +1140,7 @@ a=ice-options:trickle
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
         track1.codec = RTC_CODEC_VP8;
@@ -1400,8 +1394,7 @@ a=ice-options:trickle
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
         track1.codec = RTC_CODEC_VP8;
@@ -1432,8 +1425,7 @@ a=ice-options:trickle
     });
 }
 
-TEST_F(SdpApiTest, noMediaTrickleIce)
-{
+TEST_F(SdpApiTest, noMediaTrickleIce) {
     PRtcPeerConnection offerPc = NULL;
     PRtcPeerConnection answerPc = NULL;
     RtcConfiguration configurationOffer;
@@ -1463,8 +1455,7 @@ TEST_F(SdpApiTest, noMediaTrickleIce)
     freePeerConnection(&answerPc);
 }
 
-TEST_F(SdpApiTest, noMediaTrickleIceNegativeCase)
-{
+TEST_F(SdpApiTest, noMediaTrickleIceNegativeCase) {
     PRtcPeerConnection offerPc = NULL;
     PRtcPeerConnection answerPc = NULL;
     RtcConfiguration configurationOffer;
@@ -1681,8 +1672,7 @@ a=ssrc:1644235696 cname:{36a6a74c-73a4-594b-9bb0-023b4d357280})";
         RtcSessionDescriptionInit offerSdp{};
         RtcSessionDescriptionInit answerSdp{};
 
-        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION,
-                 TEST_DEFAULT_STUN_URL_POSTFIX);
+        SNPRINTF(configuration.iceServers[0].urls, MAX_ICE_CONFIG_URI_LEN, KINESIS_VIDEO_STUN_URL, TEST_DEFAULT_REGION, TEST_DEFAULT_STUN_URL_POSTFIX);
 
         track1.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
         track1.codec = RTC_CODEC_VP8;
@@ -2690,8 +2680,8 @@ a=max-message-size:262144
 
 // 1v1a1d represents 1 video + 1 audio + 1 data channel
 INSTANTIATE_TEST_SUITE_P(SdpApiTest_SdpMatch_Chrome, SdpApiTest_SdpMatch,
-                         ::testing::Values(offer_1v1a1d_Chrome_Android, offer_1v1a1d_Chrome_Linux,
-                                           offer_1v1a1d_Chrome_Mac)); // the last comma is used to silent a warning
+                        ::testing::Values(offer_1v1a1d_Chrome_Android, offer_1v1a1d_Chrome_Linux,
+                                          offer_1v1a1d_Chrome_Mac)); // the last comma is used to silent a warning
 
 INSTANTIATE_TEST_SUITE_P(SdpApiTest_SdpMatch_Firefox, SdpApiTest_SdpMatch, ::testing::Values(offer_1v1a1d_Firefox_Linux, offer_1v1a1d_Firefox_Mac));
 
@@ -2758,14 +2748,14 @@ a=rtcp-mux-only
     EXPECT_EQ(STATUS_SUCCESS, createAnswer(pRtcPeerConnection, &answerSdp));
 
     std::string answer(answerSdp.sdp);
-
+    
     // Verify that the answer contains sendrecv (not inactive) for audio
     EXPECT_NE(std::string::npos, answer.find("a=sendrecv"));
     EXPECT_EQ(std::string::npos, answer.find("a=inactive"));
-
+    
     // Verify that the answer contains the correct OPUS rtpmap with payload type 111
     EXPECT_NE(std::string::npos, answer.find("a=rtpmap:111 opus/48000/2"));
-
+    
     // Verify that it doesn't contain fake stream/track
     EXPECT_EQ(std::string::npos, answer.find("fakeStream"));
     EXPECT_EQ(std::string::npos, answer.find("fakeTrack"));
