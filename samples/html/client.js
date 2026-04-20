@@ -117,7 +117,32 @@ function negotiate() {
     });
 }
 
+// Measure wall-clock time from "Start" click to the first frame the browser renders to the <video> element.
+// Uses requestVideoFrameCallback (Chromium/Safari, Firefox >=131) when available — it fires exactly when a
+// decoded frame is ready for the compositor. Falls back to the 'playing' event for older browsers, which fires
+// after playback has begun (i.e. at least one frame is already visible).
+function armFirstFrameTimer(startPerfNow) {
+    const videoEl = document.getElementById('video');
+    const ttffEl = document.getElementById('ttff');
+    let reported = false;
+    const report = () => {
+        if (reported) return;
+        reported = true;
+        const deltaMs = performance.now() - startPerfNow;
+        ttffEl.textContent = deltaMs.toFixed(0) + ' ms';
+    };
+    if (typeof videoEl.requestVideoFrameCallback === 'function') {
+        videoEl.requestVideoFrameCallback(() => report());
+    } else {
+        videoEl.addEventListener('playing', report, {once: true});
+    }
+}
+
 async function start() {
+    const startPerfNow = performance.now();
+    document.getElementById('ttff').textContent = 'waiting…';
+    armFirstFrameTimer(startPerfNow);
+
     let config = {
         sdpSemantics: 'unified-plan'
     };
