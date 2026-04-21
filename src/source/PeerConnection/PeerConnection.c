@@ -1825,6 +1825,7 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
     PCHAR remoteIceUfrag = NULL, remoteIcePwd = NULL;
     UINT32 i, j;
     PSessionDescription pSessionDescription;
+    BOOL isControlling;
 
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pPeerConnection;
 
@@ -1860,6 +1861,8 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
         } else if (STRCMP(pSessionDescription->sdpAttributes[i].attributeName, "ice-options") == 0 &&
                    STRSTR(pSessionDescription->sdpAttributes[i].attributeValue, "trickle") != NULL) {
             NULLABLE_SET_VALUE(pKvsPeerConnection->canTrickleIce, TRUE);
+        } else if (STRCMP(pSessionDescription->sdpAttributes[i].attributeName, "ice-lite") == 0) {
+            pKvsPeerConnection->remoteIsIceLite = TRUE;
         }
     }
 
@@ -1923,9 +1926,24 @@ STATUS setRemoteDescription(PRtcPeerConnection pPeerConnection, PRtcSessionDescr
     STRNCPY(pKvsPeerConnection->remoteIceUfrag, remoteIceUfrag, MAX_ICE_UFRAG_LEN);
     STRNCPY(pKvsPeerConnection->remoteIcePwd, remoteIcePwd, MAX_ICE_PWD_LEN);
 
+    // Propagate remote ICE-lite flag to the ICE agent
+    pKvsPeerConnection->pIceAgent->remoteIsLiteAgent = pKvsPeerConnection->remoteIsIceLite;
+
+    // ICE role determination per RFC 8445:
+    // - Local lite + remote full → local is always controlled (isControlling = FALSE)
+    // - Local full + remote lite → local is always controlling (isControlling = TRUE)
+    // - Both full or both lite → offerer is controlling
+    if (pKvsPeerConnection->pIceAgent->isLiteAgent && !pKvsPeerConnection->remoteIsIceLite) {
+        isControlling = FALSE;
+    } else if (!pKvsPeerConnection->pIceAgent->isLiteAgent && pKvsPeerConnection->remoteIsIceLite) {
+        isControlling = TRUE;
+    } else {
+        isControlling = pKvsPeerConnection->isOffer;
+    }
+
     // This starts the state machine timer callback that transitions states periodically
-    CHK_STATUS(iceAgentStartAgent(pKvsPeerConnection->pIceAgent, pKvsPeerConnection->remoteIceUfrag, pKvsPeerConnection->remoteIcePwd,
-                                  pKvsPeerConnection->isOffer));
+    CHK_STATUS(
+        iceAgentStartAgent(pKvsPeerConnection->pIceAgent, pKvsPeerConnection->remoteIceUfrag, pKvsPeerConnection->remoteIcePwd, isControlling));
 
     if (!pKvsPeerConnection->isOffer) {
         CHK_STATUS(setPayloadTypesFromOffer(pKvsPeerConnection->pCodecTable, pKvsPeerConnection->pRtxTable, pKvsPeerConnection->pRedTable,

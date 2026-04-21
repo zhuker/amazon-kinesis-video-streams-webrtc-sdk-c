@@ -295,6 +295,16 @@ class WebRtcClientTestBase : public ::testing::Test {
 
     bool connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, PCHAR pOfferCertFingerprint = NULL,
                          PCHAR pAnswerCertFingerprint = NULL);
+
+    // Non-trickle variant: starts gathering on both PCs, waits for each to signal gathering completion, then
+    // exchanges post-gathering SDPs (containing a=candidate lines inline).
+    //
+    // assumeOfferGathered / assumeAnswerGathered skip the gather-wait for that side and use the bare SDP from
+    // createOffer/createAnswer (no a=candidate: lines). The other side still gathers and emits candidates
+    // normally. Use this to test scenarios where one peer intentionally hands over an SDP without any advertised
+    // candidates — the receiving peer then has to learn its address via peer-reflexive discovery.
+    bool connectTwoPeersNoTrickle(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, bool assumeOfferGathered = false,
+                                  bool assumeAnswerGathered = false);
     void addTrackToPeerConnection(PRtcPeerConnection pRtcPeerConnection, PRtcMediaStreamTrack track, PRtcRtpTransceiver* transceiver, RTC_CODEC codec,
                                   MEDIA_STREAM_TRACK_KIND kind);
     void getIceServers(PRtcConfiguration pRtcConfiguration);

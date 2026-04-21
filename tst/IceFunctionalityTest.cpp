@@ -312,7 +312,6 @@ TEST_F(IceFunctionalityTest, IceAgentIceAgentAddIceServerUnitTest)
     EXPECT_EQ(STATUS_SUCCESS, parseIceServer(&iceServer, (PCHAR) "turn:54.202.170.151:443?randomstuff", (PCHAR) "username", (PCHAR) "password"));
     EXPECT_EQ(iceServer.transport, KVS_SOCKET_PROTOCOL_NONE);
 
-
     //
     // Dual-stack checks.
     //
@@ -320,12 +319,12 @@ TEST_F(IceFunctionalityTest, IceAgentIceAgentAddIceServerUnitTest)
     // Clear the iceServer struct.
     MEMSET(&iceServer, 0x00, SIZEOF(IceServer));
 
-    // Set the env var to enable dual-stack mode.
-    #ifdef _WIN32
-        _putenv_s(USE_DUAL_STACK_ENDPOINTS_ENV_VAR, "ON");
-    #else
-        setenv(USE_DUAL_STACK_ENDPOINTS_ENV_VAR, "ON", 1);
-    #endif
+// Set the env var to enable dual-stack mode.
+#ifdef _WIN32
+    _putenv_s(USE_DUAL_STACK_ENDPOINTS_ENV_VAR, "ON");
+#else
+    setenv(USE_DUAL_STACK_ENDPOINTS_ENV_VAR, "ON", 1);
+#endif
 
     std::string test_ipv4_addr = "35-90-63-38";
     std::string test_ipv6_addr = "2001-0db8-85a3-0000-0000-8a2e-0370-7334";
@@ -349,9 +348,11 @@ TEST_F(IceFunctionalityTest, IceAgentIceAgentAddIceServerUnitTest)
 
     // Failing cases: both IPv4 and IPv6 addresses should be present in hostname, else will
     // fallback to getAddrInfo and fail.
-    EXPECT_EQ(STATUS_RESOLVE_HOSTNAME_FAILED, parseIceServer(&iceServer, (PCHAR) ("turn:" + test_ipv4_addr).c_str(), (PCHAR) "username", (PCHAR) "password"));
-    EXPECT_EQ(STATUS_RESOLVE_HOSTNAME_FAILED, parseIceServer(&iceServer, (PCHAR) ("turn:" + test_ipv6_addr).c_str(), (PCHAR) "username", (PCHAR) "password"));
-    
+    EXPECT_EQ(STATUS_RESOLVE_HOSTNAME_FAILED,
+              parseIceServer(&iceServer, (PCHAR) ("turn:" + test_ipv4_addr).c_str(), (PCHAR) "username", (PCHAR) "password"));
+    EXPECT_EQ(STATUS_RESOLVE_HOSTNAME_FAILED,
+              parseIceServer(&iceServer, (PCHAR) ("turn:" + test_ipv6_addr).c_str(), (PCHAR) "username", (PCHAR) "password"));
+
     // Clear the iceServer struct again incase of partial population from previous calls.
     MEMSET(&iceServer, 0x00, SIZEOF(IceServer));
 
@@ -377,13 +378,12 @@ TEST_F(IceFunctionalityTest, IceAgentIceAgentAddIceServerUnitTest)
     getIpAddrStr(&iceServer.ipAddresses.ipv6Address, (PCHAR) parsed_ipv6_addr, SIZEOF(parsed_ipv6_addr));
     EXPECT_STREQ(parsed_ipv6_addr, colon_delim_test_ipv6_addr.c_str());
 
-    // Cleanup the env var.
-    #ifdef _WIN32
-        _putenv_s(USE_DUAL_STACK_ENDPOINTS_ENV_VAR, "");
-    #else
-        unsetenv(USE_DUAL_STACK_ENDPOINTS_ENV_VAR);
-    #endif   
-
+// Cleanup the env var.
+#ifdef _WIN32
+    _putenv_s(USE_DUAL_STACK_ENDPOINTS_ENV_VAR, "");
+#else
+    unsetenv(USE_DUAL_STACK_ENDPOINTS_ENV_VAR);
+#endif
 }
 
 TEST_F(IceFunctionalityTest, IceAgentAddRemoteCandidateUnitTest)
@@ -772,8 +772,7 @@ TEST_F(IceFunctionalityTest, getLocalhostIpAddressesBasicTest)
         EXPECT_TRUE(ipAddresses[i].family == KVS_IP_FAMILY_TYPE_IPV4 || ipAddresses[i].family == KVS_IP_FAMILY_TYPE_IPV6);
         EXPECT_EQ((UINT16) 0, ipAddresses[i].port);
         EXPECT_EQ(STATUS_SUCCESS, getIpAddrStr(&ipAddresses[i], ipAddrStr, SIZEOF(ipAddrStr)));
-        DLOGD("Found interface %u: %s (%s)", i, ipAddrStr,
-              ipAddresses[i].family == KVS_IP_FAMILY_TYPE_IPV4 ? "IPv4" : "IPv6");
+        DLOGD("Found interface %u: %s (%s)", i, ipAddrStr, ipAddresses[i].family == KVS_IP_FAMILY_TYPE_IPV4 ? "IPv4" : "IPv6");
     }
 }
 
@@ -834,6 +833,303 @@ TEST_F(IceFunctionalityTest, getLocalhostIpAddressesFilterCustomDataTest)
     // filterCallCount >= ipCount because some IPv6 link-local/site-local addresses
     // are skipped after the filter runs
     EXPECT_GE(filterCallCount, ipCount);
+}
+
+TEST_F(IceFunctionalityTest, iceLiteAgentFlagSetCorrectly)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    EXPECT_TRUE(pIceAgent->isLiteAgent);
+    EXPECT_FALSE(pIceAgent->remoteIsLiteAgent);
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
+}
+
+TEST_F(IceFunctionalityTest, iceLiteAgentFlagDefaultFalse)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+
+    initRtcConfiguration(&configuration);
+    // Default: iceLiteMode is FALSE (MEMSET to 0)
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    EXPECT_FALSE(pIceAgent->isLiteAgent);
+    EXPECT_FALSE(pIceAgent->remoteIsLiteAgent);
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
+}
+
+TEST_F(IceFunctionalityTest, iceLiteAgentRespondsWith487OnIceControlled)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+    PStunPacket pRequest = NULL;
+    BYTE txnId[STUN_TRANSACTION_ID_LEN] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    BYTE serialized[1024] = {0};
+    UINT32 serializedLen = SIZEOF(serialized);
+    KvsIpAddress srcAddr;
+    KvsIpAddress destAddr;
+    UINT32 beforeRemoteCount = 0, afterRemoteCount = 0;
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+    MEMSET(&srcAddr, 0x00, SIZEOF(KvsIpAddress));
+    MEMSET(&destAddr, 0x00, SIZEOF(KvsIpAddress));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    // Gather host candidates so we have a local candidate + bound socket to receive on.
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentStartGathering(pIceAgent));
+    THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+
+    PIceCandidate pLocalCandidate = NULL;
+    PDoubleListNode pNode = NULL;
+    ASSERT_EQ(STATUS_SUCCESS, doubleListGetHeadNode(pIceAgent->localCandidates, &pNode));
+    ASSERT_TRUE(pNode != NULL);
+    pLocalCandidate = (PIceCandidate) pNode->data;
+    ASSERT_TRUE(pLocalCandidate != NULL);
+
+    // Build a STUN Binding Request with ICE-CONTROLLED (the protocol-violating case for a lite agent).
+    constexpr UINT32 USERNAME_BUF_LEN = MAX_ICE_CONFIG_USER_NAME_LEN + 1;
+    CHAR combinedUsername[USERNAME_BUF_LEN];
+    SNPRINTF(combinedUsername, USERNAME_BUF_LEN, "%s:fakepeer", pIceAgent->localUsername);
+    EXPECT_EQ(STATUS_SUCCESS, createStunPacket(STUN_PACKET_TYPE_BINDING_REQUEST, txnId, &pRequest));
+    EXPECT_EQ(STATUS_SUCCESS, appendStunUsernameAttribute(pRequest, combinedUsername));
+    EXPECT_EQ(STATUS_SUCCESS, appendStunPriorityAttribute(pRequest, 1000));
+    EXPECT_EQ(STATUS_SUCCESS, appendStunIceControllAttribute(pRequest, STUN_ATTRIBUTE_TYPE_ICE_CONTROLLED, 0xdeadbeefcafef00dULL));
+    // Two-call pattern: first ask for required size, then serialize.
+    serializedLen = 0;
+    EXPECT_EQ(
+        STATUS_SUCCESS,
+        serializeStunPacket(pRequest, (PBYTE) pIceAgent->localPassword, (UINT32) STRLEN(pIceAgent->localPassword), TRUE, TRUE, NULL, &serializedLen));
+    ASSERT_LE(serializedLen, (UINT32) SIZEOF(serialized));
+    EXPECT_EQ(STATUS_SUCCESS,
+              serializeStunPacket(pRequest, (PBYTE) pIceAgent->localPassword, (UINT32) STRLEN(pIceAgent->localPassword), TRUE, TRUE, serialized,
+                                  &serializedLen));
+
+    // Use an arbitrary "remote" src address that is not yet known — if the guard is absent, this would be added as a
+    // peer-reflexive remote candidate.
+    srcAddr.family = KVS_IP_FAMILY_TYPE_IPV4;
+    srcAddr.address[0] = 203;
+    srcAddr.address[1] = 0;
+    srcAddr.address[2] = 113;
+    srcAddr.address[3] = 77;
+    srcAddr.port = htons(54321);
+
+    EXPECT_EQ(STATUS_SUCCESS, doubleListGetNodeCount(pIceAgent->remoteCandidates, &beforeRemoteCount));
+
+    // handleStunPacket should short-circuit — no peer-reflexive candidate added.
+    EXPECT_EQ(STATUS_SUCCESS, handleStunPacket(pIceAgent, serialized, serializedLen, pLocalCandidate->pSocketConnection, &srcAddr, &destAddr));
+
+    EXPECT_EQ(STATUS_SUCCESS, doubleListGetNodeCount(pIceAgent->remoteCandidates, &afterRemoteCount));
+    EXPECT_EQ(beforeRemoteCount, afterRemoteCount);
+
+    freeStunPacket(&pRequest);
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
+}
+
+TEST_F(IceFunctionalityTest, iceLiteAgentDisconnectsOnSilence)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+    UINT64 nextState = 0;
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+    configuration.kvsRtcConfiguration.iceDisconnectionTimeout = 1 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    // Simulate a lite agent that has reached READY and then the remote stopped sending everything.
+    // The consent-freshness signal is any inbound packet (STUN or media); 2s without inbound must flip to DISCONNECTED.
+    pIceAgent->iceAgentState = ICE_AGENT_STATE_READY;
+    pIceAgent->lastDataReceivedTime = GETTIME() - 2 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+
+    nextState = ICE_AGENT_STATE_READY;
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentStateMachineCheckDisconnection(pIceAgent, &nextState));
+    EXPECT_EQ((UINT64) ICE_AGENT_STATE_DISCONNECTED, nextState);
+
+    // And recovery: if inbound arrives within the grace period, the machinery flips back to the current state.
+    pIceAgent->detectedDisconnection = TRUE;
+    pIceAgent->disconnectionGracePeriodEndTime = GETTIME() + 10 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    pIceAgent->lastDataReceivedTime = GETTIME();
+    nextState = ICE_AGENT_STATE_DISCONNECTED;
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentStateMachineCheckDisconnection(pIceAgent, &nextState));
+    EXPECT_FALSE(pIceAgent->detectedDisconnection);
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
+}
+
+TEST_F(IceFunctionalityTest, announcedIpAddressRewritesHostCandidate)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+    CHAR candidateStr[512] = {0};
+    UINT32 candidateStrLen = SIZEOF(candidateStr);
+    BYTE expected[4] = {203, 0, 113, 10};
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+    STRNCPY(configuration.kvsRtcConfiguration.announcedIpAddress, "203.0.113.10", KVS_IP_ADDRESS_STRING_BUFFER_LEN - 1);
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentStartGathering(pIceAgent));
+    THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+
+    // Every IPv4 host candidate must carry the announced address and emit it in SDP; the bind IP is preserved separately.
+    PDoubleListNode pNode = NULL;
+    UINT32 v4Checked = 0;
+    EXPECT_EQ(STATUS_SUCCESS, doubleListGetHeadNode(pIceAgent->localCandidates, &pNode));
+    while (pNode != NULL) {
+        PIceCandidate pCandidate = (PIceCandidate) pNode->data;
+        pNode = pNode->pNext;
+        if (pCandidate->iceCandidateType != ICE_CANDIDATE_TYPE_HOST || !IS_IPV4_ADDR(&pCandidate->ipAddress)) {
+            continue;
+        }
+        EXPECT_TRUE(pCandidate->hasAnnouncedAddress);
+        EXPECT_EQ(0, MEMCMP(pCandidate->announcedIpAddress.address, expected, 4));
+        // Ensure the real bind IP is NOT the announced one (we're not actually on 203.0.113.10).
+        EXPECT_NE(0, MEMCMP(pCandidate->ipAddress.address, expected, 4));
+        // Port preserved from bind socket.
+        EXPECT_EQ(pCandidate->ipAddress.port, pCandidate->announcedIpAddress.port);
+
+        candidateStrLen = SIZEOF(candidateStr);
+        MEMSET(candidateStr, 0, SIZEOF(candidateStr));
+        EXPECT_EQ(STATUS_SUCCESS, iceCandidateSerialize(pCandidate, candidateStr, &candidateStrLen));
+        EXPECT_TRUE(STRSTR(candidateStr, "203.0.113.10") != NULL);
+        v4Checked++;
+    }
+    EXPECT_GT(v4Checked, 0u);
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
+}
+
+TEST_F(IceFunctionalityTest, announcedIpAddressInvalidRejected)
+{
+    PIceAgent pIceAgent = NULL;
+    CHAR localIceUfrag[LOCAL_ICE_UFRAG_LEN + 1];
+    CHAR localIcePwd[LOCAL_ICE_PWD_LEN + 1];
+    RtcConfiguration configuration;
+    IceAgentCallbacks iceAgentCallbacks;
+    PConnectionListener pConnectionListener = NULL;
+    TIMER_QUEUE_HANDLE timerQueueHandle = INVALID_TIMER_QUEUE_HANDLE_VALUE;
+
+    initRtcConfiguration(&configuration);
+    configuration.kvsRtcConfiguration.iceLiteMode = TRUE;
+    STRNCPY(configuration.kvsRtcConfiguration.announcedIpAddress, "not-an-ip", KVS_IP_ADDRESS_STRING_BUFFER_LEN - 1);
+
+    MEMSET(localIceUfrag, 0x00, SIZEOF(localIceUfrag));
+    MEMSET(localIcePwd, 0x00, SIZEOF(localIcePwd));
+    MEMSET(&iceAgentCallbacks, 0x00, SIZEOF(IceAgentCallbacks));
+
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIceUfrag, LOCAL_ICE_UFRAG_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, generateJSONSafeString(localIcePwd, LOCAL_ICE_PWD_LEN));
+    EXPECT_EQ(STATUS_SUCCESS, createConnectionListener(&pConnectionListener));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueCreate(&timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS,
+              createIceAgent(localIceUfrag, localIcePwd, &iceAgentCallbacks, &configuration, timerQueueHandle, pConnectionListener, &pIceAgent));
+
+    // Garbled announcedIpAddress must cause gathering to fail loudly instead of silently falling back to the bind IP.
+    EXPECT_EQ(STATUS_INVALID_ARG, iceAgentStartGathering(pIceAgent));
+
+    EXPECT_EQ(STATUS_SUCCESS, iceAgentShutdown(pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueShutdown(timerQueueHandle));
+    EXPECT_EQ(STATUS_SUCCESS, freeIceAgent(&pIceAgent));
+    EXPECT_EQ(STATUS_SUCCESS, timerQueueFree(&timerQueueHandle));
 }
 
 TEST_F(IceFunctionalityTest, DISABLED_IceAgentCandidateGatheringTest)

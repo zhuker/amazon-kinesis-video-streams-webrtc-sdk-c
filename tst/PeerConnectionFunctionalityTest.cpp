@@ -38,6 +38,136 @@ TEST_F(PeerConnectionFunctionalityTest, connectTwoPeers)
     freePeerConnection(&answerPc);
 }
 
+// End-to-end: a full ICE agent (offerer) connecting to a lite ICE agent (answerer) must reach CONNECTED,
+// with full=controlling / lite=controlled per RFC 8445.
+TEST_F(PeerConnectionFunctionalityTest, connectFullToLitePeer)
+{
+    RtcConfiguration fullCfg{}, liteCfg{};
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+
+    initRtcConfiguration(&fullCfg);
+    initRtcConfiguration(&liteCfg);
+    liteCfg.kvsRtcConfiguration.iceLiteMode = TRUE;
+
+    EXPECT_EQ(createPeerConnection(&fullCfg, &offerPc), STATUS_SUCCESS);
+    EXPECT_EQ(createPeerConnection(&liteCfg, &answerPc), STATUS_SUCCESS);
+
+    ASSERT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
+
+    PKvsPeerConnection pKvsOffer = (PKvsPeerConnection) offerPc;
+    PKvsPeerConnection pKvsAnswer = (PKvsPeerConnection) answerPc;
+
+    // Full agent observed the answerer's a=ice-lite and took the controlling role.
+    EXPECT_FALSE(pKvsOffer->pIceAgent->isLiteAgent);
+    EXPECT_TRUE(pKvsOffer->remoteIsIceLite);
+    EXPECT_TRUE(pKvsOffer->pIceAgent->isControlling);
+
+    // Lite agent is controlled and did not initiate any binding requests.
+    EXPECT_TRUE(pKvsAnswer->pIceAgent->isLiteAgent);
+    EXPECT_FALSE(pKvsAnswer->pIceAgent->isControlling);
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+}
+
+// Non-trickle exchange where the full (offerer) peer hands over its offer SDP before gathering completes, so
+// the offer carries no a=candidate lines; the lite peer still gathers host candidates normally and publishes
+// them in the answer SDP. Full learns lite's addresses and probes them. Lite, seeing an inbound binding request
+// from an unknown source, learns the full peer's address via peer-reflexive discovery (RFC 8445 §7.3.1.3) and
+// responds. Both peers must reach CONNECTED.
+TEST_F(PeerConnectionFunctionalityTest, liteConnectsWhenFullEmitsNoCandidates)
+{
+    RtcConfiguration fullCfg{}, liteCfg{};
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+
+    initRtcConfiguration(&fullCfg);
+    initRtcConfiguration(&liteCfg);
+    liteCfg.kvsRtcConfiguration.iceLiteMode = TRUE;
+
+    ASSERT_EQ(createPeerConnection(&fullCfg, &offerPc), STATUS_SUCCESS);
+    ASSERT_EQ(createPeerConnection(&liteCfg, &answerPc), STATUS_SUCCESS);
+
+    EXPECT_TRUE(connectTwoPeersNoTrickle(offerPc, answerPc, /*assumeOfferGathered=*/true));
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+}
+
+// Proves that announcedIpAddress is applied at the PeerConnection layer (not just the ICE-agent unit): at least one
+// IPv4 host candidate trickled out by the lite peer must carry the announced address in its SDP form. We assert on
+// the trickled candidate strings rather than on whether the connection succeeds — the latter depends on host
+// routing (e.g. an Android image with IPv6 loopback may connect over IPv6, where the announced IPv4 rewrite does
+// not apply), which makes pass/fail platform-dependent.
+TEST_F(PeerConnectionFunctionalityTest, announcedIpPropagatesIntoLiteTrickledCandidates)
+{
+    RtcConfiguration fullCfg{}, liteCfg{};
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+
+    initRtcConfiguration(&fullCfg);
+    initRtcConfiguration(&liteCfg);
+    liteCfg.kvsRtcConfiguration.iceLiteMode = TRUE;
+    STRNCPY(liteCfg.kvsRtcConfiguration.announcedIpAddress, "203.0.113.10", KVS_IP_ADDRESS_STRING_BUFFER_LEN - 1);
+
+    ASSERT_EQ(createPeerConnection(&fullCfg, &offerPc), STATUS_SUCCESS);
+    ASSERT_EQ(createPeerConnection(&liteCfg, &answerPc), STATUS_SUCCESS);
+
+    // Collect every candidate string lite trickles out.
+    std::vector<std::string> liteCandidates;
+    std::mutex liteCandidatesLock;
+    struct Capture {
+        std::vector<std::string>* candidates;
+        std::mutex* lock;
+    } capture{&liteCandidates, &liteCandidatesLock};
+
+    auto captureHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
+        if (candidateStr == NULL) {
+            return;
+        }
+        Capture* cap = (Capture*) customData;
+        cap->lock->lock();
+        cap->candidates->emplace_back(candidateStr);
+        cap->lock->unlock();
+    };
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) &capture, captureHdlr));
+
+    // Drive the offer/answer exchange manually; no need to actually connect.
+    RtcSessionDescriptionInit sdp;
+    MEMSET(&sdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(offerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(offerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(answerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, createAnswer(answerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(answerPc, &sdp));
+
+    // Give host gathering a moment to run and the trickle callback a moment to fire.
+    UINT64 timeout = GETTIME() + 3 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    bool found = false;
+    while (!found && GETTIME() < timeout) {
+        THREAD_SLEEP(50 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        liteCandidatesLock.lock();
+        for (const auto& c : liteCandidates) {
+            if (c.find("203.0.113.10") != std::string::npos) {
+                found = true;
+                break;
+            }
+        }
+        liteCandidatesLock.unlock();
+    }
+    EXPECT_TRUE(found);
+
+    auto noopHdlr = [](UINT64, PCHAR) -> void {};
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, 0, noopHdlr));
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+}
+
 TEST_F(PeerConnectionFunctionalityTest, connectTwoPeersWithDelay)
 {
     RtcConfiguration configuration{};

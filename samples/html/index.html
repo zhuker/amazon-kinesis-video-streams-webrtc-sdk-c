@@ -30,6 +30,9 @@
     Signaling state: <span id="signaling-state"></span>
 </p>
 <p>
+    Time to first frame: <span id="ttff">—</span>
+</p>
+<p>
     Audio RED negotiated: <span id="audio-red-status">—</span>
 </p>
 <p>
@@ -51,6 +54,10 @@
 <div class="option">
     <input id="use-stun" type="checkbox"/>
     <label for="use-stun">Use STUN server</label>
+</div>
+<div class="option">
+    <input id="assume-ice-lite" type="checkbox"/>
+    <label for="assume-ice-lite">Assume ICE-lite server (send offer without candidates)</label>
 </div>
 <button id="start" onclick="start()">Start</button>
 <button id="stop" style="display: none" onclick="stop()">Stop</button>

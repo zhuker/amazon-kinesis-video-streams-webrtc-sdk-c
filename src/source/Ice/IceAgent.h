@@ -171,6 +171,11 @@ typedef struct {
     BOOL reported;
     CHAR id[ICE_CANDIDATE_ID_LEN + 1];
     KVS_SOCKET_PROTOCOL remoteProtocol;
+
+    /* When TRUE, iceCandidateSerialize emits announcedIpAddress in SDP instead of ipAddress.
+     * The socket still binds on ipAddress; this is a presentation-only override. */
+    BOOL hasAnnouncedAddress;
+    KvsIpAddress announcedIpAddress;
 } IceCandidate, *PIceCandidate;
 
 typedef struct {
@@ -270,6 +275,9 @@ struct __IceAgent {
 
     ICE_TRANSPORT_POLICY iceTransportPolicy;
     KvsRtcConfiguration kvsRtcConfiguration;
+
+    BOOL isLiteAgent;       // TRUE if local agent is ICE-lite (RFC 8445 §2.5)
+    BOOL remoteIsLiteAgent; // TRUE if remote peer signaled a=ice-lite
 
     // Pre-allocated stun packets
     PStunPacket pBindingIndication;

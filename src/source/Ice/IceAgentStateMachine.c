@@ -292,7 +292,10 @@ STATUS executeCheckConnectionIceAgentState(UINT64 customData, UINT64 time)
         pIceAgent->iceAgentState = ICE_AGENT_STATE_CHECK_CONNECTION;
     }
 
-    CHK_STATUS(iceAgentCheckCandidatePairConnection(pIceAgent));
+    // ICE-lite agents do not initiate connectivity checks; they only respond to incoming binding requests
+    if (!pIceAgent->isLiteAgent) {
+        CHK_STATUS(iceAgentCheckCandidatePairConnection(pIceAgent));
+    }
 
 CleanUp:
     CHK_LOG_ERR(retStatus);
@@ -465,7 +468,9 @@ STATUS executeNominatingIceAgentState(UINT64 customData, UINT64 time)
         pIceAgent->iceAgentState = ICE_AGENT_STATE_NOMINATING;
     }
 
-    if (pIceAgent->isControlling) {
+    if (pIceAgent->isLiteAgent) {
+        // ICE-lite: wait for the full agent's USE_CANDIDATE binding request (handled in handleStunPacket)
+    } else if (pIceAgent->isControlling) {
         PROFILE_CALL_WITH_T_OBJ(CHK_STATUS(iceAgentSendCandidateNomination(pIceAgent)),
                                 pIceAgent->iceAgentProfileDiagnostics.iceCandidatePairNominationTime, "ICE candidate pair nomination");
     } else {
@@ -506,6 +511,8 @@ STATUS fromReadyIceAgentState(UINT64 customData, PUINT64 pState)
     // move to failed state if any error happened.
     CHK_STATUS(pIceAgent->iceAgentStatus);
 
+    // For ICE-lite agents, this also serves as the RFC 7675 consent-freshness signal: any inbound packet (STUN or media)
+    // updates lastDataReceivedTime, and silence past iceDisconnectionTimeout flips state to DISCONNECTED.
     CHK_STATUS(iceAgentStateMachineCheckDisconnection(pIceAgent, &state));
 
     // return early if changing to disconnected state

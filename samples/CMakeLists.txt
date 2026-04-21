@@ -64,8 +64,21 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h264SampleFrames" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/bbbH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/girH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h265SampleFrames" DESTINATION .)
-# html assets served by the WHEP/WHIP servers
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/html" DESTINATION .)
+
+# Expose html/ to the WHEP/WHIP servers. On Unix we symlink the source tree
+# into the build dir so edits to index.html / client.js are picked up live —
+# just refresh the browser, no rebuild or reconfigure needed. On Windows (or
+# anywhere symlinks are unavailable) we fall back to a configure-time copy.
+# Done at configure time so we don't need an add_custom_target — cmake -E rm
+# is only available from CMake 3.17 and breaks the GCC 4.4 / CMake 3.16 CI.
+if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/html" AND NOT IS_SYMLINK "${CMAKE_CURRENT_BINARY_DIR}/html")
+    file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/html")
+endif()
+if(UNIX)
+    file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/html" "${CMAKE_CURRENT_BINARY_DIR}/html" SYMBOLIC)
+else()
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/html" DESTINATION .)
+endif()
 
 if (ENABLE_SIGNALING)
 add_executable(

@@ -212,6 +212,82 @@ bool WebRtcClientTestBase::connectTwoPeers(PRtcPeerConnection offerPc, PRtcPeerC
     return ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) == 2;
 }
 
+// Non-trickle variant of connectTwoPeers. See header for parameter semantics.
+bool WebRtcClientTestBase::connectTwoPeersNoTrickle(PRtcPeerConnection offerPc, PRtcPeerConnection answerPc, bool assumeOfferGathered,
+                                                    bool assumeAnswerGathered)
+{
+    RtcSessionDescriptionInit sdp;
+    SIZE_T offerDoneGather = 0, answerDoneGather = 0;
+    UINT64 timeout;
+
+    auto onDoneGatherHdlr = [](UINT64 customData, PCHAR candidateStr) -> void {
+        if (candidateStr == NULL) {
+            ATOMIC_STORE((PSIZE_T) customData, 1);
+        }
+    };
+    auto onDoneHdlrFinal = [](UINT64 customData, PCHAR candidateStr) -> void {
+        UNUSED_PARAM(customData);
+        UNUSED_PARAM(candidateStr);
+    };
+
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) &offerDoneGather, onDoneGatherHdlr));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) &answerDoneGather, onDoneGatherHdlr));
+
+    auto onStateChangeHdlr = [](UINT64 customData, RTC_PEER_CONNECTION_STATE newState) -> void {
+        ATOMIC_INCREMENT((PSIZE_T) customData + newState);
+    };
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnConnectionStateChange(offerPc, (UINT64) this->stateChangeCount, onStateChangeHdlr));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnConnectionStateChange(answerPc, (UINT64) this->stateChangeCount, onStateChangeHdlr));
+
+    // Produce the offer SDP BEFORE gathering starts. populateSessionDescription iterates valid local candidates,
+    // and host candidates become VALID synchronously inside iceAgentInitHostCandidate; calling createOffer after
+    // setLocalDescription would bake them in regardless of whether we then call
+    // peerConnectionGetCurrentLocalDescription. Capturing the offer before gathering gives us a guaranteed-bare
+    // offer SDP that we can optionally refresh with candidates after gathering completes.
+    MEMSET(&sdp, 0x00, SIZEOF(RtcSessionDescriptionInit));
+    EXPECT_EQ(STATUS_SUCCESS, createOffer(offerPc, &sdp));
+
+    EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(offerPc, &sdp));
+    EXPECT_EQ(STATUS_SUCCESS, setLocalDescription(answerPc, &sdp));
+
+    // Wait only for sides that are supposed to publish candidates in their SDP.
+    timeout = GETTIME() + KVS_ICE_GATHER_REFLEXIVE_AND_RELAYED_CANDIDATE_TIMEOUT + 2 * HUNDREDS_OF_NANOS_IN_A_SECOND;
+    while (GETTIME() < timeout && ((!assumeOfferGathered && ATOMIC_LOAD(&offerDoneGather) == 0) ||
+                                   (!assumeAnswerGathered && ATOMIC_LOAD(&answerDoneGather) == 0))) {
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+    }
+    if (!assumeOfferGathered) {
+        EXPECT_GT(ATOMIC_LOAD(&offerDoneGather), 0u);
+    }
+    if (!assumeAnswerGathered) {
+        EXPECT_GT(ATOMIC_LOAD(&answerDoneGather), 0u);
+    }
+
+    // If we waited for the offer side, refresh sdp with its post-gathering description (now has a=candidate
+    // lines). Otherwise leave sdp as the bare offer captured before gathering started.
+    if (!assumeOfferGathered) {
+        EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(offerPc, &sdp));
+    }
+    EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(answerPc, &sdp));
+
+    EXPECT_EQ(STATUS_SUCCESS, createAnswer(answerPc, &sdp));
+    if (!assumeAnswerGathered) {
+        EXPECT_EQ(STATUS_SUCCESS, peerConnectionGetCurrentLocalDescription(answerPc, &sdp));
+    }
+    EXPECT_EQ(STATUS_SUCCESS, setRemoteDescription(offerPc, &sdp));
+
+    for (auto i = 0; i <= 10 && ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) != 2 &&
+         ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_FAILED]) == 0;
+         i++) {
+        THREAD_SLEEP(HUNDREDS_OF_NANOS_IN_A_SECOND);
+    }
+
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(offerPc, (UINT64) 0, onDoneHdlrFinal));
+    EXPECT_EQ(STATUS_SUCCESS, peerConnectionOnIceCandidate(answerPc, (UINT64) 0, onDoneHdlrFinal));
+
+    return ATOMIC_LOAD(&this->stateChangeCount[RTC_PEER_CONNECTION_STATE_CONNECTED]) == 2;
+}
+
 // Create track and transceiver and adds to PeerConnection
 void WebRtcClientTestBase::addTrackToPeerConnection(PRtcPeerConnection pRtcPeerConnection, PRtcMediaStreamTrack track,
                                                     PRtcRtpTransceiver* transceiver, RTC_CODEC codec, MEDIA_STREAM_TRACK_KIND kind)
