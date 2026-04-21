@@ -414,19 +414,25 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
                     UINT32 k;
                     for (k = 0; k < produced; k++) {
                         PRtpPacket pSyn = redSynthetics[k];
+                        // Capture fields BEFORE push: jitterBufferPush may freeRtpPacket(pSyn)
+                        // in the dedup branch (existing real + incoming synthetic), and reading
+                        // pSyn->isSynthetic or pSyn->payloadLength after a successful push is a
+                        // use-after-free. Depending on the allocator, the bytes may coincidentally
+                        // still read as "valid" which is why this slipped past opt-mode testing.
+                        BOOL wasSynthetic = pSyn->isSynthetic;
+                        UINT32 synPayloadLength = pSyn->payloadLength;
                         BOOL synDiscarded = FALSE;
-                        if (pSyn->isSynthetic) {
+                        if (wasSynthetic) {
                             fecPacketsReceived++;
-                            fecBytesReceivedCount += pSyn->payloadLength;
+                            fecBytesReceivedCount += synPayloadLength;
                         }
                         STATUS pushStatus = jitterBufferPush(pTransceiver->pJitterBuffer, pSyn, &synDiscarded);
                         if (STATUS_FAILED(pushStatus) || synDiscarded) {
-                            if (pSyn->isSynthetic) {
+                            if (wasSynthetic) {
                                 fecPacketsDiscarded++;
                             } else if (synDiscarded) {
                                 packetsDiscarded++;
                             }
-                            // jitterBufferPush consumes the packet regardless; if it failed, it still owns the pointer.
                         }
                     }
                     // Outer RED packet is fully consumed; free it now.
