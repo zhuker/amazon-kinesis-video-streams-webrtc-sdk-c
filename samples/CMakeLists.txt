@@ -65,17 +65,20 @@ file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/bbbH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/girH264" DESTINATION .)
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/h265SampleFrames" DESTINATION .)
 
-# Symlink the source html/ directory into the build output so edits to
-# index.html / client.js are picked up live — just refresh the browser, no
-# rebuild or reconfigure needed. We remove any stale copy/directory first so
-# this works cleanly on incremental builds that previously used file(COPY).
-add_custom_target(samples_html ALL
-    COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_CURRENT_BINARY_DIR}/html"
-    COMMAND ${CMAKE_COMMAND} -E create_symlink
-            "${CMAKE_CURRENT_SOURCE_DIR}/html"
-            "${CMAKE_CURRENT_BINARY_DIR}/html"
-    COMMENT "Linking samples/html → build"
-    VERBATIM)
+# Expose html/ to the WHEP/WHIP servers. On Unix we symlink the source tree
+# into the build dir so edits to index.html / client.js are picked up live —
+# just refresh the browser, no rebuild or reconfigure needed. On Windows (or
+# anywhere symlinks are unavailable) we fall back to a configure-time copy.
+# Done at configure time so we don't need an add_custom_target — cmake -E rm
+# is only available from CMake 3.17 and breaks the GCC 4.4 / CMake 3.16 CI.
+if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/html" AND NOT IS_SYMLINK "${CMAKE_CURRENT_BINARY_DIR}/html")
+    file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/html")
+endif()
+if(UNIX)
+    file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/html" "${CMAKE_CURRENT_BINARY_DIR}/html" SYMBOLIC)
+else()
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/html" DESTINATION .)
+endif()
 
 if (ENABLE_SIGNALING)
 add_executable(
@@ -106,7 +109,6 @@ add_executable(
         whepServer.cpp)
 target_link_libraries(whepServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
 set_target_properties(whepServer PROPERTIES CXX_STANDARD 17)
-add_dependencies(whepServer samples_html)
 
 # WHIP Server (C++ HTTP-based WebRTC ingestion per RFC 9725)
 add_executable(
@@ -115,7 +117,6 @@ add_executable(
         whipServer.cpp)
 target_link_libraries(whipServer kvsWebrtcClient ${EXTRA_DEPS} kvspicUtils)
 set_target_properties(whipServer PROPERTIES CXX_STANDARD 17)
-add_dependencies(whipServer samples_html)
 
 add_executable(
         discoverNatBehavior
