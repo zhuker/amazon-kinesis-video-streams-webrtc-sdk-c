@@ -17,21 +17,48 @@ UINT64 gTotalWebRtcClientMemoryUsage = 0;
 //
 MUTEX gTotalWebRtcClientMemoryMutex;
 
-STATUS createRtpPacketWithSeqNum(UINT16 seqNum, PRtpPacket* ppRtpPacket)
+STATUS createTestRtpPacket(const TestRtpPacket& params, PRtpPacket* ppRtpPacket)
 {
     STATUS retStatus = STATUS_SUCCESS;
-    BYTE payload[10];
-    PRtpPacket pRtpPacket = NULL;
+    PRtpPacket pTmp = NULL;
+    PRtpPacket pFinal = NULL;
+    PBYTE pRaw = NULL;
+    UINT32 rawLen = 0;
+    // Local payload — copied into pRaw by createBytesFromRtpPacket; after the
+    // re-parse below the final packet's `payload` points inside its own pRaw.
+    std::vector<BYTE> payload(params.payloadLength, 0);
 
-    CHK_STATUS(createRtpPacket(2, FALSE, FALSE, 0, FALSE, 96, seqNum, 100, 0x1234ABCD, NULL, 0, 0, NULL, payload, 10, &pRtpPacket));
-    *ppRtpPacket = pRtpPacket;
+    CHK(ppRtpPacket != NULL, STATUS_NULL_ARG);
 
-    CHK_STATUS(createBytesFromRtpPacket(pRtpPacket, NULL, &pRtpPacket->rawPacketLength));
-    CHK(NULL != (pRtpPacket->pRawPacket = (PBYTE) MEMALLOC(pRtpPacket->rawPacketLength)), STATUS_NOT_ENOUGH_MEMORY);
-    CHK_STATUS(createBytesFromRtpPacket(pRtpPacket, pRtpPacket->pRawPacket, &pRtpPacket->rawPacketLength));
+    CHK_STATUS(createRtpPacket(2, FALSE, FALSE, 0, params.marker, params.payloadType, params.seqNum, params.timestamp, params.ssrc, NULL, 0, 0, NULL,
+                               payload.data(), (UINT32) payload.size(), &pTmp));
+    CHK_STATUS(createBytesFromRtpPacket(pTmp, NULL, &rawLen));
+    CHK(NULL != (pRaw = (PBYTE) MEMALLOC(rawLen)), STATUS_NOT_ENOUGH_MEMORY);
+    CHK_STATUS(createBytesFromRtpPacket(pTmp, pRaw, &rawLen));
+
+    CHK_STATUS(createRtpPacketFromBytes(pRaw, rawLen, &pFinal));
+    pRaw = NULL; // ownership transferred to pFinal
+
+    *ppRtpPacket = pFinal;
+    pFinal = NULL;
 
 CleanUp:
+    if (pTmp != NULL) {
+        freeRtpPacket(&pTmp);
+    }
+    SAFE_MEMFREE(pRaw);
+    if (pFinal != NULL) {
+        freeRtpPacket(&pFinal);
+    }
     return retStatus;
+}
+
+STATUS createRtpPacketWithSeqNum(UINT16 seqNum, PRtpPacket* ppRtpPacket)
+{
+    TestRtpPacket params;
+    params.seqNum = seqNum;
+    params.timestamp = 100;
+    return createTestRtpPacket(params, ppRtpPacket);
 }
 
 WebRtcClientTestBase::WebRtcClientTestBase()

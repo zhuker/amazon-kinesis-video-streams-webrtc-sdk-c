@@ -140,6 +140,7 @@ STATUS writeRtpPacket(PKvsPeerConnection pKvsPeerConnection, PRtpPacket pRtpPack
 
 STATUS hasTransceiverWithSsrc(PKvsPeerConnection pKvsPeerConnection, UINT32 ssrc);
 STATUS findTransceiverBySsrc(PKvsPeerConnection pKvsPeerConnection, PKvsRtpTransceiver* ppTransceiver, UINT32 ssrc);
+STATUS transceiverOnRtpPacketReceived(PKvsRtpTransceiver, PRtpPacket);
 
 STATUS setUpRollingBufferConfigInternal(PKvsRtpTransceiver, PRtcMediaStreamTrack, DOUBLE, DOUBLE);
 STATUS freeRollingBufferConfig(PRollingBufferConfig);
