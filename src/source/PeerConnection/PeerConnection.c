@@ -300,21 +300,141 @@ static VOID rrUpdateSeq(PKvsRtpTransceiver pTransceiver, UINT16 seq)
     // else duplicate or reordered packet — ignore for max tracking
 }
 
+STATUS transceiverOnRtpPacketReceived(PKvsRtpTransceiver pTransceiver, PRtpPacket pRtpPacket)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    BOOL ownedByJitterBuffer = FALSE, discarded = FALSE;
+    UINT64 packetsReceived = 0, lastPacketReceivedTimestamp = 0, headerBytesReceived = 0, bytesReceived = 0, packetsDiscarded = 0;
+    UINT64 fecPacketsReceived = 0, fecBytesReceivedCount = 0, fecPacketsDiscarded = 0;
+    INT64 arrival, r_ts, transit, delta;
+    UINT64 now;
+
+    CHK(pTransceiver != NULL && pTransceiver->pJitterBuffer != NULL && pRtpPacket != NULL, STATUS_NULL_ARG);
+
+    now = pRtpPacket->receivedTime;
+
+    {
+        BOOL firstPacket = !pTransceiver->rrSeqInitialized;
+        packetsReceived++;
+
+        if (firstPacket) {
+            rrInitSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
+        } else {
+            rrUpdateSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
+        }
+
+        // https://tools.ietf.org/html/rfc3550#section-6.4.1
+        // https://tools.ietf.org/html/rfc3550#appendix-A.8
+        // interarrival jitter
+        // arrival, the current time in the same units.
+        // r_ts, the timestamp from   the incoming packet
+        arrival = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, pTransceiver->pJitterBuffer->clockRate);
+        r_ts = pRtpPacket->header.timestamp;
+        transit = arrival - r_ts;
+        if (firstPacket) {
+            // RFC 3550 §A.8: seed transit on first packet, skip the D(i-1,i) update.
+            pTransceiver->pJitterBuffer->transit = (UINT64) transit;
+            pTransceiver->pJitterBuffer->jitter = 0.0;
+        } else {
+            delta = transit - (INT64) pTransceiver->pJitterBuffer->transit;
+            pTransceiver->pJitterBuffer->transit = (UINT64) transit;
+            pTransceiver->pJitterBuffer->jitter += (ABS(delta) - pTransceiver->pJitterBuffer->jitter) / 16.0;
+        }
+
+        headerBytesReceived += RTP_HEADER_LEN(pRtpPacket);
+        bytesReceived += pRtpPacket->rawPacketLength - RTP_HEADER_LEN(pRtpPacket);
+
+        // RFC 2198 RED split branch. When the inbound packet carries the negotiated RED PT,
+        // expand it into up to (redundancy+1) synthetic packets and feed each through the
+        // jitter buffer. Primary packet keeps the real seqnum/ts; redundant blocks get
+        // synthesized seqnums (seq - distance) and ts (ts - offset) and are tagged
+        // isSynthetic=TRUE so the jitter buffer's dedup can prefer real packets.
+        if (pTransceiver->receiverRedPayloadType != 0 && pRtpPacket->header.payloadType == pTransceiver->receiverRedPayloadType) {
+            PRtpPacket redSynthetics[RED_MAX_BLOCKS] = {};
+            UINT32 produced = 0;
+            UINT32 fecBytes = 0;
+            STATUS splitStatus =
+                splitRedRtpPacket(pRtpPacket, pTransceiver->receiverOpusPayloadType, redSynthetics, RED_MAX_BLOCKS, &produced, &fecBytes);
+            if (STATUS_SUCCEEDED(splitStatus) && produced > 0) {
+                UINT32 k;
+                for (k = 0; k < produced; k++) {
+                    PRtpPacket pSyn = redSynthetics[k];
+                    BOOL synDiscarded = FALSE;
+                    if (pSyn->isSynthetic) {
+                        fecPacketsReceived++;
+                        fecBytesReceivedCount += pSyn->payloadLength;
+                    }
+                    STATUS pushStatus = jitterBufferPush(pTransceiver->pJitterBuffer, pSyn, &synDiscarded);
+                    if (STATUS_FAILED(pushStatus) || synDiscarded) {
+                        if (pSyn->isSynthetic) {
+                            fecPacketsDiscarded++;
+                        } else if (synDiscarded) {
+                            packetsDiscarded++;
+                        }
+                        // jitterBufferPush consumes the packet regardless; if it failed, it still owns the pointer.
+                    }
+                }
+                // Outer RED packet is fully consumed; free it now.
+                freeRtpPacket(&pRtpPacket);
+                pRtpPacket = NULL;
+            } else {
+                // Malformed RED — drop the outer packet.
+                DLOGW("Discarded malformed RED packet (status 0x%08x)", splitStatus);
+                freeRtpPacket(&pRtpPacket);
+                pRtpPacket = NULL;
+                packetsDiscarded++;
+            }
+            lastPacketReceivedTimestamp = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+            ownedByJitterBuffer = TRUE;
+            CHK(FALSE, STATUS_SUCCESS);
+        }
+
+        CHK_STATUS(jitterBufferPush(pTransceiver->pJitterBuffer, pRtpPacket, &discarded));
+        if (discarded) {
+            packetsDiscarded++;
+        }
+        lastPacketReceivedTimestamp = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+        ownedByJitterBuffer = TRUE;
+    }
+
+CleanUp:
+    if (packetsReceived > 0) {
+        MUTEX_LOCK(pTransceiver->statsLock);
+        pTransceiver->inboundStats.received.packetsReceived += packetsReceived;
+        pTransceiver->inboundStats.lastPacketReceivedTimestamp = lastPacketReceivedTimestamp;
+        pTransceiver->inboundStats.headerBytesReceived += headerBytesReceived;
+        pTransceiver->inboundStats.bytesReceived += bytesReceived;
+        pTransceiver->inboundStats.received.jitter = pTransceiver->pJitterBuffer->jitter / pTransceiver->pJitterBuffer->clockRate;
+        pTransceiver->inboundStats.received.packetsDiscarded += packetsDiscarded;
+        pTransceiver->inboundStats.fecPacketsReceived += fecPacketsReceived;
+        pTransceiver->inboundStats.fecBytesReceived += fecBytesReceivedCount;
+        pTransceiver->inboundStats.fecPacketsDiscarded += fecPacketsDiscarded;
+        if (pTransceiver->rrSeqInitialized) {
+            UINT32 extMax = pTransceiver->rrCycles + pTransceiver->rrMaxSeq;
+            UINT32 expected = extMax - pTransceiver->rrBaseSeq + 1;
+            pTransceiver->inboundStats.received.packetsLost = (INT64) expected - (INT64) pTransceiver->inboundStats.received.packetsReceived;
+        }
+        MUTEX_UNLOCK(pTransceiver->statsLock);
+    }
+    if (!ownedByJitterBuffer) {
+        freeRtpPacket(&pRtpPacket);
+    }
+    CHK_LOG_ERR(retStatus);
+
+    LEAVES();
+    return retStatus;
+}
+
 STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuffer, UINT32 bufferLen)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
-    PDoubleListNode pCurNode = NULL;
-    PKvsRtpTransceiver pTransceiver;
-    UINT64 item, now;
+    PKvsRtpTransceiver pTransceiver = NULL;
+    UINT64 now;
     UINT32 ssrc;
     PRtpPacket pRtpPacket = NULL;
     PBYTE pPayload = NULL;
-    BOOL ownedByJitterBuffer = FALSE, discarded = FALSE;
-    UINT64 packetsReceived = 0, packetsFailedDecryption = 0, lastPacketReceivedTimestamp = 0, headerBytesReceived = 0, bytesReceived = 0,
-           packetsDiscarded = 0;
-    UINT64 fecPacketsReceived = 0, fecBytesReceivedCount = 0, fecPacketsDiscarded = 0;
-    INT64 arrival, r_ts, transit, delta;
 
     CHK(pKvsPeerConnection != NULL && pBuffer != NULL, STATUS_NULL_ARG);
     CHK(bufferLen >= MIN_HEADER_LENGTH, STATUS_INVALID_ARG);
@@ -345,7 +465,6 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
     // Now decrypt
     if (STATUS_FAILED(retStatus = decryptSrtpPacket(pKvsPeerConnection->pSrtpSession, pBuffer, (PINT32) &bufferLen))) {
         DLOGW("decryptSrtpPacket failed with 0x%08x", retStatus);
-        packetsFailedDecryption++;
         CHK(FALSE, STATUS_SUCCESS);
     }
 
@@ -362,126 +481,19 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
 
     ssrc = pRtpPacket->header.ssrc;
 
-    // Find matching transceiver for this SSRC
-    CHK_STATUS(doubleListGetHeadNode(pKvsPeerConnection->pTransceivers, &pCurNode));
-    while (pCurNode != NULL) {
-        CHK_STATUS(doubleListGetNodeData(pCurNode, &item));
-        pTransceiver = (PKvsRtpTransceiver) item;
-
-        if (pTransceiver->jitterBufferSsrc == ssrc) {
-            BOOL firstPacket = !pTransceiver->rrSeqInitialized;
-            packetsReceived++;
-
-            if (firstPacket) {
-                rrInitSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
-            } else {
-                rrUpdateSeq(pTransceiver, pRtpPacket->header.sequenceNumber);
-            }
-
-            // https://tools.ietf.org/html/rfc3550#section-6.4.1
-            // https://tools.ietf.org/html/rfc3550#appendix-A.8
-            // interarrival jitter
-            // arrival, the current time in the same units.
-            // r_ts, the timestamp from   the incoming packet
-            arrival = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, pTransceiver->pJitterBuffer->clockRate);
-            r_ts = pRtpPacket->header.timestamp;
-            transit = arrival - r_ts;
-            if (firstPacket) {
-                // RFC 3550 §A.8: seed transit on first packet, skip the D(i-1,i) update.
-                pTransceiver->pJitterBuffer->transit = (UINT64) transit;
-                pTransceiver->pJitterBuffer->jitter = 0.0;
-            } else {
-                delta = transit - (INT64) pTransceiver->pJitterBuffer->transit;
-                pTransceiver->pJitterBuffer->transit = (UINT64) transit;
-                pTransceiver->pJitterBuffer->jitter += (ABS(delta) - pTransceiver->pJitterBuffer->jitter) / 16.0;
-            }
-
-            headerBytesReceived += RTP_HEADER_LEN(pRtpPacket);
-            bytesReceived += pRtpPacket->rawPacketLength - RTP_HEADER_LEN(pRtpPacket);
-
-            // RFC 2198 RED split branch. When the inbound packet carries the negotiated RED PT,
-            // expand it into up to (redundancy+1) synthetic packets and feed each through the
-            // jitter buffer. Primary packet keeps the real seqnum/ts; redundant blocks get
-            // synthesized seqnums (seq - distance) and ts (ts - offset) and are tagged
-            // isSynthetic=TRUE so the jitter buffer's dedup can prefer real packets.
-            if (pTransceiver->receiverRedPayloadType != 0 && pRtpPacket->header.payloadType == pTransceiver->receiverRedPayloadType) {
-                PRtpPacket redSynthetics[RED_MAX_BLOCKS] = {};
-                UINT32 produced = 0;
-                UINT32 fecBytes = 0;
-                STATUS splitStatus =
-                    splitRedRtpPacket(pRtpPacket, pTransceiver->receiverOpusPayloadType, redSynthetics, RED_MAX_BLOCKS, &produced, &fecBytes);
-                if (STATUS_SUCCEEDED(splitStatus) && produced > 0) {
-                    UINT32 k;
-                    for (k = 0; k < produced; k++) {
-                        PRtpPacket pSyn = redSynthetics[k];
-                        BOOL synDiscarded = FALSE;
-                        if (pSyn->isSynthetic) {
-                            fecPacketsReceived++;
-                            fecBytesReceivedCount += pSyn->payloadLength;
-                        }
-                        STATUS pushStatus = jitterBufferPush(pTransceiver->pJitterBuffer, pSyn, &synDiscarded);
-                        if (STATUS_FAILED(pushStatus) || synDiscarded) {
-                            if (pSyn->isSynthetic) {
-                                fecPacketsDiscarded++;
-                            } else if (synDiscarded) {
-                                packetsDiscarded++;
-                            }
-                            // jitterBufferPush consumes the packet regardless; if it failed, it still owns the pointer.
-                        }
-                    }
-                    // Outer RED packet is fully consumed; free it now.
-                    freeRtpPacket(&pRtpPacket);
-                    pRtpPacket = NULL;
-                } else {
-                    // Malformed RED — drop the outer packet.
-                    DLOGW("Discarded malformed RED packet (status 0x%08x)", splitStatus);
-                    freeRtpPacket(&pRtpPacket);
-                    pRtpPacket = NULL;
-                    packetsDiscarded++;
-                }
-                lastPacketReceivedTimestamp = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
-                ownedByJitterBuffer = TRUE;
-                CHK(FALSE, STATUS_SUCCESS);
-            }
-
-            CHK_STATUS(jitterBufferPush(pTransceiver->pJitterBuffer, pRtpPacket, &discarded));
-            if (discarded) {
-                packetsDiscarded++;
-            }
-            lastPacketReceivedTimestamp = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
-            ownedByJitterBuffer = TRUE;
-            CHK(FALSE, STATUS_SUCCESS);
-        }
-        pCurNode = pCurNode->pNext;
+    if (STATUS_FAILED(findTransceiverBySsrc(pKvsPeerConnection, &pTransceiver, ssrc))) {
+        DLOGW("No transceiver to handle inbound ssrc %u", ssrc);
+        CHK(FALSE, STATUS_SUCCESS);
     }
 
-    DLOGW("No transceiver to handle inbound ssrc %u", ssrc);
+    // pRtpPacket ownership transfers to transceiverOnRtpPacketReceived
+    CHK_STATUS(transceiverOnRtpPacketReceived(pTransceiver, pRtpPacket));
+    pRtpPacket = NULL;
+    pPayload = NULL;
 
 CleanUp:
-    if (packetsReceived > 0) {
-        MUTEX_LOCK(pTransceiver->statsLock);
-        pTransceiver->inboundStats.received.packetsReceived += packetsReceived;
-        pTransceiver->inboundStats.packetsFailedDecryption += packetsFailedDecryption;
-        pTransceiver->inboundStats.lastPacketReceivedTimestamp = lastPacketReceivedTimestamp;
-        pTransceiver->inboundStats.headerBytesReceived += headerBytesReceived;
-        pTransceiver->inboundStats.bytesReceived += bytesReceived;
-        pTransceiver->inboundStats.received.jitter = pTransceiver->pJitterBuffer->jitter / pTransceiver->pJitterBuffer->clockRate;
-        pTransceiver->inboundStats.received.packetsDiscarded += packetsDiscarded;
-        pTransceiver->inboundStats.fecPacketsReceived += fecPacketsReceived;
-        pTransceiver->inboundStats.fecBytesReceived += fecBytesReceivedCount;
-        pTransceiver->inboundStats.fecPacketsDiscarded += fecPacketsDiscarded;
-        if (pTransceiver->rrSeqInitialized) {
-            UINT32 extMax = pTransceiver->rrCycles + pTransceiver->rrMaxSeq;
-            UINT32 expected = extMax - pTransceiver->rrBaseSeq + 1;
-            pTransceiver->inboundStats.received.packetsLost = (INT64) expected - (INT64) pTransceiver->inboundStats.received.packetsReceived;
-        }
-        MUTEX_UNLOCK(pTransceiver->statsLock);
-    }
-    if (!ownedByJitterBuffer) {
-        SAFE_MEMFREE(pPayload);
-        freeRtpPacket(&pRtpPacket);
-        CHK_LOG_ERR(retStatus);
-    }
+    SAFE_MEMFREE(pPayload);
+    freeRtpPacket(&pRtpPacket);
     CHK_LOG_ERR(retStatus);
 
     LEAVES();
