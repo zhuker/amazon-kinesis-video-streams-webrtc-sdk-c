@@ -1126,6 +1126,46 @@ TEST_F(RtcpFunctionalityTest, receiverReportReorderedDuplicate)
     freePeerConnection(&pRtcPeerConnection);
 }
 
+// Reproduces negative cumulative lost when initial packets arrive out of order.
+// Scenario from pcap: remote starts at seq=0, but seq=10,11 arrive first, then
+// seq=0..9 arrive late. rrInitSeq(10) sets rrBaseSeq=10, and the 10 late packets
+// (seq 0-9) each increment packetsReceived but never lower rrBaseSeq, so
+// expected permanently undercounts by 10.
+TEST_F(RtcpFunctionalityTest, receiverReportNegativeLossOnReorderedStart)
+{
+    initTransceiver(1000);
+    auto* pT = pKvsRtpTransceiver;
+    pT->jitterBufferSsrc = 0xabcd1234;
+
+    // Simulate state after: rrInitSeq(10), rrUpdateSeq for seq 11, then
+    // seq 0-9 (all fall into reorder/dup else branch — rrMaxSeq stays),
+    // then seq 12..99 (normal forward).
+    // Final rrMaxSeq = 99, rrBaseSeq = 10 (never adjusted down).
+    pT->rrBaseSeq = 10;
+    pT->rrMaxSeq = 99;
+    pT->rrCycles = 0;
+    pT->rrBadSeq = RTP_SEQ_MOD + 1;
+    pT->rrExpectedPrior = 0;
+    pT->rrReceivedPrior = 0;
+    pT->rrSeqInitialized = TRUE;
+
+    // All 100 packets (seq 0..99) were received — no actual loss.
+    pT->inboundStats.received.packetsReceived = 100;
+
+    BYTE buf[64];
+    UINT32 len = sizeof(buf);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildReceiverReport(pT, GETTIME(), buf, &len));
+    EXPECT_EQ(32u, len);
+
+    // expected = 99 - 10 + 1 = 90, received = 100 → cumLost = -10
+    // BUG: should be 0 since no packets were actually lost.
+    INT32 cum = rrBlockCumLost(buf);
+    EXPECT_EQ(0, cum) << "negative cum_lost " << cum
+                       << " indicates rrBaseSeq was not adjusted for late-arriving earlier packets";
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
 TEST_F(RtcpFunctionalityTest, receiverReportFirstReportEmitsZeroJitter)
 {
     initTransceiver(1000);
