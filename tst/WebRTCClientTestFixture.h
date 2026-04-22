@@ -42,6 +42,21 @@ typedef struct {
 
 STATUS createRtpPacketWithSeqNum(UINT16 seqNum, PRtpPacket* ppRtpPacket);
 
+struct TestRtpPacket {
+    UINT16 seqNum = 0;
+    UINT32 timestamp = 0;
+    UINT32 ssrc = 0x1234ABCD;
+    UINT8 payloadType = 96;
+    BOOL marker = FALSE;
+    UINT32 payloadLength = 10; // arbitrary non-zero default; zeroed bytes
+};
+
+// Builds an RTP packet from the given parameters and re-parses it via
+// createRtpPacketFromBytes, so the returned packet's `payload` pointer lives
+// inside its own pRawPacket (no stack dangles). Caller owns the returned
+// packet and must free it (or transfer ownership to e.g. jitterBufferPush).
+STATUS createTestRtpPacket(const TestRtpPacket& params, PRtpPacket* ppRtpPacket);
+
 // Shared TestFrame.flags values. FULL means onFrameReady delivered every byte
 // of the frame; PARTIAL means onFrameDropped fired but some packets were
 // still salvageable through fillPartialFrameData; DROPPED means nothing was

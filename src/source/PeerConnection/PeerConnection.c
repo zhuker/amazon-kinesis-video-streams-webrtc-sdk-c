@@ -296,8 +296,21 @@ static VOID rrUpdateSeq(PKvsRtpTransceiver pTransceiver, UINT16 seq)
         } else {
             pTransceiver->rrBadSeq = ((UINT32) seq + 1) & (RTP_SEQ_MOD - 1);
         }
+    } else {
+        // Reorder: packet is 1..MAX_MISORDER before rrMaxSeq in extended-seq
+        // space. If its extended seq is less than rrBaseSeq, the remote started
+        // earlier than rrInitSeq captured (e.g. seq=10,11 reach us before seq
+        // 0..9 due to jitter). Extend rrBaseSeq down so
+        // "expected = extMax - baseSeq + 1" covers every received packet and
+        // cum_lost stays non-negative. Comparing in UINT32 extended space
+        // rejects late stragglers from prior cycles (their extPacket wraps above
+        // any plausible rrBaseSeq).
+        UINT32 backward = (UINT16) (pTransceiver->rrMaxSeq - seq);
+        UINT32 extPacket = pTransceiver->rrCycles + pTransceiver->rrMaxSeq - backward;
+        if (extPacket < pTransceiver->rrBaseSeq) {
+            pTransceiver->rrBaseSeq = extPacket;
+        }
     }
-    // else duplicate or reordered packet — ignore for max tracking
 }
 
 STATUS transceiverOnRtpPacketReceived(PKvsRtpTransceiver pTransceiver, PRtpPacket pRtpPacket)
