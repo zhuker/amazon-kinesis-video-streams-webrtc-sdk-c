@@ -2990,14 +2990,22 @@ TEST_F(PeerConnectionFunctionalityTest, opusRedEndToEndDedup)
     // receive branch actually ran and therefore the UAF line was executed many times.
     EXPECT_GT(framesReceived.load(), 0u) << "answerer did not receive any Opus frames; RED receive branch never exercised";
 
+    // Snapshot counters under the transceiver's statsLock — the ICE/RTP thread writes
+    // inboundStats.fec* fields under this same lock from transceiverOnRtpPacketReceived,
+    // so reading bare would be a TSan-visible data race.
+    UINT64 fecReceivedSnapshot;
+    UINT64 fecDiscardedSnapshot;
+    MUTEX_LOCK(pKvsAnswerAudio->statsLock);
+    fecReceivedSnapshot = pKvsAnswerAudio->inboundStats.fecPacketsReceived;
+    fecDiscardedSnapshot = pKvsAnswerAudio->inboundStats.fecPacketsDiscarded;
+    MUTEX_UNLOCK(pKvsAnswerAudio->statsLock);
+
     // Confirm the RED receive path actually counted redundant blocks — if this is zero
     // then sendPacketToRtpReceiver's RED split branch never executed the buggy read.
     DLOGI("opusRedEndToEndDedup: framesReceived=%u fecPacketsReceived=%llu fecPacketsDiscarded=%llu", framesReceived.load(),
-          (unsigned long long) pKvsAnswerAudio->inboundStats.fecPacketsReceived,
-          (unsigned long long) pKvsAnswerAudio->inboundStats.fecPacketsDiscarded);
-    EXPECT_GT(pKvsAnswerAudio->inboundStats.fecPacketsReceived, 0u)
-        << "no redundant blocks counted — the RED split branch in sendPacketToRtpReceiver did not run, "
-        << "so the UAF line was not exercised and this test cannot reproduce the bug";
+          (unsigned long long) fecReceivedSnapshot, (unsigned long long) fecDiscardedSnapshot);
+    EXPECT_GT(fecReceivedSnapshot, 0u) << "no redundant blocks counted — the RED split branch in sendPacketToRtpReceiver did not run, "
+                                       << "so the UAF line was not exercised and this test cannot reproduce the bug";
 
     MEMFREE(opusBytes);
 
