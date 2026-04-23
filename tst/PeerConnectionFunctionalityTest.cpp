@@ -2901,6 +2901,119 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
         EXPECT_LT(medianAudioLatency, STEADY_STATE_LATENCY_LIMIT) << "Audio median latency " << medianAudioMs << " ms exceeded limit";
     }
 }
+
+// Reproduces a use-after-free in sendPacketToRtpReceiver's RED split branch.
+//
+// When useRedForOpus is true on both peers, the receiver's sendPacketToRtpReceiver
+// splits each inbound RED packet into N+1 synthetic per-Opus-frame packets and pushes
+// each through the jitter buffer. The JB dedups an incoming synthetic against an
+// already-present real packet at the same seq by calling freeRtpPacket(pSyn) from
+// inside jitterBufferPush. The production code then reads pSyn->isSynthetic and
+// pSyn->payloadLength after the push — that's a read of freed memory.
+//
+// Under default libc / macOS allocators the freed byte often still reads as its
+// previous value, so the bug is silent in opt-mode testing. Under ASan (or any
+// scrubbing / guard allocator) it surfaces immediately as heap-use-after-free.
+//
+// The test drives the full receive path: two connected PeerConnections, both with
+// useRedForOpus=TRUE, one sending Opus frames, the other receiving. Every wire
+// packet after the first triggers the dedup branch, so the UAF is exercised many
+// times per run. Assertion failure is incidental — the real signal is an ASan
+// heap-use-after-free when the build has -fsanitize=address.
+TEST_F(PeerConnectionFunctionalityTest, opusRedEndToEndDedup)
+{
+    constexpr UINT32 NUM_FRAMES = 50;
+    constexpr UINT32 OPUS_FRAME_SIZE = 80; // arbitrary; codec is opaque below RED
+    constexpr UINT64 OPUS_FRAME_DURATION = 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+
+    RtcConfiguration cfg{};
+    initRtcConfiguration(&cfg);
+    cfg.kvsRtcConfiguration.useRedForOpus = TRUE;
+    // The dedup path that frees the synthetic only fires reliably in the RealTime JB —
+    // the classic JB removes packets from its hash table on delivery, so subsequent
+    // synthetics get stored as new packets rather than dedup'd, and the UAF branch
+    // (if (pSyn->isSynthetic) inside `synDiscarded`) is never executed.
+    cfg.kvsRtcConfiguration.useRealTimeJitterBuffer = TRUE;
+
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&cfg, &offerPc));
+    EXPECT_EQ(STATUS_SUCCESS, createPeerConnection(&cfg, &answerPc));
+
+    RtcMediaStreamTrack offerAudioTrack{}, answerAudioTrack{};
+    PRtcRtpTransceiver offerAudioTransceiver = NULL, answerAudioTransceiver = NULL;
+    addTrackToPeerConnection(offerPc, &offerAudioTrack, &offerAudioTransceiver, RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+    addTrackToPeerConnection(answerPc, &answerAudioTrack, &answerAudioTransceiver, RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+
+    std::atomic<UINT32> framesReceived{0};
+    auto onAudioFrame = [](UINT64 customData, PFrame pFrame) -> void {
+        UNUSED_PARAM(pFrame);
+        ((std::atomic<UINT32>*) customData)->fetch_add(1);
+    };
+    EXPECT_EQ(STATUS_SUCCESS, transceiverOnFrame(answerAudioTransceiver, (UINT64) &framesReceived, onAudioFrame));
+
+    ASSERT_EQ(TRUE, connectTwoPeers(offerPc, answerPc));
+
+    // Sanity: the SDP negotiation must have wired up RED on both sides. If it did not,
+    // the RED receive branch never runs and the UAF never fires — the test would then
+    // be a false "pass" under ASan, so assert the gate here.
+    PKvsPeerConnection pKvsOffer = (PKvsPeerConnection) offerPc;
+    PKvsPeerConnection pKvsAnswer = (PKvsPeerConnection) answerPc;
+    EXPECT_TRUE(pKvsOffer->useRedForOpus);
+    EXPECT_TRUE(pKvsAnswer->useRedForOpus);
+
+    // After negotiation, the answer-side transceiver must have receiverRedPayloadType set
+    // (that's what gates the sendPacketToRtpReceiver RED-split branch). If this is zero,
+    // the UAF line we are trying to exercise is unreachable.
+    PKvsRtpTransceiver pKvsAnswerAudio = (PKvsRtpTransceiver) answerAudioTransceiver;
+    EXPECT_NE(0, pKvsAnswerAudio->receiverRedPayloadType) << "RED not negotiated on answer side — RED receive branch will not run";
+
+    PBYTE opusBytes = (PBYTE) MEMALLOC(OPUS_FRAME_SIZE);
+    MEMSET(opusBytes, 0xAA, OPUS_FRAME_SIZE);
+    Frame frame{};
+    frame.frameData = opusBytes;
+    frame.size = OPUS_FRAME_SIZE;
+    frame.presentationTs = 0;
+
+    for (UINT32 i = 0; i < NUM_FRAMES; i++) {
+        STATUS s = writeFrame(offerAudioTransceiver, &frame);
+        EXPECT_TRUE(s == STATUS_SUCCESS || s == STATUS_SRTP_NOT_READY_YET);
+        frame.presentationTs += OPUS_FRAME_DURATION;
+        THREAD_SLEEP(OPUS_FRAME_DURATION);
+    }
+
+    // Allow in-flight packets to drain through the receiver.
+    for (UINT32 i = 0; i < 50 && framesReceived.load() < 10; i++) {
+        THREAD_SLEEP(20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+    }
+
+    // At least a handful of frames should have been delivered — confirms the RED
+    // receive branch actually ran and therefore the UAF line was executed many times.
+    EXPECT_GT(framesReceived.load(), 0u) << "answerer did not receive any Opus frames; RED receive branch never exercised";
+
+    // Snapshot counters under the transceiver's statsLock — the ICE/RTP thread writes
+    // inboundStats.fec* fields under this same lock from transceiverOnRtpPacketReceived,
+    // so reading bare would be a TSan-visible data race.
+    UINT64 fecReceivedSnapshot;
+    UINT64 fecDiscardedSnapshot;
+    MUTEX_LOCK(pKvsAnswerAudio->statsLock);
+    fecReceivedSnapshot = pKvsAnswerAudio->inboundStats.fecPacketsReceived;
+    fecDiscardedSnapshot = pKvsAnswerAudio->inboundStats.fecPacketsDiscarded;
+    MUTEX_UNLOCK(pKvsAnswerAudio->statsLock);
+
+    // Confirm the RED receive path actually counted redundant blocks — if this is zero
+    // then sendPacketToRtpReceiver's RED split branch never executed the buggy read.
+    DLOGI("opusRedEndToEndDedup: framesReceived=%u fecPacketsReceived=%llu fecPacketsDiscarded=%llu", framesReceived.load(),
+          (unsigned long long) fecReceivedSnapshot, (unsigned long long) fecDiscardedSnapshot);
+    EXPECT_GT(fecReceivedSnapshot, 0u) << "no redundant blocks counted — the RED split branch in sendPacketToRtpReceiver did not run, "
+                                       << "so the UAF line was not exercised and this test cannot reproduce the bug";
+
+    MEMFREE(opusBytes);
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+}
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

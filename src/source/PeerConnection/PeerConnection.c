@@ -373,14 +373,21 @@ STATUS transceiverOnRtpPacketReceived(PKvsRtpTransceiver pTransceiver, PRtpPacke
                 UINT32 k;
                 for (k = 0; k < produced; k++) {
                     PRtpPacket pSyn = redSynthetics[k];
+                    // Capture fields BEFORE push: jitterBufferPush may freeRtpPacket(pSyn)
+                    // in the dedup branch (existing real + incoming synthetic), and reading
+                    // pSyn->isSynthetic or pSyn->payloadLength after a successful push is a
+                    // use-after-free. Depending on the allocator, the bytes may coincidentally
+                    // still read as "valid" which is why this slipped past opt-mode testing.
+                    BOOL wasSynthetic = pSyn->isSynthetic;
+                    UINT32 synPayloadLength = pSyn->payloadLength;
                     BOOL synDiscarded = FALSE;
-                    if (pSyn->isSynthetic) {
+                    if (wasSynthetic) {
                         fecPacketsReceived++;
-                        fecBytesReceivedCount += pSyn->payloadLength;
+                        fecBytesReceivedCount += synPayloadLength;
                     }
                     STATUS pushStatus = jitterBufferPush(pTransceiver->pJitterBuffer, pSyn, &synDiscarded);
                     if (STATUS_FAILED(pushStatus) || synDiscarded) {
-                        if (pSyn->isSynthetic) {
+                        if (wasSynthetic) {
                             fecPacketsDiscarded++;
                         } else if (synDiscarded) {
                             packetsDiscarded++;
@@ -499,10 +506,16 @@ STATUS sendPacketToRtpReceiver(PKvsPeerConnection pKvsPeerConnection, PBYTE pBuf
         CHK(FALSE, STATUS_SUCCESS);
     }
 
-    // pRtpPacket ownership transfers to transceiverOnRtpPacketReceived
-    CHK_STATUS(transceiverOnRtpPacketReceived(pTransceiver, pRtpPacket));
-    pRtpPacket = NULL;
-    pPayload = NULL;
+    // Ownership transfers to transceiverOnRtpPacketReceived on all paths: it frees the packet in
+    // its own CleanUp when ownedByJitterBuffer is FALSE (including when jitterBufferPush returns
+    // an error from rtPush, which can happen after the packet has already been stored in the ring).
+    // Null out before the call so the caller's CleanUp below is a no-op regardless of return status;
+    // otherwise an error return would double-free.
+    {
+        PRtpPacket pReceived = pRtpPacket;
+        pRtpPacket = NULL;
+        CHK_STATUS(transceiverOnRtpPacketReceived(pTransceiver, pReceived));
+    }
 
 CleanUp:
     SAFE_MEMFREE(pPayload);
