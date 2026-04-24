@@ -20,7 +20,7 @@ echo ""
 
 timeout -s ABRT 300 ./webrtc_client_test \
     --gtest_filter="${GTEST_FILTER}" \
-    --gtest_break_on_failure 2>&1
+    --gtest_fail_fast 2>&1
 
 EXIT_CODE=$?
 echo ""
