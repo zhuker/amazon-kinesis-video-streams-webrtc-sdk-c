@@ -6,6 +6,70 @@ namespace kinesis {
 namespace video {
 namespace webrtcclient {
 
+// ---- RTCP XR test helpers ----
+// Build XR packets declaratively instead of hand-crafting byte arrays in each test.
+
+namespace {
+
+struct DlrrSub {
+    UINT32 ssrcN;
+    UINT32 lrr;
+    UINT32 dlrr;
+};
+
+// 12-byte RRTR block (RFC 3611 §4.4).
+std::vector<BYTE> rrtrBlock(UINT64 ntp)
+{
+    std::vector<BYTE> blk(RTCP_XR_RRTR_BLOCK_LEN);
+    blk[0] = RTCP_XR_BLOCK_TYPE_RRTR;
+    blk[1] = 0;
+    putUnalignedInt16BigEndian(blk.data() + 2, 2);
+    putUnalignedInt64BigEndian(blk.data() + 4, ntp);
+    return blk;
+}
+
+// DLRR block (RFC 3611 §4.5) with N sub-blocks.
+std::vector<BYTE> dlrrBlock(std::initializer_list<DlrrSub> subs)
+{
+    const UINT32 n = (UINT32) subs.size();
+    std::vector<BYTE> blk(RTCP_XR_DLRR_BLOCK_HDR_LEN + n * RTCP_XR_DLRR_SUBBLOCK_LEN);
+    blk[0] = RTCP_XR_BLOCK_TYPE_DLRR;
+    blk[1] = 0;
+    putUnalignedInt16BigEndian(blk.data() + 2, (UINT16) (n * 3));
+    UINT32 p = RTCP_XR_DLRR_BLOCK_HDR_LEN;
+    for (auto& s : subs) {
+        putUnalignedInt32BigEndian(blk.data() + p, s.ssrcN);
+        putUnalignedInt32BigEndian(blk.data() + p + 4, s.lrr);
+        putUnalignedInt32BigEndian(blk.data() + p + 8, s.dlrr);
+        p += RTCP_XR_DLRR_SUBBLOCK_LEN;
+    }
+    return blk;
+}
+
+// Unknown XR block of type `bt` with `bodyWords` zero-filled 32-bit words.
+std::vector<BYTE> unknownBlock(UINT8 bt, UINT16 bodyWords)
+{
+    std::vector<BYTE> blk(4 + (UINT32) bodyWords * 4);
+    blk[0] = bt;
+    blk[1] = 0;
+    putUnalignedInt16BigEndian(blk.data() + 2, bodyWords);
+    return blk;
+}
+
+// Wrap a body of XR blocks with the 8-byte XR header and return the full packet.
+std::vector<BYTE> buildXrPacket(UINT32 reporterSsrc, std::vector<BYTE> body)
+{
+    std::vector<BYTE> pkt(RTCP_XR_HEADER_LEN + body.size());
+    pkt[0] = 0x80;
+    pkt[1] = RTCP_PACKET_TYPE_EXTENDED_REPORT;
+    putUnalignedInt16BigEndian(pkt.data() + 2, (UINT16) (pkt.size() / RTCP_PACKET_LEN_WORD_SIZE - 1));
+    putUnalignedInt32BigEndian(pkt.data() + 4, reporterSsrc);
+    std::copy(body.begin(), body.end(), pkt.begin() + RTCP_XR_HEADER_LEN);
+    return pkt;
+}
+
+} // namespace
+
 class RtcpFunctionalityTest : public WebRtcClientTestBase {
   public:
     PKvsRtpTransceiver pKvsRtpTransceiver = nullptr;
@@ -1264,30 +1328,15 @@ TEST_F(RtcpFunctionalityTest, jitterFirstPacketDoesNotSpike)
 TEST_F(RtcpFunctionalityTest, xrRrtrStoresReporterState)
 {
     initTransceiver(0x11223344);
-
-    // Wipe slots so the test is order-independent.
     MEMSET(pKvsPeerConnection->receivedRrtrs, 0, SIZEOF(pKvsPeerConnection->receivedRrtrs));
 
     const UINT32 reporterSsrc = 0xDEADBEEF;
     const UINT64 ntp = 0xE1E3204300ABCDEFULL;
-    const UINT32 expectedNtpMid = MID_NTP(ntp);
+    auto xr = buildXrPacket(reporterSsrc, rrtrBlock(ntp));
 
-    // XR header (V=2, P=0, rsvd=0, PT=207, length = 4 words -1 = 4, SSRC=reporter)
-    // then one RRTR block (BT=4, rsvd=0, length=2, 8-byte NTP).
-    BYTE xr[20];
-    MEMSET(xr, 0, SIZEOF(xr));
-    xr[0] = 0x80;                                         // V=2
-    xr[1] = 0xCF;                                         // PT=207
-    putUnalignedInt16BigEndian(xr + 2, 4);                // length: (20/4) - 1
-    putUnalignedInt32BigEndian(xr + 4, reporterSsrc);     // reporter SSRC
-    xr[8] = 0x04;                                         // BT=4 (RRTR)
-    xr[9] = 0x00;
-    putUnalignedInt16BigEndian(xr + 10, 2);               // block length = 2 words
-    putUnalignedInt64BigEndian(xr + 12, ntp);
-
-    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr.data(), (UINT32) xr.size()));
     EXPECT_EQ(reporterSsrc, pKvsPeerConnection->receivedRrtrs[0].ssrc);
-    EXPECT_EQ(expectedNtpMid, pKvsPeerConnection->receivedRrtrs[0].ntpMid);
+    EXPECT_EQ(MID_NTP(ntp), pKvsPeerConnection->receivedRrtrs[0].ntpMid);
     EXPECT_EQ(0u, pKvsPeerConnection->receivedRrtrs[0].lastRepliedNtpMid);
 
     freePeerConnection(&pRtcPeerConnection);
@@ -1297,6 +1346,9 @@ TEST_F(RtcpFunctionalityTest, xrRrtrStoresReporterState)
 // RRTR's middle-32 NTP as LRR and a DLRR value ~= elapsed time.
 TEST_F(RtcpFunctionalityTest, xrDlrrEchoesLrrAndDelay)
 {
+    // This test still inspects the raw bytes of the builder output to pin the
+    // wire layout — that's the *point*. Round-tripping via the parser would
+    // hide simultaneous build/parse offset bugs.
     const UINT32 ourSsrc = 0x12345678;
     initTransceiver(ourSsrc);
 
@@ -1393,46 +1445,27 @@ TEST_F(RtcpFunctionalityTest, xrDlrrPopulatesRemoteOutboundRttStats)
     const UINT32 seededMid = 0x12345678;
     pKvsRtpTransceiver->lastRrtrNtpMid = seededMid;
 
-    // Construct DLRR where LRR = seededMid and DLRR = 0 (peer replied instantly).
-    // Expected RTT = MID_NTP(now) - LRR - 0 in DLSR units, which should match the
-    // measured wall-clock elapsed since we "sent" the RRTR corresponding to seededMid.
-    // To make the test deterministic we instead pick an LRR equal to MID_NTP(GETTIME())
-    // at DLRR construction time; with DLRR=0 RTT should be ~0 ms.
+    // To make the test deterministic, use an LRR equal to MID_NTP(GETTIME()) at
+    // DLRR construction time and DLRR=0 (peer replied instantly). RTT should be
+    // tiny (sub-millisecond, definitely < 1 s).
     const UINT32 lrr = MID_NTP(convertTimestampToNTP(GETTIME()));
     pKvsRtpTransceiver->lastRrtrNtpMid = lrr;
 
-    BYTE xr[24];
-    MEMSET(xr, 0, SIZEOF(xr));
-    xr[0] = 0x80;
-    xr[1] = 0xCF;                                     // PT=207
-    putUnalignedInt16BigEndian(xr + 2, 5);            // length = (24/4) - 1 = 5
-    putUnalignedInt32BigEndian(xr + 4, 0xA1B2C3D4);   // reporter (peer) SSRC (not used)
-    xr[8] = 0x05;                                     // BT=5 (DLRR)
-    xr[9] = 0x00;
-    putUnalignedInt16BigEndian(xr + 10, 3);           // 3 words = 1 sub-block
-    putUnalignedInt32BigEndian(xr + 12, ourSsrc);     // SSRC_n = our sender SSRC
-    putUnalignedInt32BigEndian(xr + 16, lrr);         // LRR echoes our lastRrtrNtpMid
-    putUnalignedInt32BigEndian(xr + 20, 0);           // DLRR = 0 (peer reports no delay)
+    auto goodDlrr = buildXrPacket(0xA1B2C3D4, dlrrBlock({{ourSsrc, lrr, 0}}));
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, goodDlrr.data(), (UINT32) goodDlrr.size()));
 
-    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
-
-    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
     EXPECT_EQ(1u, pKvsRtpTransceiver->remoteOutboundStats.roundTripTimeMeasurements);
     EXPECT_GE(pKvsRtpTransceiver->remoteOutboundStats.totalRoundTripTime, 0.0);
     EXPECT_LT(pKvsRtpTransceiver->remoteOutboundStats.roundTripTime, 1.0); // < 1 s on localhost
-    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
 
-    // A DLRR with LRR=0 or not matching our stored ntpMid must NOT bump the counter.
+    // A DLRR with LRR=0 or LRR != our stored ntpMid must NOT bump the counter.
     pKvsRtpTransceiver->lastRrtrNtpMid = 0x99999999;
-    putUnalignedInt32BigEndian(xr + 16, 0); // LRR=0
-    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+    auto zeroLrr = buildXrPacket(0xA1B2C3D4, dlrrBlock({{ourSsrc, 0, 0}}));
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, zeroLrr.data(), (UINT32) zeroLrr.size()));
+    auto mismatchLrr = buildXrPacket(0xA1B2C3D4, dlrrBlock({{ourSsrc, 0x00000001, 0}}));
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, mismatchLrr.data(), (UINT32) mismatchLrr.size()));
 
-    putUnalignedInt32BigEndian(xr + 16, 0x00000001); // non-matching LRR
-    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
-
-    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
     EXPECT_EQ(1u, pKvsRtpTransceiver->remoteOutboundStats.roundTripTimeMeasurements); // unchanged
-    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
 
     freePeerConnection(&pRtcPeerConnection);
 }
@@ -1444,18 +1477,9 @@ TEST_F(RtcpFunctionalityTest, xrParserSkipsUnknownBlockTypes)
     initTransceiver(0xAA);
     MEMSET(pKvsPeerConnection->receivedRrtrs, 0, SIZEOF(pKvsPeerConnection->receivedRrtrs));
 
-    // XR header + a BT=42 block with length=5 (20 bytes of zero body).
-    BYTE xr[32];
-    MEMSET(xr, 0, SIZEOF(xr));
-    xr[0] = 0x80;
-    xr[1] = 0xCF;                                 // PT=207
-    putUnalignedInt16BigEndian(xr + 2, 7);        // length: (32/4) - 1
-    putUnalignedInt32BigEndian(xr + 4, 0xCAFEF00D);
-    xr[8] = 0x2A;                                 // BT=42
-    xr[9] = 0x00;
-    putUnalignedInt16BigEndian(xr + 10, 5);       // 5 body words = 20 bytes
+    auto xr = buildXrPacket(0xCAFEF00D, unknownBlock(/*bt=*/42, /*bodyWords=*/5));
 
-    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr.data(), (UINT32) xr.size()));
     EXPECT_EQ(0u, pKvsPeerConnection->receivedRrtrs[0].ssrc);
 
     freePeerConnection(&pRtcPeerConnection);
