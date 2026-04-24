@@ -278,9 +278,12 @@ static STATUS onRtcpReceiverReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection p
     if (fractionLost > -1.0) {
         pTransceiver->remoteInboundStats.fractionLost = fractionLost;
     }
-    pTransceiver->remoteInboundStats.roundTripTimeMeasurements++;
-    pTransceiver->remoteInboundStats.totalRoundTripTime += rttPropDelayMsec;
-    pTransceiver->remoteInboundStats.roundTripTime = rttPropDelayMsec;
+    // Skip the first RR after session start (LSR=DLSR=0) so it doesn't bias the RTT average toward zero.
+    if (lastSR != 0) {
+        pTransceiver->remoteInboundStats.roundTripTimeMeasurements++;
+        pTransceiver->remoteInboundStats.totalRoundTripTime += rttPropDelayMsec;
+        pTransceiver->remoteInboundStats.roundTripTime = rttPropDelayMsec;
+    }
     // Sign-extend 24-bit cumulativeLost to INT64
     pTransceiver->remoteInboundStats.received.packetsLost =
         (cumulativeLost & 0x800000u) ? (INT64) (cumulativeLost | 0xFF000000u) : (INT64) cumulativeLost;
