@@ -1036,6 +1036,13 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         if (reportLen > 0) {
             CHK_STATUS(sendBuiltRtcpReport(pKvsPeerConnection, reportBody, reportLen));
         }
+
+        // RFC 3611 XR DLRR — answer any pending RRTR from the remote peer.
+        reportLen = sizeof(reportBody);
+        CHK_STATUS(rtcpBuildExtendedReport(pKvsPeerConnection, pKvsRtpTransceiver, currentTime, reportBody, &reportLen));
+        if (reportLen > 0) {
+            CHK_STATUS(sendBuiltRtcpReport(pKvsPeerConnection, reportBody, reportLen));
+        }
     }
 
     delay = 100 + (RAND() % 200);
@@ -1335,6 +1342,9 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection->twccReceiverLock = MUTEX_CREATE(TRUE);
     CHK_STATUS(createTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
     pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32; // Invalid timer ID
+
+    // RFC 3611 RRTR -> DLRR state.
+    pKvsPeerConnection->rtcpXrLock = MUTEX_CREATE(TRUE);
 #ifdef ENABLE_NATIVE_SCTP
     pKvsPeerConnection->sctpTimerCallbackId = MAX_UINT32;
 #endif
@@ -1521,6 +1531,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccReceiverLock)) {
         MUTEX_FREE(pKvsPeerConnection->twccReceiverLock);
         pKvsPeerConnection->twccReceiverLock = INVALID_MUTEX_VALUE;
+    }
+
+    if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->rtcpXrLock)) {
+        MUTEX_FREE(pKvsPeerConnection->rtcpXrLock);
+        pKvsPeerConnection->rtcpXrLock = INVALID_MUTEX_VALUE;
     }
 
     // Free PCAP dump

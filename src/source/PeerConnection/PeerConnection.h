@@ -92,6 +92,15 @@ typedef struct {
     UINT64 freePeerConnectionTime;
 } KvsPeerConnectionDiagnostics, *PKvsPeerConnectionDiagnostics;
 
+// RFC 3611 §4.4/§4.5: state needed to answer a received RRTR with a DLRR block.
+#define MAX_RECEIVED_RRTR 4
+typedef struct {
+    UINT32 ssrc;              //!< Reporter SSRC from the XR header; 0 = empty slot.
+    UINT32 ntpMid;            //!< Middle 32 bits of the received NTP timestamp (echoed as LRR).
+    UINT64 arrivalTimeHns;    //!< Local receive time in 100-ns units (for DLRR delay calculation).
+    UINT32 lastRepliedNtpMid; //!< ntpMid we last replied to; used to suppress duplicate DLRRs.
+} ReceivedRrtrEntry, *PReceivedRrtrEntry;
+
 typedef struct {
     RtcPeerConnection peerConnection;
     // UINT32 padding makes transportWideSequenceNumber 64bit aligned
@@ -186,6 +195,10 @@ typedef struct {
     MUTEX twccReceiverLock;
     PTwccReceiverManager pTwccReceiverManager;
     UINT32 twccFeedbackTimerId;
+
+    // RFC 3611 RRTR tracking so rtcpBuildExtendedReport can answer with DLRR.
+    MUTEX rtcpXrLock;
+    ReceivedRrtrEntry receivedRrtrs[MAX_RECEIVED_RRTR];
 
     // Pacing for smooth packet transmission
     PPacer pPacer;

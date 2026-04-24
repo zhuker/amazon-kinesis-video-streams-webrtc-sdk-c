@@ -1259,6 +1259,110 @@ TEST_F(RtcpFunctionalityTest, jitterFirstPacketDoesNotSpike)
     freePeerConnection(&pRtcPeerConnection);
 }
 
+// XR with a single RRTR block should stash the reporter's SSRC + middle-32 NTP
+// on the peer connection so the DLRR emitter can later echo them back.
+TEST_F(RtcpFunctionalityTest, xrRrtrStoresReporterState)
+{
+    initTransceiver(0x11223344);
+
+    // Wipe slots so the test is order-independent.
+    MEMSET(pKvsPeerConnection->receivedRrtrs, 0, SIZEOF(pKvsPeerConnection->receivedRrtrs));
+
+    const UINT32 reporterSsrc = 0xDEADBEEF;
+    const UINT64 ntp = 0xE1E3204300ABCDEFULL;
+    const UINT32 expectedNtpMid = MID_NTP(ntp);
+
+    // XR header (V=2, P=0, rsvd=0, PT=207, length = 4 words -1 = 4, SSRC=reporter)
+    // then one RRTR block (BT=4, rsvd=0, length=2, 8-byte NTP).
+    BYTE xr[20];
+    MEMSET(xr, 0, SIZEOF(xr));
+    xr[0] = 0x80;                                         // V=2
+    xr[1] = 0xCF;                                         // PT=207
+    putUnalignedInt16BigEndian(xr + 2, 4);                // length: (20/4) - 1
+    putUnalignedInt32BigEndian(xr + 4, reporterSsrc);     // reporter SSRC
+    xr[8] = 0x04;                                         // BT=4 (RRTR)
+    xr[9] = 0x00;
+    putUnalignedInt16BigEndian(xr + 10, 2);               // block length = 2 words
+    putUnalignedInt64BigEndian(xr + 12, ntp);
+
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+    EXPECT_EQ(reporterSsrc, pKvsPeerConnection->receivedRrtrs[0].ssrc);
+    EXPECT_EQ(expectedNtpMid, pKvsPeerConnection->receivedRrtrs[0].ntpMid);
+    EXPECT_EQ(0u, pKvsPeerConnection->receivedRrtrs[0].lastRepliedNtpMid);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+// rtcpBuildExtendedReport should emit a DLRR block that echoes the stored
+// RRTR's middle-32 NTP as LRR and a DLRR value ~= elapsed time.
+TEST_F(RtcpFunctionalityTest, xrDlrrEchoesLrrAndDelay)
+{
+    const UINT32 ourSsrc = 0x12345678;
+    initTransceiver(ourSsrc);
+
+    MEMSET(pKvsPeerConnection->receivedRrtrs, 0, SIZEOF(pKvsPeerConnection->receivedRrtrs));
+    const UINT32 reporterSsrc = 0xDEADBEEF;
+    const UINT32 ntpMid = 0xC0FFEE00;
+    const UINT64 arrival = GETTIME();
+    pKvsPeerConnection->receivedRrtrs[0].ssrc = reporterSsrc;
+    pKvsPeerConnection->receivedRrtrs[0].ntpMid = ntpMid;
+    pKvsPeerConnection->receivedRrtrs[0].arrivalTimeHns = arrival;
+
+    // Emit one millisecond later. Expected DLRR = 1 ms * 65536 / 1 s = 65.
+    const UINT64 currentTime = arrival + 1 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+    BYTE out[64];
+    UINT32 outLen = sizeof(out);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildExtendedReport(pKvsPeerConnection, pKvsRtpTransceiver, currentTime, out, &outLen));
+    EXPECT_EQ(RTCP_XR_HEADER_LEN + RTCP_XR_DLRR_BLOCK_HDR_LEN + RTCP_XR_DLRR_SUBBLOCK_LEN, outLen);
+
+    // Header: V=2, PT=207, length = 4 (24 bytes / 4 - 1 = 5), reporter SSRC = ours.
+    EXPECT_EQ(0x80, out[0]);
+    EXPECT_EQ(RTCP_PACKET_TYPE_EXTENDED_REPORT, out[1]);
+    EXPECT_EQ(5u, getUnalignedInt16BigEndian(out + 2));
+    EXPECT_EQ(ourSsrc, getUnalignedInt32BigEndian(out + 4));
+
+    // DLRR block header: BT=5, body length = 3 words per sub-block.
+    EXPECT_EQ(RTCP_XR_BLOCK_TYPE_DLRR, out[RTCP_XR_HEADER_LEN]);
+    EXPECT_EQ(3u, getUnalignedInt16BigEndian(out + RTCP_XR_HEADER_LEN + 2));
+
+    // Sub-block: {SSRC_n, LRR=ntpMid, DLRR = 1 ms worth of 1/65536 s ticks = 65}.
+    const UINT32 subOff = RTCP_XR_HEADER_LEN + RTCP_XR_DLRR_BLOCK_HDR_LEN;
+    EXPECT_EQ(reporterSsrc, getUnalignedInt32BigEndian(out + subOff));
+    EXPECT_EQ(ntpMid, getUnalignedInt32BigEndian(out + subOff + 4));
+    EXPECT_EQ(65u, getUnalignedInt32BigEndian(out + subOff + 8));
+
+    // Second call with no new RRTR should be a no-op.
+    outLen = sizeof(out);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildExtendedReport(pKvsPeerConnection, pKvsRtpTransceiver, currentTime, out, &outLen));
+    EXPECT_EQ(0u, outLen);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+// Unknown block types (e.g. target-bitrate BT=42) must not be treated as errors
+// and must not touch the RRTR storage.
+TEST_F(RtcpFunctionalityTest, xrParserSkipsUnknownBlockTypes)
+{
+    initTransceiver(0xAA);
+    MEMSET(pKvsPeerConnection->receivedRrtrs, 0, SIZEOF(pKvsPeerConnection->receivedRrtrs));
+
+    // XR header + a BT=42 block with length=5 (20 bytes of zero body).
+    BYTE xr[32];
+    MEMSET(xr, 0, SIZEOF(xr));
+    xr[0] = 0x80;
+    xr[1] = 0xCF;                                 // PT=207
+    putUnalignedInt16BigEndian(xr + 2, 7);        // length: (32/4) - 1
+    putUnalignedInt32BigEndian(xr + 4, 0xCAFEF00D);
+    xr[8] = 0x2A;                                 // BT=42
+    xr[9] = 0x00;
+    putUnalignedInt16BigEndian(xr + 10, 5);       // 5 body words = 20 bytes
+
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+    EXPECT_EQ(0u, pKvsPeerConnection->receivedRrtrs[0].ssrc);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis
