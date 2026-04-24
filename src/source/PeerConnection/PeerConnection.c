@@ -976,9 +976,10 @@ CleanUp:
 // srtp_protect_rtcp() needs room for auth tag + SRTP trailer past the RTCP payload.
 #define RTCP_SRTP_ENCRYPT_OVERHEAD (SRTP_AUTH_TAG_OVERHEAD + SRTP_MAX_TRAILER_LEN + 4)
 
-// Max builder output: RR (4 header + 4 sender SSRC + 24 report block = 32)
-// is larger than SR (4 header + 24 body = 28).
-#define RTCP_MAX_REPORT_BODY_LEN (RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN)
+// Max builder output across SR (28), RR (32), and XR (header + RRTR + DLRR_header + N*sub-block).
+// Reserve enough for a full XR that carries both RRTR and a DLRR block with MAX_RECEIVED_RRTR sub-blocks.
+#define RTCP_MAX_REPORT_BODY_LEN                                                                                                                     \
+    (RTCP_XR_HEADER_LEN + RTCP_XR_RRTR_BLOCK_LEN + RTCP_XR_DLRR_BLOCK_HDR_LEN + MAX_RECEIVED_RRTR * RTCP_XR_DLRR_SUBBLOCK_LEN)
 
 static STATUS sendBuiltRtcpReport(PKvsPeerConnection pKvsPeerConnection, PBYTE pReportBody, UINT32 reportLen)
 {

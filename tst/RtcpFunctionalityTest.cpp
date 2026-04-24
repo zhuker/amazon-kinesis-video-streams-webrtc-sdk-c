@@ -1307,6 +1307,8 @@ TEST_F(RtcpFunctionalityTest, xrDlrrEchoesLrrAndDelay)
     pKvsPeerConnection->receivedRrtrs[0].ssrc = reporterSsrc;
     pKvsPeerConnection->receivedRrtrs[0].ntpMid = ntpMid;
     pKvsPeerConnection->receivedRrtrs[0].arrivalTimeHns = arrival;
+    // Suppress RRTR emission so this test only covers the DLRR block layout.
+    pKvsRtpTransceiver->lastRrtrSentTime = arrival;
 
     // Emit one millisecond later. Expected DLRR = 1 ms * 65536 / 1 s = 65.
     const UINT64 currentTime = arrival + 1 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
@@ -1335,6 +1337,102 @@ TEST_F(RtcpFunctionalityTest, xrDlrrEchoesLrrAndDelay)
     outLen = sizeof(out);
     EXPECT_EQ(STATUS_SUCCESS, rtcpBuildExtendedReport(pKvsPeerConnection, pKvsRtpTransceiver, currentTime, out, &outLen));
     EXPECT_EQ(0u, outLen);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+// The builder emits an RRTR block (BT=4) with our NTP when the RRTR interval has elapsed,
+// so the remote peer can reply with a DLRR that lets us measure our RTT.
+TEST_F(RtcpFunctionalityTest, xrBuilderEmitsRrtrBlock)
+{
+    const UINT32 ourSsrc = 0x87654321;
+    initTransceiver(ourSsrc);
+
+    // lastRrtrSentTime = 0 → builder treats this tick as "first RRTR ever", always emits.
+    pKvsRtpTransceiver->lastRrtrSentTime = 0;
+    MEMSET(pKvsPeerConnection->receivedRrtrs, 0, SIZEOF(pKvsPeerConnection->receivedRrtrs));
+
+    const UINT64 now = GETTIME();
+    BYTE out[64];
+    UINT32 outLen = sizeof(out);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildExtendedReport(pKvsPeerConnection, pKvsRtpTransceiver, now, out, &outLen));
+    // Just XR header + RRTR block, no DLRR.
+    EXPECT_EQ(RTCP_XR_HEADER_LEN + RTCP_XR_RRTR_BLOCK_LEN, outLen);
+
+    // Header: V=2, PT=207, length = 4 (20 bytes / 4 - 1 = 4), reporter SSRC = ours.
+    EXPECT_EQ(0x80, out[0]);
+    EXPECT_EQ(RTCP_PACKET_TYPE_EXTENDED_REPORT, out[1]);
+    EXPECT_EQ(4u, getUnalignedInt16BigEndian(out + 2));
+    EXPECT_EQ(ourSsrc, getUnalignedInt32BigEndian(out + 4));
+
+    // RRTR block header: BT=4, block length = 2 words.
+    EXPECT_EQ(RTCP_XR_BLOCK_TYPE_RRTR, out[RTCP_XR_HEADER_LEN]);
+    EXPECT_EQ(2u, getUnalignedInt16BigEndian(out + RTCP_XR_HEADER_LEN + 2));
+
+    // NTP at body matches our NTP for `now`, and transceiver state reflects the send.
+    const UINT64 ntpInPacket = getUnalignedInt64BigEndian(out + RTCP_XR_HEADER_LEN + 4);
+    EXPECT_EQ(convertTimestampToNTP(now), ntpInPacket);
+    EXPECT_EQ(MID_NTP(ntpInPacket), pKvsRtpTransceiver->lastRrtrNtpMid);
+    EXPECT_EQ(now, pKvsRtpTransceiver->lastRrtrSentTime);
+
+    // A call well before the interval elapses should emit nothing.
+    outLen = sizeof(out);
+    EXPECT_EQ(STATUS_SUCCESS, rtcpBuildExtendedReport(pKvsPeerConnection, pKvsRtpTransceiver, now + 10, out, &outLen));
+    EXPECT_EQ(0u, outLen);
+
+    freePeerConnection(&pRtcPeerConnection);
+}
+
+// Feeding a DLRR that echoes our stored lastRrtrNtpMid must populate
+// remoteOutboundStats.{roundTripTime,totalRoundTripTime,roundTripTimeMeasurements}.
+TEST_F(RtcpFunctionalityTest, xrDlrrPopulatesRemoteOutboundRttStats)
+{
+    const UINT32 ourSsrc = 0x11223344;
+    initTransceiver(ourSsrc);
+
+    const UINT32 seededMid = 0x12345678;
+    pKvsRtpTransceiver->lastRrtrNtpMid = seededMid;
+
+    // Construct DLRR where LRR = seededMid and DLRR = 0 (peer replied instantly).
+    // Expected RTT = MID_NTP(now) - LRR - 0 in DLSR units, which should match the
+    // measured wall-clock elapsed since we "sent" the RRTR corresponding to seededMid.
+    // To make the test deterministic we instead pick an LRR equal to MID_NTP(GETTIME())
+    // at DLRR construction time; with DLRR=0 RTT should be ~0 ms.
+    const UINT32 lrr = MID_NTP(convertTimestampToNTP(GETTIME()));
+    pKvsRtpTransceiver->lastRrtrNtpMid = lrr;
+
+    BYTE xr[24];
+    MEMSET(xr, 0, SIZEOF(xr));
+    xr[0] = 0x80;
+    xr[1] = 0xCF;                                     // PT=207
+    putUnalignedInt16BigEndian(xr + 2, 5);            // length = (24/4) - 1 = 5
+    putUnalignedInt32BigEndian(xr + 4, 0xA1B2C3D4);   // reporter (peer) SSRC (not used)
+    xr[8] = 0x05;                                     // BT=5 (DLRR)
+    xr[9] = 0x00;
+    putUnalignedInt16BigEndian(xr + 10, 3);           // 3 words = 1 sub-block
+    putUnalignedInt32BigEndian(xr + 12, ourSsrc);     // SSRC_n = our sender SSRC
+    putUnalignedInt32BigEndian(xr + 16, lrr);         // LRR echoes our lastRrtrNtpMid
+    putUnalignedInt32BigEndian(xr + 20, 0);           // DLRR = 0 (peer reports no delay)
+
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+
+    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+    EXPECT_EQ(1u, pKvsRtpTransceiver->remoteOutboundStats.roundTripTimeMeasurements);
+    EXPECT_GE(pKvsRtpTransceiver->remoteOutboundStats.totalRoundTripTime, 0.0);
+    EXPECT_LT(pKvsRtpTransceiver->remoteOutboundStats.roundTripTime, 1.0); // < 1 s on localhost
+    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
+
+    // A DLRR with LRR=0 or not matching our stored ntpMid must NOT bump the counter.
+    pKvsRtpTransceiver->lastRrtrNtpMid = 0x99999999;
+    putUnalignedInt32BigEndian(xr + 16, 0); // LRR=0
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+
+    putUnalignedInt32BigEndian(xr + 16, 0x00000001); // non-matching LRR
+    EXPECT_EQ(STATUS_SUCCESS, onRtcpPacket(pKvsPeerConnection, xr, SIZEOF(xr)));
+
+    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+    EXPECT_EQ(1u, pKvsRtpTransceiver->remoteOutboundStats.roundTripTimeMeasurements); // unchanged
+    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
 
     freePeerConnection(&pRtcPeerConnection);
 }

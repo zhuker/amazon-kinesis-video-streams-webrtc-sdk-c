@@ -113,6 +113,12 @@ typedef struct {
     UINT32 lastSRNtpMid;       // middle 32 bits of last received SR NTP timestamp
     UINT64 lastSRReceivedTime; // wallclock (100ns) when last SR was received
 
+    // For LRR/DLRR in outgoing RRTR (protected by statsLock).
+    // lastRrtrNtpMid is the middle 32 bits of the NTP we most recently sent in an RRTR;
+    // we accept only DLRR sub-blocks whose LRR matches this value.
+    UINT32 lastRrtrNtpMid;
+    UINT64 lastRrtrSentTime; // wallclock (100ns) of last emitted RRTR; 0 = none yet
+
     UINT8 firSequenceNumber;
 
     // RFC 2198 RED receiver-side state. When non-zero, inbound packets whose PT equals

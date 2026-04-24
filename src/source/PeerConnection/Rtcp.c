@@ -136,8 +136,14 @@ CleanUp:
     return retStatus;
 }
 
-// RFC 3611 §4.5: Build XR packet with a single DLRR block echoing each pending RRTR.
-// Sets *pPacketLen = 0 when there is nothing to answer.
+// Emit an RRTR at most once per this interval. Chrome uses ~5 s; 2 s gives us
+// more frequent RTT samples without flooding.
+#define RTCP_XR_RRTR_INTERVAL_HNS (2 * HUNDREDS_OF_NANOS_IN_A_SECOND)
+
+// RFC 3611 §4.4/§4.5: Build XR packet with an optional RRTR block (so the peer can
+// reply with a DLRR letting us measure our RTT) followed by an optional DLRR block
+// answering any pending RRTR the peer has already sent us.
+// Sets *pPacketLen = 0 when there is nothing to emit in either direction.
 STATUS rtcpBuildExtendedReport(PKvsPeerConnection pKvsPeerConnection, PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 currentTime, PBYTE pOutBuffer,
                                PUINT32 pPacketLen)
 {
@@ -147,14 +153,25 @@ STATUS rtcpBuildExtendedReport(PKvsPeerConnection pKvsPeerConnection, PKvsRtpTra
     UINT32 pendingSsrc[MAX_RECEIVED_RRTR];
     UINT32 pendingNtpMid[MAX_RECEIVED_RRTR];
     UINT64 pendingArrivalHns[MAX_RECEIVED_RRTR];
-    BOOL locked = FALSE;
+    BOOL xrLocked = FALSE, statsLocked = FALSE, sendRrtr = FALSE;
     UINT32 offset;
+    UINT64 ourNtp = 0;
+    UINT32 ourNtpMid = 0;
 
     CHK(pKvsPeerConnection != NULL && pKvsRtpTransceiver != NULL && pOutBuffer != NULL && pPacketLen != NULL, STATUS_NULL_ARG);
 
+    // Decide whether to include an RRTR this tick. Read lastRrtrSentTime under statsLock.
+    MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+    statsLocked = TRUE;
+    if (pKvsRtpTransceiver->lastRrtrSentTime == 0 || currentTime - pKvsRtpTransceiver->lastRrtrSentTime >= RTCP_XR_RRTR_INTERVAL_HNS) {
+        sendRrtr = TRUE;
+    }
+    MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
+    statsLocked = FALSE;
+
     pendingCount = 0;
     MUTEX_LOCK(pKvsPeerConnection->rtcpXrLock);
-    locked = TRUE;
+    xrLocked = TRUE;
     for (slot = 0; slot < MAX_RECEIVED_RRTR; slot++) {
         PReceivedRrtrEntry entry = &pKvsPeerConnection->receivedRrtrs[slot];
         if (entry->ssrc != 0 && entry->ntpMid != entry->lastRepliedNtpMid) {
@@ -165,12 +182,13 @@ STATUS rtcpBuildExtendedReport(PKvsPeerConnection pKvsPeerConnection, PKvsRtpTra
         }
     }
 
-    if (pendingCount == 0) {
+    if (!sendRrtr && pendingCount == 0) {
         *pPacketLen = 0;
         CHK(FALSE, retStatus);
     }
 
-    packetLen = RTCP_XR_HEADER_LEN + RTCP_XR_DLRR_BLOCK_HDR_LEN + pendingCount * RTCP_XR_DLRR_SUBBLOCK_LEN;
+    packetLen = RTCP_XR_HEADER_LEN + (sendRrtr ? RTCP_XR_RRTR_BLOCK_LEN : 0) +
+        (pendingCount > 0 ? RTCP_XR_DLRR_BLOCK_HDR_LEN + pendingCount * RTCP_XR_DLRR_SUBBLOCK_LEN : 0);
     CHK(*pPacketLen >= packetLen, STATUS_BUFFER_TOO_SMALL);
 
     reporterSsrc = pKvsRtpTransceiver->sender.ssrc;
@@ -181,41 +199,65 @@ STATUS rtcpBuildExtendedReport(PKvsPeerConnection pKvsPeerConnection, PKvsRtpTra
     putUnalignedInt16BigEndian(pOutBuffer + RTCP_PACKET_LEN_OFFSET, (packetLen / RTCP_PACKET_LEN_WORD_SIZE) - 1);
     putUnalignedInt32BigEndian(pOutBuffer + 4, reporterSsrc);
 
-    // DLRR block header: BT=5, reserved=0, block length = 3 * pendingCount (three words per sub-block)
-    dlrrBodyWords = pendingCount * (RTCP_XR_DLRR_SUBBLOCK_LEN / RTCP_PACKET_LEN_WORD_SIZE);
-    pOutBuffer[RTCP_XR_HEADER_LEN] = RTCP_XR_BLOCK_TYPE_DLRR;
-    pOutBuffer[RTCP_XR_HEADER_LEN + 1] = 0;
-    putUnalignedInt16BigEndian(pOutBuffer + RTCP_XR_HEADER_LEN + 2, (UINT16) dlrrBodyWords);
-
-    offset = RTCP_XR_HEADER_LEN + RTCP_XR_DLRR_BLOCK_HDR_LEN;
-    for (pendingIdx = 0; pendingIdx < pendingCount; pendingIdx++) {
-        // Compute the hns diff into a local: KVS_CONVERT_TIMESCALE does not parenthesize `pts`,
-        // so passing an expression like `a - b` would be parsed as `a - (b * to / from)`.
-        UINT64 delayHns = currentTime - pendingArrivalHns[pendingIdx];
-        delayDlsrUnits = (UINT32) KVS_CONVERT_TIMESCALE(delayHns, HUNDREDS_OF_NANOS_IN_A_SECOND, DLSR_TIMESCALE);
-        putUnalignedInt32BigEndian(pOutBuffer + offset, pendingSsrc[pendingIdx]);
-        putUnalignedInt32BigEndian(pOutBuffer + offset + 4, pendingNtpMid[pendingIdx]);
-        putUnalignedInt32BigEndian(pOutBuffer + offset + 8, delayDlsrUnits);
-        offset += RTCP_XR_DLRR_SUBBLOCK_LEN;
+    offset = RTCP_XR_HEADER_LEN;
+    if (sendRrtr) {
+        // RRTR block: BT=4, rsvd=0, block length=2 (two 32-bit words of body = 8-byte NTP).
+        ourNtp = convertTimestampToNTP(currentTime);
+        ourNtpMid = MID_NTP(ourNtp);
+        pOutBuffer[offset] = RTCP_XR_BLOCK_TYPE_RRTR;
+        pOutBuffer[offset + 1] = 0;
+        putUnalignedInt16BigEndian(pOutBuffer + offset + 2, 2);
+        putUnalignedInt64BigEndian(pOutBuffer + offset + 4, ourNtp);
+        offset += RTCP_XR_RRTR_BLOCK_LEN;
     }
 
-    // Mark each echoed entry as replied-to so a subsequent timer tick doesn't emit a duplicate DLRR.
-    for (pendingIdx = 0; pendingIdx < pendingCount; pendingIdx++) {
-        for (slot = 0; slot < MAX_RECEIVED_RRTR; slot++) {
-            PReceivedRrtrEntry entry = &pKvsPeerConnection->receivedRrtrs[slot];
-            if (entry->ssrc == pendingSsrc[pendingIdx] && entry->ntpMid == pendingNtpMid[pendingIdx]) {
-                entry->lastRepliedNtpMid = pendingNtpMid[pendingIdx];
-                break;
+    if (pendingCount > 0) {
+        // DLRR block header: BT=5, reserved=0, block length = 3 * pendingCount (three words per sub-block)
+        dlrrBodyWords = pendingCount * (RTCP_XR_DLRR_SUBBLOCK_LEN / RTCP_PACKET_LEN_WORD_SIZE);
+        pOutBuffer[offset] = RTCP_XR_BLOCK_TYPE_DLRR;
+        pOutBuffer[offset + 1] = 0;
+        putUnalignedInt16BigEndian(pOutBuffer + offset + 2, (UINT16) dlrrBodyWords);
+        offset += RTCP_XR_DLRR_BLOCK_HDR_LEN;
+
+        for (pendingIdx = 0; pendingIdx < pendingCount; pendingIdx++) {
+            // Compute the hns diff into a local: KVS_CONVERT_TIMESCALE does not parenthesize `pts`,
+            // so passing an expression like `a - b` would be parsed as `a - (b * to / from)`.
+            UINT64 delayHns = currentTime - pendingArrivalHns[pendingIdx];
+            delayDlsrUnits = (UINT32) KVS_CONVERT_TIMESCALE(delayHns, HUNDREDS_OF_NANOS_IN_A_SECOND, DLSR_TIMESCALE);
+            putUnalignedInt32BigEndian(pOutBuffer + offset, pendingSsrc[pendingIdx]);
+            putUnalignedInt32BigEndian(pOutBuffer + offset + 4, pendingNtpMid[pendingIdx]);
+            putUnalignedInt32BigEndian(pOutBuffer + offset + 8, delayDlsrUnits);
+            offset += RTCP_XR_DLRR_SUBBLOCK_LEN;
+        }
+
+        // Mark each echoed entry as replied-to so a subsequent timer tick doesn't emit a duplicate DLRR.
+        for (pendingIdx = 0; pendingIdx < pendingCount; pendingIdx++) {
+            for (slot = 0; slot < MAX_RECEIVED_RRTR; slot++) {
+                PReceivedRrtrEntry entry = &pKvsPeerConnection->receivedRrtrs[slot];
+                if (entry->ssrc == pendingSsrc[pendingIdx] && entry->ntpMid == pendingNtpMid[pendingIdx]) {
+                    entry->lastRepliedNtpMid = pendingNtpMid[pendingIdx];
+                    break;
+                }
             }
         }
     }
 
+    if (sendRrtr) {
+        MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
+        pKvsRtpTransceiver->lastRrtrNtpMid = ourNtpMid;
+        pKvsRtpTransceiver->lastRrtrSentTime = currentTime;
+        MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
+    }
+
     *pPacketLen = packetLen;
-    DLOGV("extended report reporterSsrc=%u dlrrSubBlocks=%u bytes=%u", reporterSsrc, pendingCount, packetLen);
+    DLOGV("extended report reporterSsrc=%u rrtr=%u dlrrSubBlocks=%u bytes=%u", reporterSsrc, sendRrtr ? 1u : 0u, pendingCount, packetLen);
 
 CleanUp:
-    if (locked) {
+    if (xrLocked) {
         MUTEX_UNLOCK(pKvsPeerConnection->rtcpXrLock);
+    }
+    if (statsLocked) {
+        MUTEX_UNLOCK(pKvsRtpTransceiver->statsLock);
     }
     LEAVES();
     return retStatus;
@@ -394,12 +436,17 @@ CleanUp:
 static STATUS onRtcpExtendedReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerConnection)
 {
     STATUS retStatus = STATUS_SUCCESS;
-    UINT32 reporterSsrc, blockBodyWords, blockBodyBytes, offset, freeSlot, slot;
+    UINT32 reporterSsrc, blockBodyWords, blockBodyBytes, offset, freeSlot, slot, subOffset, subBlockCount, subIdx;
     UINT8 bt;
     UINT16 blockLen;
     UINT64 ntp;
     UINT32 ntpMid;
     UINT64 arrivalTimeHns;
+    UINT32 subSsrc, subLrr, subDlrr;
+    PKvsRtpTransceiver pDlrrTransceiver;
+    UINT64 nowNtp;
+    UINT32 rttDlsrUnits;
+    DOUBLE rttSeconds;
 
     CHK(pKvsPeerConnection != NULL && pRtcpPacket != NULL && pRtcpPacket->payload != NULL, STATUS_NULL_ARG);
     CHK(pRtcpPacket->payloadLength >= 4, STATUS_RTCP_INPUT_PARTIAL_PACKET);
@@ -453,6 +500,44 @@ static STATUS onRtcpExtendedReport(PRtcpPacket pRtcpPacket, PKvsPeerConnection p
                 }
                 MUTEX_UNLOCK(pKvsPeerConnection->rtcpXrLock);
                 DLOGV("XR RRTR stored: reporterSsrc=%u ntpMid=0x%08x slot=%u", reporterSsrc, ntpMid, slot);
+                break;
+            case RTCP_XR_BLOCK_TYPE_DLRR:
+                // RFC 3611 §4.5: body = N * {SSRC_n, LRR, DLRR}, 3 words each.
+                if (blockBodyWords % 3 != 0) {
+                    DLOGW("XR DLRR block with non-multiple-of-3 length %u words", blockBodyWords);
+                    break;
+                }
+                subBlockCount = blockBodyWords / 3;
+                subOffset = offset + 4;
+                nowNtp = convertTimestampToNTP(GETTIME());
+                for (subIdx = 0; subIdx < subBlockCount; subIdx++) {
+                    subSsrc = getUnalignedInt32BigEndian(pRtcpPacket->payload + subOffset);
+                    subLrr = getUnalignedInt32BigEndian(pRtcpPacket->payload + subOffset + 4);
+                    subDlrr = getUnalignedInt32BigEndian(pRtcpPacket->payload + subOffset + 8);
+                    subOffset += RTCP_XR_DLRR_SUBBLOCK_LEN;
+
+                    if (STATUS_FAILED(findTransceiverBySsrc(pKvsPeerConnection, &pDlrrTransceiver, subSsrc))) {
+                        DLOGV("DLRR sub-block for unknown SSRC %u (skipping)", subSsrc);
+                        continue;
+                    }
+                    if (subLrr == 0) {
+                        // Peer hadn't received our RRTR yet — no valid RTT can be derived.
+                        continue;
+                    }
+                    // RTT = NTPmid(now) - LRR - DLRR, in 1/65536 s units per RFC 3611 §4.5.
+                    rttDlsrUnits = MID_NTP(nowNtp) - subLrr - subDlrr;
+                    rttSeconds = (DOUBLE) rttDlsrUnits / (DOUBLE) DLSR_TIMESCALE;
+
+                    MUTEX_LOCK(pDlrrTransceiver->statsLock);
+                    // Only count if the DLRR echoes an RRTR we actually sent (guards against stale/bogus replies).
+                    if (pDlrrTransceiver->lastRrtrNtpMid != 0 && subLrr == pDlrrTransceiver->lastRrtrNtpMid) {
+                        pDlrrTransceiver->remoteOutboundStats.roundTripTime = rttSeconds;
+                        pDlrrTransceiver->remoteOutboundStats.totalRoundTripTime += rttSeconds;
+                        pDlrrTransceiver->remoteOutboundStats.roundTripTimeMeasurements++;
+                    }
+                    MUTEX_UNLOCK(pDlrrTransceiver->statsLock);
+                    DLOGV("XR DLRR processed: ssrc=%u lrr=0x%08x dlrr=%u rtt=%.3fms", subSsrc, subLrr, subDlrr, rttSeconds * 1000.0);
+                }
                 break;
             default:
                 DLOGV("Skipping XR block type %u (length %u words)", bt, blockBodyWords);
