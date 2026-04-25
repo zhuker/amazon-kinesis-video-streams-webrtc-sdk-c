@@ -34,11 +34,27 @@ STATUS_CODE=$(grep '^INSTRUMENTATION_STATUS_CODE:' "$OUTPUT_LOG" | tail -1 | awk
 
 if [[ "$STATUS_CODE" != "0" ]]; then
   echo "::error::Tests failed (INSTRUMENTATION_STATUS_CODE: ${STATUS_CODE})"
+
+  TEST_LOG_FILE=$(mktemp)
+  "${ADB}" -s "${SERIAL}" shell run-as com.kvs.webrtctest cat files/test.log 2>/dev/null > "$TEST_LOG_FILE" || true
   echo "=== test.log ==="
-  "${ADB}" -s "${SERIAL}" shell run-as com.kvs.webrtctest cat files/test.log 2>/dev/null || echo "(test.log not available)"
+  if [[ -s "$TEST_LOG_FILE" ]]; then
+    cat "$TEST_LOG_FILE"
+  else
+    echo "(test.log not available)"
+  fi
+
   echo "=== logcat ==="
   "${ADB}" -s "${SERIAL}" logcat -d -s "webrtc_test_jni:*" "WebRtcNativeTest:*" "TestRunner:*"
-  echo "=== crash log ==="
-  "${ADB}" -s "${SERIAL}" logcat -d -b crash
+
+  # Skip the native crash-buffer dump when it's just a gtest assertion
+  # failure — the "[  FAILED  ]" line above already tells the whole story.
+  if ! grep -qE '^\[  FAILED  \]' "$TEST_LOG_FILE" \
+     || grep -qE 'AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:' "$TEST_LOG_FILE"; then
+    echo "=== crash log ==="
+    "${ADB}" -s "${SERIAL}" logcat -d -b crash
+  fi
+
+  rm -f "$TEST_LOG_FILE"
   exit 1
 fi

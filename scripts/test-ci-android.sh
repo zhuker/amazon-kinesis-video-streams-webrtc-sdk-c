@@ -91,15 +91,28 @@ TEST_LOG="${BUILD_DIR}/test-output.log"
 TEST_EXIT=$(sed -n 's/.*exit code: \([0-9]*\).*/\1/p' "${TEST_LOG}" | tail -1)
 TEST_EXIT=${TEST_EXIT:-0}
 
-# Dump crash logcat on failure
-if [[ ${TEST_EXIT} -ne 0 ]]; then
+# A gtest assertion failure already produced a "[  FAILED  ]" line with the
+# root cause; the SIGABRT tombstone and ASan symbolization that follow are
+# redundant noise. Skip them unless the failure looks like a real native crash
+# or a sanitizer report.
+GTEST_FAILED=false
+if grep -qE '^\[  FAILED  \]' "${TEST_LOG}"; then
+    GTEST_FAILED=true
+fi
+SANITIZER_REPORT=false
+if grep -qE 'AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:' "${TEST_LOG}"; then
+    SANITIZER_REPORT=true
+fi
+
+# Dump crash logcat only on real native crashes (not plain assertion failures).
+if [[ ${TEST_EXIT} -ne 0 ]] && { [[ "${GTEST_FAILED}" == "false" ]] || [[ "${SANITIZER_REPORT}" == "true" ]]; }; then
     echo ""
     echo "=== crash log ==="
     "${ADB}" -s "${SERIAL}" logcat -d -b crash
 fi
 
-# Symbolize ASan/UBSan stack traces on failure
-if [[ "${ASAN}" == "true" && ${TEST_EXIT} -ne 0 ]]; then
+# Symbolize ASan/UBSan stack traces only when an actual sanitizer report was emitted.
+if [[ "${ASAN}" == "true" && ${TEST_EXIT} -ne 0 && "${SANITIZER_REPORT}" == "true" ]]; then
     HOST_BINARY="${BUILD_DIR}/sdk/tst/webrtc_client_test"
     LLVM_SYMBOLIZER=$(find "${ANDROID_NDK}/toolchains/llvm/prebuilt" -name "llvm-symbolizer" -type f | head -1)
     if [[ -x "${LLVM_SYMBOLIZER}" && -f "${HOST_BINARY}" ]]; then

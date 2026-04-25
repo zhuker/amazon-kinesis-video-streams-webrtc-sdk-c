@@ -194,7 +194,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_kvs_webrtctest_NativeTestLib_runTests
     // Build gtest argv
     std::string filterArg = std::string("--gtest_filter=") + filterStr;
     char arg0[] = "webrtc_test_jni";
-    char* argv[] = {arg0, const_cast<char*>(filterArg.c_str()), "--gtest_break_on_failure", nullptr};
+    char* argv[] = {arg0, const_cast<char*>(filterArg.c_str()), "--gtest_fail_fast", nullptr};
     int argc = 3;
 
     ::testing::InitGoogleTest(&argc, argv);
