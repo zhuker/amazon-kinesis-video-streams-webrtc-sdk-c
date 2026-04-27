@@ -451,7 +451,7 @@ typedef struct {
     RtcReceivedRtpStreamStats received; //!< Inherited from RTCReceivedRtpStreamStats (packetsReceived, packetsLost, jitter)
     DOMString localId;                  //!< Used to look up RTCOutboundRtpStreamStats for the SSRC
     UINT64 roundTripTime;               //!< Estimated round trip time (milliseconds) for this SSRC based on the RTCP timestamps
-    UINT64 totalRoundTripTime;          //!< The cumulative sum of all round trip time measurements in seconds since the beginning of the session
+    UINT64 totalRoundTripTime;          //!< The cumulative sum of all round trip time measurements (milliseconds) since the beginning of the session
     DOUBLE fractionLost;                //!< The fraction packet loss reported for this SSRC
     UINT64 reportsReceived;             //!< Total number of RTCP RR blocks received for this SSRC
     UINT64 roundTripTimeMeasurements;   //!< Total number of RTCP RR blocks received for this SSRC that contain a valid round trip time
