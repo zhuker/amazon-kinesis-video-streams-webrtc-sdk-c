@@ -43,7 +43,23 @@ typedef enum {
     RTCP_PACKET_TYPE_SOURCE_DESCRIPTION = 202,
     RTCP_PACKET_TYPE_GENERIC_RTP_FEEDBACK = 205,
     RTCP_PACKET_TYPE_PAYLOAD_SPECIFIC_FEEDBACK = 206,
+    RTCP_PACKET_TYPE_EXTENDED_REPORT = 207, // https://tools.ietf.org/html/rfc3611
 } RTCP_PACKET_TYPE;
+
+// RFC 3611 XR block types
+typedef enum {
+    RTCP_XR_BLOCK_TYPE_RRTR = 4, // Receiver Reference Time Report, RFC 3611 §4.4
+    RTCP_XR_BLOCK_TYPE_DLRR = 5, // Delay since Last RR,             RFC 3611 §4.5
+} RTCP_XR_BLOCK_TYPE;
+
+// XR header: V/P/rsvd + PT + length + SSRC of reporter (RFC 3611 §2)
+#define RTCP_XR_HEADER_LEN 8
+// RRTR block: 4-byte block header + 8-byte NTP (block length field = 2)
+#define RTCP_XR_RRTR_BLOCK_LEN 12
+// DLRR block header (RFC 3611 §4.5): BT(1) + rsvd(1) + block length(2)
+#define RTCP_XR_DLRR_BLOCK_HDR_LEN 4
+// Each DLRR sub-block: SSRC_n + LRR + DLRR
+#define RTCP_XR_DLRR_SUBBLOCK_LEN 12
 
 typedef enum {
     RTCP_FEEDBACK_MESSAGE_TYPE_NACK = 1,

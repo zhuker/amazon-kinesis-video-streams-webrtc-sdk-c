@@ -25,6 +25,11 @@ STATUS rtcpBuildSenderReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 curre
 // Returns STATUS_SUCCESS if a report was written, STATUS_NOT_READY if nothing has been received yet.
 STATUS rtcpBuildReceiverReport(PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 currentTime, PBYTE pOutBuffer, PUINT32 pPacketLen);
 
+// Build an RTCP XR packet (RFC 3611) containing a DLRR block with one sub-block per pending RRTR.
+// On success *pPacketLen holds bytes written, or 0 if there is no RRTR to answer yet.
+STATUS rtcpBuildExtendedReport(PKvsPeerConnection pKvsPeerConnection, PKvsRtpTransceiver pKvsRtpTransceiver, UINT64 currentTime, PBYTE pOutBuffer,
+                               PUINT32 pPacketLen);
+
 // TWCC feedback generation (receiver side)
 STATUS createTwccReceiverManager(PTwccReceiverManager* ppManager);
 STATUS freeTwccReceiverManager(PTwccReceiverManager* ppManager);

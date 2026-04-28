@@ -2800,6 +2800,31 @@ TEST_F(PeerConnectionFunctionalityTest, fullCycleVideoAudioDataChannel)
             << "Remote outbound audio SSRC mismatch";
         EXPECT_GT(audioRemoteOut.remoteTimestamp, nowMs - 60000) << "Remote outbound audio remoteTimestamp too old";
         EXPECT_LE(audioRemoteOut.remoteTimestamp, nowMs + 1000) << "Remote outbound audio remoteTimestamp in the future";
+
+        // Wait for the non-sender RTT loop (RFC 3611 RRTR/DLRR) to complete at least
+        // one round trip on the answer side's remote-outbound-rtp (which represents
+        // the offer's outbound media). answer emits RRTR, offer replies with DLRR,
+        // answer parses it and populates roundTripTime{,Measurements,...}.
+        for (INT32 i = 0; i < 80; i++) {
+            rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
+            ASSERT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerVideoTransceiver, &rtcMetrics));
+            if (rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats.roundTripTimeMeasurements > 0) {
+                break;
+            }
+            THREAD_SLEEP(100 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND);
+        }
+        auto& videoRemoteOutRtt = rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats;
+        EXPECT_GT(videoRemoteOutRtt.roundTripTimeMeasurements, (UINT64) 0) << "No DLRR-derived RTT measurements on video remote-outbound";
+        EXPECT_GT(videoRemoteOutRtt.roundTripTime, 0.0) << "Video remote-outbound roundTripTime " << videoRemoteOutRtt.roundTripTime << "s";
+        EXPECT_LT(videoRemoteOutRtt.roundTripTime, 1.0) << "Video remote-outbound roundTripTime " << videoRemoteOutRtt.roundTripTime << "s (> 1s on loopback)";
+        EXPECT_GT(videoRemoteOutRtt.totalRoundTripTime, 0.0) << "Video remote-outbound totalRoundTripTime not accumulating";
+
+        rtcMetrics.requestedTypeOfStats = RTC_STATS_TYPE_REMOTE_OUTBOUND_RTP;
+        ASSERT_EQ(STATUS_SUCCESS, rtcPeerConnectionGetMetrics(answerPc, answerAudioTransceiver, &rtcMetrics));
+        auto& audioRemoteOutRtt = rtcMetrics.rtcStatsObject.remoteOutboundRtpStreamStats;
+        EXPECT_GT(audioRemoteOutRtt.roundTripTimeMeasurements, (UINT64) 0) << "No DLRR-derived RTT measurements on audio remote-outbound";
+        EXPECT_GT(audioRemoteOutRtt.roundTripTime, 0.0) << "Audio remote-outbound roundTripTime " << audioRemoteOutRtt.roundTripTime << "s";
+        EXPECT_LT(audioRemoteOutRtt.roundTripTime, 1.0) << "Audio remote-outbound roundTripTime " << audioRemoteOutRtt.roundTripTime << "s (> 1s on loopback)";
     }
 
     closePeerConnection(offerPc);

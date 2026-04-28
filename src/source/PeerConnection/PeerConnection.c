@@ -976,9 +976,10 @@ CleanUp:
 // srtp_protect_rtcp() needs room for auth tag + SRTP trailer past the RTCP payload.
 #define RTCP_SRTP_ENCRYPT_OVERHEAD (SRTP_AUTH_TAG_OVERHEAD + SRTP_MAX_TRAILER_LEN + 4)
 
-// Max builder output: RR (4 header + 4 sender SSRC + 24 report block = 32)
-// is larger than SR (4 header + 24 body = 28).
-#define RTCP_MAX_REPORT_BODY_LEN (RTCP_PACKET_HEADER_LEN + 4 + RTCP_PACKET_RECEIVER_REPORT_BLOCK_LEN)
+// Max builder output across SR (28), RR (32), and XR (header + RRTR + DLRR_header + N*sub-block).
+// Reserve enough for a full XR that carries both RRTR and a DLRR block with MAX_RECEIVED_RRTR sub-blocks.
+#define RTCP_MAX_REPORT_BODY_LEN                                                                                                                     \
+    (RTCP_XR_HEADER_LEN + RTCP_XR_RRTR_BLOCK_LEN + RTCP_XR_DLRR_BLOCK_HDR_LEN + MAX_RECEIVED_RRTR * RTCP_XR_DLRR_SUBBLOCK_LEN)
 
 static STATUS sendBuiltRtcpReport(PKvsPeerConnection pKvsPeerConnection, PBYTE pReportBody, UINT32 reportLen)
 {
@@ -1033,6 +1034,13 @@ STATUS rtcpReportsCallback(UINT32 timerId, UINT64 currentTime, UINT64 customData
         // Receiver Report — only if we are actually receiving media on this transceiver
         reportLen = sizeof(reportBody);
         CHK_STATUS(rtcpBuildReceiverReport(pKvsRtpTransceiver, currentTime, reportBody, &reportLen));
+        if (reportLen > 0) {
+            CHK_STATUS(sendBuiltRtcpReport(pKvsPeerConnection, reportBody, reportLen));
+        }
+
+        // RFC 3611 XR DLRR — answer any pending RRTR from the remote peer.
+        reportLen = sizeof(reportBody);
+        CHK_STATUS(rtcpBuildExtendedReport(pKvsPeerConnection, pKvsRtpTransceiver, currentTime, reportBody, &reportLen));
         if (reportLen > 0) {
             CHK_STATUS(sendBuiltRtcpReport(pKvsPeerConnection, reportBody, reportLen));
         }
@@ -1335,6 +1343,9 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection->twccReceiverLock = MUTEX_CREATE(TRUE);
     CHK_STATUS(createTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
     pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32; // Invalid timer ID
+
+    // RFC 3611 RRTR -> DLRR state.
+    pKvsPeerConnection->rtcpXrLock = MUTEX_CREATE(TRUE);
 #ifdef ENABLE_NATIVE_SCTP
     pKvsPeerConnection->sctpTimerCallbackId = MAX_UINT32;
 #endif
@@ -1521,6 +1532,11 @@ STATUS freePeerConnection(PRtcPeerConnection* ppPeerConnection)
     if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->twccReceiverLock)) {
         MUTEX_FREE(pKvsPeerConnection->twccReceiverLock);
         pKvsPeerConnection->twccReceiverLock = INVALID_MUTEX_VALUE;
+    }
+
+    if (IS_VALID_MUTEX_VALUE(pKvsPeerConnection->rtcpXrLock)) {
+        MUTEX_FREE(pKvsPeerConnection->rtcpXrLock);
+        pKvsPeerConnection->rtcpXrLock = INVALID_MUTEX_VALUE;
     }
 
     // Free PCAP dump

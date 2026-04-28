@@ -794,6 +794,8 @@ STATUS populateSingleMediaSection(PKvsPeerConnection pKvsPeerConnection, PKvsRtp
     APPEND_SDP_ATTR("ssrc", "%u cname:%s", pKvsRtpTransceiver->sender.ssrc, pKvsPeerConnection->localCNAME);
     APPEND_SDP_ATTR("ssrc", "%u msid:%s %s", pKvsRtpTransceiver->sender.ssrc, pRtcMediaStreamTrack->streamId, pRtcMediaStreamTrack->trackId);
     APPEND_SDP_ATTR("rtcp-fb", "%" PRId64 " goog-remb", payloadType);
+    // libwebrtc enables RRTR/DLRR only when the chosen codec carries this feedback param.
+    APPEND_SDP_ATTR("rtcp-fb", "%" PRId64 " rrtr", payloadType);
 
     if (pKvsPeerConnection->twccExtId != 0) {
         APPEND_SDP_ATTR("rtcp-fb", "%" PRId64 " " TWCC_SDP_ATTR, payloadType);
