@@ -451,7 +451,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             rawPacket = NULL;
 
             headerLen = RTP_HEADER_LEN(pRtpPacket);
-            bytesSent += packetLen - headerLen;
+            bytesSent += packetLen + SRTP_AUTH_TAG_OVERHEAD - headerLen;
             packetsSent++;
             lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
             headerBytesSent += headerLen;
@@ -463,7 +463,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
 
             if (sendStatus == STATUS_SEND_DATA_FAILED) {
                 packetsDiscardedOnSend++;
-                bytesDiscardedOnSend += packetLen - headerLen;
+                bytesDiscardedOnSend += packetLen + SRTP_AUTH_TAG_OVERHEAD - headerLen;
                 framesDiscardedOnSend = 1;
                 SAFE_MEMFREE(rawPacket);
                 continue;
@@ -471,7 +471,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             CHK_STATUS(sendStatus);
 
             headerLen = RTP_HEADER_LEN(pRtpPacket);
-            bytesSent += packetLen - headerLen;
+            bytesSent += packetLen + SRTP_AUTH_TAG_OVERHEAD - headerLen;
             packetsSent++;
             lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
             headerBytesSent += headerLen;
