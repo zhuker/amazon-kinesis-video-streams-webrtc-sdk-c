@@ -10,13 +10,12 @@ Based on GCC RFC draft-ietf-rmcat-gcc-02 Section 4
 // Internal helper functions
 //
 
-static PPacerPacket pacerCreatePacket(PBYTE pData, UINT32 size, UINT16 twccSeqNum)
+static PPacerPacket pacerCreatePacket(PBYTE pData, UINT32 size)
 {
     PPacerPacket pPacket = (PPacerPacket) MEMCALLOC(1, SIZEOF(PacerPacket));
     if (pPacket != NULL) {
         pPacket->pData = pData;
         pPacket->size = size;
-        pPacket->twccSeqNum = twccSeqNum;
         pPacket->enqueueTimeKvs = GETTIME();
         pPacket->pNext = NULL;
     }
@@ -225,7 +224,7 @@ CleanUp:
     return retStatus;
 }
 
-STATUS pacerEnqueuePacket(PPacer pPacer, PBYTE pData, UINT32 size, UINT16 twccSeqNum)
+STATUS pacerEnqueuePacket(PPacer pPacer, PBYTE pData, UINT32 size)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -250,7 +249,7 @@ STATUS pacerEnqueuePacket(PPacer pPacer, PBYTE pData, UINT32 size, UINT16 twccSe
     }
 
     // Create packet wrapper
-    pPacket = pacerCreatePacket(pData, size, twccSeqNum);
+    pPacket = pacerCreatePacket(pData, size);
     CHK(pPacket != NULL, STATUS_NOT_ENOUGH_MEMORY);
 
     // Add to tail of queue
@@ -454,7 +453,6 @@ STATUS pacerEnqueueFrame(PPacer pPacer, PPacerPacketInfo pPackets, UINT32 count)
 
         pPacket->pData = pPackets[i].pData;
         pPacket->size = pPackets[i].size;
-        pPacket->twccSeqNum = pPackets[i].twccSeqNum;
         pPacket->enqueueTimeKvs = frameEnqueueTime; // Same time for all packets in frame
         pPacket->pNext = NULL;
 
@@ -506,6 +504,54 @@ UINT32 pacerCalculateBudget(PPacer pPacer, UINT64 elapsedTimeKvs)
     bytesPerInterval = (UINT64) (pPacer->targetBitrateBps * elapsedSec * pPacer->pacingFactor / 8.0);
 
     return (UINT32) MIN(bytesPerInterval, MAX_UINT32);
+}
+
+STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen, UINT64 enqueueTimeKvs)
+{
+    ENTERS();
+    STATUS retStatus = STATUS_SUCCESS;
+    PKvsPeerConnection pKvsPeerConnection = NULL;
+    INT32 encLen = (INT32) plainLen;
+    UINT16 twsn = 0;
+    BOOL hasTwcc = FALSE;
+
+    CHK(pPacer != NULL && pData != NULL && plainLen > 0, STATUS_NULL_ARG);
+    CHK(pPacer->pKvsPeerConnection != NULL, STATUS_INVALID_OPERATION);
+
+    pKvsPeerConnection = (PKvsPeerConnection) pPacer->pKvsPeerConnection;
+    hasTwcc = (pKvsPeerConnection->twccExtId != 0);
+
+    if (hasTwcc) {
+        UINT8 cc = pData[0] & 0x0F;
+        UINT32 twccOffset = 17 + cc * 4;
+        twsn = (UINT16) ATOMIC_INCREMENT(&pKvsPeerConnection->transportWideSequenceNumber);
+        putUnalignedInt16BigEndian(pData + twccOffset, twsn);
+    }
+
+    if (pKvsPeerConnection->pPcapDump != NULL) {
+        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pData, plainLen, FALSE, PCAP_PACKET_DIRECTION_SEND);
+    }
+
+    MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
+    retStatus = encryptRtpPacket(pKvsPeerConnection->pSrtpSession, pData, &encLen);
+    MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
+    CHK_STATUS(retStatus);
+
+    retStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pData, (UINT32) encLen);
+    CHK_STATUS(retStatus);
+
+    if (hasTwcc) {
+        twccManagerOnPacedPacketSent(pKvsPeerConnection, twsn, plainLen, GETTIME());
+    }
+
+    if (pPacer->onPacketSent != NULL) {
+        pPacer->onPacketSent(pPacer->onPacketSentCustomData, pData, (UINT32) encLen, enqueueTimeKvs);
+    }
+
+CleanUp:
+    CHK_LOG_ERR(retStatus);
+    LEAVES();
+    return retStatus;
 }
 
 STATUS pacerDrainQueue(PPacer pPacer)
@@ -574,25 +620,19 @@ STATUS pacerDrainQueue(PPacer pPacer)
             pPacer->stats.avgQueueDelayKvs = (UINT64) (0.9 * pPacer->stats.avgQueueDelayKvs + 0.1 * queueDelayKvs);
         }
 
-        // Send the packet
-        retStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pPacket->pData, pPacket->size);
+        // Assign TWSN, encrypt, and send
+        retStatus = pacerSendRtpPacket(pPacer, pPacket->pData, pPacket->size, pPacket->enqueueTimeKvs);
         if (STATUS_SUCCEEDED(retStatus)) {
-            UINT64 sentTimeKvs = GETTIME();
-
             bytesSent += pPacket->size;
             pPacer->stats.packetsSent++;
             pPacer->stats.bytesSent += pPacket->size;
-
-            // Deduct from budget
             pPacer->budgetBytes -= pPacket->size;
-
-            // Update TWCC manager with actual send time
-            if (pPacket->twccSeqNum != 0 && pKvsPeerConnection->twccExtId != 0) {
-                twccManagerOnPacedPacketSent(pKvsPeerConnection, pPacket->twccSeqNum, pPacket->size, sentTimeKvs);
-            }
         } else {
             DLOGW("Failed to send paced packet: 0x%08x", retStatus);
         }
+        // pacerSendRtpPacket may have encrypted pData in place;
+        // free it here since pacerFreePacket would do the same
+        SAFE_MEMFREE(pPacket->pData);
 
         // Free the packet (data is owned by packet)
         pacerFreePacket(pPacket);
