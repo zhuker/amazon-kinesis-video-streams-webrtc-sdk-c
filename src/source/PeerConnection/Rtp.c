@@ -296,7 +296,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
 
     // stats updates (bytesSent/packetsSent/headerBytesSent now tracked via pacer onPacketSent callback)
     DOUBLE fps = 0.0;
-    UINT32 frames = 0, keyframes = 0, framesSent = 0;
+    UINT32 frames = 0, keyframes = 0;
     UINT32 packetsDiscardedOnSend = 0, bytesDiscardedOnSend = 0, framesDiscardedOnSend = 0;
 
     // temp vars :(
@@ -481,9 +481,6 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
         }
     }
 
-    if (MEDIA_STREAM_TRACK_KIND_VIDEO == pKvsRtpTransceiver->sender.track.kind) {
-        framesSent++;
-    }
 
     if (pKvsRtpTransceiver->sender.firstFrameWallClockTime == 0) {
         pKvsRtpTransceiver->sender.rtpTimeOffset = randomRtpTimeoffset;
@@ -500,9 +497,8 @@ CleanUp:
     }
     pKvsRtpTransceiver->sender.lastKnownFrameCountTime = now;
     pKvsRtpTransceiver->sender.lastKnownFrameCount = pKvsRtpTransceiver->outboundStats.framesEncoded;
-    // bytesSent, packetsSent, headerBytesSent, lastPacketSentTimestamp now updated
-    // via pacerOnPacketSentCallback when packets actually hit the wire
-    pKvsRtpTransceiver->outboundStats.framesSent += framesSent;
+    // bytesSent, packetsSent, headerBytesSent, lastPacketSentTimestamp, framesSent
+    // now updated via pacerOnPacketSentCallback when packets actually hit the wire
     if (pKvsRtpTransceiver->outboundStats.framesPerSecond > 0.0) {
         if (pFrame->size >=
             pKvsRtpTransceiver->outboundStats.targetBitrate / pKvsRtpTransceiver->outboundStats.framesPerSecond * HUGE_FRAME_MULTIPLIER) {

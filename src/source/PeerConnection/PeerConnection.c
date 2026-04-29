@@ -1282,11 +1282,16 @@ static VOID pacerOnPacketSentCallback(UINT64 customData, PBYTE pData, UINT32 wir
 
     headerLen = rtpHeaderLenFromBytes(pData, wireLen);
 
+    BOOL marker = (pData[1] >> MARKER_SHIFT) & MARKER_MASK;
+
     MUTEX_LOCK(pTransceiver->statsLock);
     pTransceiver->outboundStats.sent.bytesSent += wireLen - headerLen;
     pTransceiver->outboundStats.sent.packetsSent++;
     pTransceiver->outboundStats.lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
     pTransceiver->outboundStats.headerBytesSent += headerLen;
+    if (marker && pTransceiver->sender.track.kind == MEDIA_STREAM_TRACK_KIND_VIDEO) {
+        pTransceiver->outboundStats.framesSent++;
+    }
     MUTEX_UNLOCK(pTransceiver->statsLock);
 }
 
