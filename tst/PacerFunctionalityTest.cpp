@@ -169,7 +169,7 @@ TEST_F(PacerFunctionalityTest, enqueuePacket)
     PBYTE pData = createTestPacket(1200);
     EXPECT_NE(nullptr, pData);
 
-    EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200, 1));
+    EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200));
     EXPECT_EQ(1U, pacerGetQueueSize(pPacer));
 
     // pData is now owned by pacer, don't free it
@@ -182,7 +182,7 @@ TEST_F(PacerFunctionalityTest, enqueueMultiplePackets)
     for (UINT16 i = 0; i < 10; i++) {
         PBYTE pData = createTestPacket(1200);
         EXPECT_NE(nullptr, pData);
-        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200, i + 1));
+        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200));
     }
 
     EXPECT_EQ(10U, pacerGetQueueSize(pPacer));
@@ -194,9 +194,9 @@ TEST_F(PacerFunctionalityTest, enqueuePacketNullArgs)
 
     PBYTE pData = createTestPacket(1200);
 
-    EXPECT_EQ(STATUS_NULL_ARG, pacerEnqueuePacket(nullptr, pData, 1200, 1));
-    EXPECT_EQ(STATUS_NULL_ARG, pacerEnqueuePacket(pPacer, nullptr, 1200, 1));
-    EXPECT_EQ(STATUS_NULL_ARG, pacerEnqueuePacket(pPacer, pData, 0, 1));
+    EXPECT_EQ(STATUS_NULL_ARG, pacerEnqueuePacket(nullptr, pData, 1200));
+    EXPECT_EQ(STATUS_NULL_ARG, pacerEnqueuePacket(pPacer, nullptr, 1200));
+    EXPECT_EQ(STATUS_NULL_ARG, pacerEnqueuePacket(pPacer, pData, 0));
 
     MEMFREE(pData);
 }
@@ -214,14 +214,14 @@ TEST_F(PacerFunctionalityTest, enqueueQueueOverflow)
     // Fill up the queue
     for (UINT16 i = 0; i < 5; i++) {
         PBYTE pData = createTestPacket(1200);
-        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200, i + 1));
+        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200));
     }
 
     EXPECT_EQ(5U, pacerGetQueueSize(pPacer));
 
     // Try to add one more - should fail
     PBYTE pData = createTestPacket(1200);
-    EXPECT_EQ(STATUS_NOT_ENOUGH_MEMORY, pacerEnqueuePacket(pPacer, pData, 1200, 6));
+    EXPECT_EQ(STATUS_NOT_ENOUGH_MEMORY, pacerEnqueuePacket(pPacer, pData, 1200));
     // pData was freed by pacerEnqueuePacket on failure
 }
 
@@ -253,7 +253,7 @@ TEST_F(PacerFunctionalityTest, getStatsAfterEnqueue)
 
     for (UINT16 i = 0; i < 5; i++) {
         PBYTE pData = createTestPacket(1200);
-        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200, i + 1));
+        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200));
     }
 
     PacerStats stats;
@@ -374,7 +374,7 @@ TEST_F(PacerFunctionalityTest, fullLifecycle)
     // Enqueue some packets
     for (UINT16 i = 0; i < 20; i++) {
         PBYTE pData = createTestPacket(1200);
-        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200, i + 1));
+        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200));
     }
 
     EXPECT_EQ(20U, pacerGetQueueSize(pPacer));
@@ -409,7 +409,7 @@ TEST_F(PacerFunctionalityTest, queueClearedOnFree)
     // Enqueue packets
     for (UINT16 i = 0; i < 50; i++) {
         PBYTE pData = createTestPacket(1200);
-        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200, i + 1));
+        EXPECT_EQ(STATUS_SUCCESS, pacerEnqueuePacket(pPacer, pData, 1200));
     }
 
     EXPECT_EQ(50U, pacerGetQueueSize(pPacer));
@@ -446,7 +446,7 @@ TEST_F(PacerFunctionalityTest, highThroughputEnqueue)
     UINT32 packetsEnqueued = 0;
     for (UINT32 i = 0; i < 200; i++) {
         PBYTE pData = createTestPacket(1200);
-        if (STATUS_SUCCEEDED(pacerEnqueuePacket(pPacer, pData, 1200, (UINT16)(i + 1)))) {
+        if (STATUS_SUCCEEDED(pacerEnqueuePacket(pPacer, pData, 1200))) {
             packetsEnqueued++;
         }
     }
@@ -521,7 +521,7 @@ TEST_F(PacerFunctionalityTest, enqueueFrame)
     for (UINT32 i = 0; i < 10; i++) {
         packets[i].pData = createTestPacket(1200);
         packets[i].size = 1200;
-        packets[i].twccSeqNum = (UINT16)(i + 1);
+
     }
 
     EXPECT_EQ(STATUS_SUCCESS, pacerEnqueueFrame(pPacer, packets, 10));
@@ -541,7 +541,7 @@ TEST_F(PacerFunctionalityTest, enqueueFrameNullArgs)
     for (UINT32 i = 0; i < 5; i++) {
         packets[i].pData = createTestPacket(1200);
         packets[i].size = 1200;
-        packets[i].twccSeqNum = (UINT16)(i + 1);
+
     }
 
     EXPECT_EQ(STATUS_NULL_ARG, pacerEnqueueFrame(nullptr, packets, 5));
@@ -570,7 +570,7 @@ TEST_F(PacerFunctionalityTest, enqueueFrameQueueOverflow)
     for (UINT32 i = 0; i < 10; i++) {
         packets[i].pData = createTestPacket(1200);
         packets[i].size = 1200;
-        packets[i].twccSeqNum = (UINT16)(i + 1);
+
     }
 
     // Should fail and free all packet data
@@ -593,7 +593,7 @@ TEST_F(PacerFunctionalityTest, enqueueFrameSameTimestamp)
     for (UINT32 i = 0; i < 5; i++) {
         packets[i].pData = createTestPacket(1200);
         packets[i].size = 1200;
-        packets[i].twccSeqNum = (UINT16)(i + 1);
+
     }
 
     EXPECT_EQ(STATUS_SUCCESS, pacerEnqueueFrame(pPacer, packets, 5));
@@ -613,7 +613,7 @@ TEST_F(PacerFunctionalityTest, enqueueMultipleFrames)
         for (UINT32 i = 0; i < 10; i++) {
             packets[i].pData = createTestPacket(1200);
             packets[i].size = 1200;
-            packets[i].twccSeqNum = (UINT16)(frame * 10 + i + 1);
+
         }
         EXPECT_EQ(STATUS_SUCCESS, pacerEnqueueFrame(pPacer, packets, 10));
     }

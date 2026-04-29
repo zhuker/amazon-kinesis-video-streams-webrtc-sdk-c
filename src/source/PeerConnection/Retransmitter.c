@@ -85,7 +85,9 @@ STATUS resendPacketOnNack(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerCo
 
         if (pRtpPacket != NULL) {
             if (pSenderTranceiver->sender.payloadType == pSenderTranceiver->sender.rtxPayloadType) {
-                retStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pRtpPacket->pRawPacket, pRtpPacket->rawPacketLength);
+                // Same-PT retransmit: buffer has unencrypted bytes; route through writeRtpPacket
+                // which assigns a fresh TWSN, encrypts, and sends via pacerSendRtpPacket.
+                retStatus = writeRtpPacket(pKvsPeerConnection, pRtpPacket);
             } else {
                 CHK_STATUS(constructRetransmitRtpPacketFromBytes(
                     pRtpPacket->pRawPacket, pRtpPacket->rawPacketLength, pSenderTranceiver->sender.rtxSequenceNumber,
@@ -93,13 +95,11 @@ STATUS resendPacketOnNack(PRtcpPacket pRtcpPacket, PKvsPeerConnection pKvsPeerCo
                 pSenderTranceiver->sender.rtxSequenceNumber++;
                 retStatus = writeRtpPacket(pKvsPeerConnection, pRtxRtpPacket);
             }
-            // resendPacket
             if (STATUS_SUCCEEDED(retStatus)) {
                 pRtpPacket->sentTime = GETTIME();
                 retransmittedPacketsSent++;
                 retransmittedBytesSent += pRtpPacket->rawPacketLength - RTP_HEADER_LEN(pRtpPacket);
                 DLOGV("Resent packet ssrc %lu seq %lu succeeded", pRtpPacket->header.ssrc, pRtpPacket->header.sequenceNumber);
-                twccManagerOnPacketSent(pKvsPeerConnection, pRtpPacket);
             } else {
                 DLOGV("Resent packet ssrc %lu seq %lu failed 0x%08x", pRtpPacket->header.ssrc, pRtpPacket->header.sequenceNumber, retStatus);
             }

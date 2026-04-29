@@ -3039,6 +3039,155 @@ TEST_F(PeerConnectionFunctionalityTest, opusRedEndToEndDedup)
     freePeerConnection(&offerPc);
     freePeerConnection(&answerPc);
 }
+// Regression test for TWSN monotonicity when audio and video are interleaved.
+//
+// The bug: TWSN is assigned at packet construction time, but video packets
+// are queued in the pacer while audio packets bypass it. This means audio
+// TWSN N+2 hits the wire before video TWSN N+1, causing the receiver to
+// report N+1 as lost in TWCC feedback (it hasn't arrived yet), which makes
+// GCC reduce bitrate unnecessarily.
+//
+// This test sends interleaved audio + video with pacing enabled and checks
+// that sendTimeKvs is monotonically non-decreasing in TWSN order across
+// all TWCC reports.
+TEST_F(PeerConnectionFunctionalityTest, twsnMonotonicWithInterleavedAudioVideo)
+{
+    constexpr UINT32 NUM_VIDEO_FRAMES = 60;
+    constexpr UINT64 VIDEO_FRAME_DURATION_KVS = HUNDREDS_OF_NANOS_IN_A_SECOND / 30;
+    constexpr UINT32 VIDEO_FRAME_SIZE = 100000; // 100KB — generates ~80 RTP packets per frame
+    constexpr UINT32 AUDIO_FRAME_SIZE = 160;
+    constexpr UINT64 TARGET_BITRATE_BPS = 500000; // 500 kbps — low enough to queue video
+
+    struct MonotonicityContext {
+        std::vector<TwccPacketReport> allReports;
+        SIZE_T feedbackCount;
+    };
+
+    RtcConfiguration configuration;
+    PRtcPeerConnection offerPc = NULL, answerPc = NULL;
+    RtcMediaStreamTrack offerVideoTrack, answerVideoTrack, offerAudioTrack, answerAudioTrack;
+    PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver, offerAudioTransceiver, answerAudioTransceiver;
+    Frame videoFrame, audioFrame;
+    MonotonicityContext context;
+    context.feedbackCount = 0;
+
+    initRtcConfiguration(&configuration);
+    MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
+    MEMSET(&audioFrame, 0x00, SIZEOF(Frame));
+
+    // Synthetic video frame — large enough to generate many RTP packets
+    PBYTE videoData = (PBYTE) MEMALLOC(VIDEO_FRAME_SIZE);
+    ASSERT_NE(videoData, nullptr);
+    MEMSET(videoData, 0x11, VIDEO_FRAME_SIZE);
+    videoFrame.frameData = videoData;
+    videoFrame.size = VIDEO_FRAME_SIZE;
+
+    // Small audio frame
+    BYTE audioData[AUDIO_FRAME_SIZE];
+    MEMSET(audioData, 0x42, AUDIO_FRAME_SIZE);
+    audioFrame.frameData = audioData;
+    audioFrame.size = AUDIO_FRAME_SIZE;
+
+    EXPECT_EQ(createPeerConnection(&configuration, &offerPc), STATUS_SUCCESS);
+    EXPECT_EQ(createPeerConnection(&configuration, &answerPc), STATUS_SUCCESS);
+
+    addTrackToPeerConnection(offerPc, &offerVideoTrack, &offerVideoTransceiver, RTC_CODEC_VP8, MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(offerPc, &offerAudioTrack, &offerAudioTransceiver, RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+    addTrackToPeerConnection(answerPc, &answerVideoTrack, &answerVideoTransceiver, RTC_CODEC_VP8, MEDIA_STREAM_TRACK_KIND_VIDEO);
+    addTrackToPeerConnection(answerPc, &answerAudioTrack, &answerAudioTransceiver, RTC_CODEC_OPUS, MEDIA_STREAM_TRACK_KIND_AUDIO);
+
+    // Enable pacing with low bitrate so video queues up
+    RtcPacerConfig pacerConfig;
+    pacerConfig.initialBitrateBps = TARGET_BITRATE_BPS;
+    pacerConfig.maxQueueSize = 1000;
+    pacerConfig.maxQueueBytes = 4 * 1024 * 1024;
+    pacerConfig.pacingFactor = 2.5;
+    pacerConfig.maxQueueTimeKvs = 0;
+    EXPECT_EQ(peerConnectionEnablePacing(offerPc, &pacerConfig), STATUS_SUCCESS);
+
+    auto onTwccReport = [](UINT64 customData, PTwccPacketReport pReports, UINT32 reportCount, UINT64 rtt) -> void {
+        UNUSED_PARAM(rtt);
+        MonotonicityContext* ctx = (MonotonicityContext*) customData;
+        for (UINT32 i = 0; i < reportCount; i++) {
+            ctx->allReports.push_back(pReports[i]);
+        }
+        ctx->feedbackCount++;
+    };
+    EXPECT_EQ(peerConnectionOnTwccPacketReport(offerPc, (UINT64) &context, onTwccReport), STATUS_SUCCESS);
+
+
+    EXPECT_EQ(connectTwoPeers(offerPc, answerPc), TRUE);
+    EXPECT_EQ(peerConnectionSetPacerBitrate(offerPc, TARGET_BITRATE_BPS), STATUS_SUCCESS);
+
+    // Interleave: send a video frame, then several audio frames, repeat.
+    // Audio bypasses the pacer and sends immediately, grabbing TWSNs that
+    // land between the video TWSNs still waiting in the pacer queue.
+    UINT64 videoPts = 0;
+    UINT64 audioPts = 0;
+    for (UINT32 frameNum = 0; frameNum < NUM_VIDEO_FRAMES; frameNum++) {
+        videoFrame.presentationTs = videoPts;
+        videoFrame.decodingTs = videoPts;
+        videoFrame.flags = (frameNum % 30 == 0) ? FRAME_FLAG_KEY_FRAME : FRAME_FLAG_NONE;
+        EXPECT_EQ(writeFrame(offerVideoTransceiver, &videoFrame), STATUS_SUCCESS);
+        videoPts += VIDEO_FRAME_DURATION_KVS;
+
+        // Send several audio frames right after video — these bypass the pacer
+        for (int a = 0; a < 3; a++) {
+            audioFrame.presentationTs = audioPts;
+            audioFrame.decodingTs = audioPts;
+            EXPECT_EQ(writeFrame(offerAudioTransceiver, &audioFrame), STATUS_SUCCESS);
+            audioPts += 20 * HUNDREDS_OF_NANOS_IN_A_MILLISECOND;
+        }
+
+        THREAD_SLEEP(VIDEO_FRAME_DURATION_KVS);
+    }
+
+    // Wait for remaining TWCC feedback
+    THREAD_SLEEP(1 * HUNDREDS_OF_NANOS_IN_A_SECOND);
+
+    closePeerConnection(offerPc);
+    closePeerConnection(answerPc);
+    freePeerConnection(&offerPc);
+    freePeerConnection(&answerPc);
+    MEMFREE(videoData);
+
+    // --- Analysis ---
+    DLOGD("TWSN monotonicity: %zu feedback callbacks, %zu total reports", context.feedbackCount, context.allReports.size());
+    ASSERT_GT(context.feedbackCount, 0) << "Should have received TWCC feedback";
+    ASSERT_GT(context.allReports.size(), 10) << "Should have reports for many packets";
+
+    // Sort reports by seqNum (TWSN order)
+    std::vector<TwccPacketReport> reports = context.allReports;
+    std::sort(reports.begin(), reports.end(), [](const TwccPacketReport& a, const TwccPacketReport& b) { return a.seqNum < b.seqNum; });
+
+    // Check monotonicity: for all received packets, sendTimeKvs should be
+    // non-decreasing in TWSN order. A violation means a later TWSN was sent
+    // before an earlier one — the TWSN gap bug.
+    SIZE_T violations = 0;
+    UINT64 prevSendTime = 0;
+    UINT16 prevSeqNum = 0;
+    BOOL havePrev = FALSE;
+
+    for (const auto& r : reports) {
+        if (!r.received || r.sendTimeKvs == 0) {
+            continue;
+        }
+        if (havePrev && r.sendTimeKvs < prevSendTime) {
+            violations++;
+            DLOGW("TWSN monotonicity violation: seqNum %u sendTime %" PRIu64 " < seqNum %u sendTime %" PRIu64, r.seqNum, r.sendTimeKvs, prevSeqNum,
+                  prevSendTime);
+        }
+        prevSendTime = r.sendTimeKvs;
+        prevSeqNum = r.seqNum;
+        havePrev = TRUE;
+    }
+
+    DLOGD("TWSN monotonicity check: %zu received reports, %zu violations", reports.size(), violations);
+    EXPECT_EQ(violations, 0) << "sendTimeKvs must be monotonically non-decreasing in TWSN order; "
+                             << violations << " violation(s) found — audio TWSNs are hitting the wire "
+                             << "before paced video TWSNs with earlier sequence numbers";
+}
+
 } // namespace webrtcclient
 } // namespace video
 } // namespace kinesis

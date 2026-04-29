@@ -1250,6 +1250,54 @@ PVOID resolveStunIceServerIp(PVOID args)
 }
 #endif
 
+static UINT32 rtpHeaderLenFromBytes(PBYTE pData, UINT32 len)
+{
+    if (pData == NULL || len < MIN_HEADER_LENGTH) {
+        return 0;
+    }
+    UINT8 cc = pData[0] & 0x0F;
+    BOOL hasExtension = (pData[0] >> 4) & 0x01;
+    UINT32 headerLen = MIN_HEADER_LENGTH + cc * CSRC_LENGTH;
+    if (hasExtension && len >= headerLen + 4) {
+        UINT16 extWords = getUnalignedInt16BigEndian(pData + headerLen + 2);
+        headerLen += 4 + extWords * 4;
+    }
+    return headerLen;
+}
+
+static VOID pacerOnPacketSentCallback(UINT64 customData, PBYTE pData, UINT32 wireLen, UINT64 enqueueTimeKvs)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
+    PKvsRtpTransceiver pTransceiver = NULL;
+    UINT32 ssrc, headerLen;
+
+    if (pKvsPeerConnection == NULL || pData == NULL || wireLen < MIN_HEADER_LENGTH) {
+        return;
+    }
+
+    ssrc = getUnalignedInt32BigEndian(pData + SSRC_OFFSET);
+    if (STATUS_FAILED(findTransceiverBySsrc(pKvsPeerConnection, &pTransceiver, ssrc))) {
+        return;
+    }
+
+    headerLen = rtpHeaderLenFromBytes(pData, wireLen);
+
+    BOOL marker = (pData[1] >> MARKER_SHIFT) & MARKER_MASK;
+    UINT64 now = GETTIME();
+    UINT64 sendDelayKvs = (now >= enqueueTimeKvs) ? (now - enqueueTimeKvs) : 0;
+
+    MUTEX_LOCK(pTransceiver->statsLock);
+    pTransceiver->outboundStats.sent.bytesSent += wireLen - headerLen;
+    pTransceiver->outboundStats.sent.packetsSent++;
+    pTransceiver->outboundStats.lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+    pTransceiver->outboundStats.headerBytesSent += headerLen;
+    pTransceiver->outboundStats.totalPacketSendDelay += sendDelayKvs;
+    if (marker && pTransceiver->sender.track.kind == MEDIA_STREAM_TRACK_KIND_VIDEO) {
+        pTransceiver->outboundStats.framesSent++;
+    }
+    MUTEX_UNLOCK(pTransceiver->statsLock);
+}
+
 STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection* ppPeerConnection)
 {
     ENTERS();
@@ -1343,6 +1391,22 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     pKvsPeerConnection->twccReceiverLock = MUTEX_CREATE(TRUE);
     CHK_STATUS(createTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
     pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32; // Invalid timer ID
+
+    // Always create pacer so its lock can serialize TWSN assignment + SRTP encryption.
+    // Pacing is disabled by default; peerConnectionEnablePacing() turns it on.
+    {
+        PacerConfig defaultPacerConfig;
+        MEMSET(&defaultPacerConfig, 0, SIZEOF(PacerConfig));
+        defaultPacerConfig.initialBitrateBps = 300000;
+        defaultPacerConfig.maxQueueSize = PACER_DEFAULT_MAX_QUEUE_SIZE;
+        defaultPacerConfig.maxQueueBytes = PACER_DEFAULT_MAX_QUEUE_BYTES;
+        defaultPacerConfig.pacingFactor = PACER_DEFAULT_PACING_FACTOR;
+        defaultPacerConfig.enabled = FALSE;
+        CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &defaultPacerConfig));
+        pKvsPeerConnection->pPacer->pKvsPeerConnection = pKvsPeerConnection;
+        pKvsPeerConnection->pPacer->onPacketSent = pacerOnPacketSentCallback;
+        pKvsPeerConnection->pPacer->onPacketSentCustomData = (UINT64) pKvsPeerConnection;
+    }
 
     // RFC 3611 RRTR -> DLRR state.
     pKvsPeerConnection->rtcpXrLock = MUTEX_CREATE(TRUE);
@@ -1685,49 +1749,37 @@ STATUS peerConnectionEnablePacing(PRtcPeerConnection pRtcPeerConnection, PRtcPac
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
-    BOOL locked = FALSE;
-    PacerConfig pacerConfig;
     PPacer pPacer = NULL;
 
-    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection != NULL && pKvsPeerConnection->pPacer != NULL, STATUS_NULL_ARG);
 
-    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
-    locked = TRUE;
-
-    // Don't create if already exists
-    CHK(pKvsPeerConnection->pPacer == NULL, retStatus);
-
-    // Convert public config to internal config
-    MEMSET(&pacerConfig, 0, SIZEOF(PacerConfig));
-    if (pConfig != NULL) {
-        pacerConfig.initialBitrateBps = pConfig->initialBitrateBps;
-        pacerConfig.maxQueueSize = pConfig->maxQueueSize;
-        pacerConfig.maxQueueBytes = pConfig->maxQueueBytes;
-        pacerConfig.pacingFactor = pConfig->pacingFactor;
-        pacerConfig.maxQueueTimeKvs = pConfig->maxQueueTimeKvs;
-    }
-    pacerConfig.enabled = TRUE;
-
-    // Create the pacer
-    CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &pacerConfig));
     pPacer = pKvsPeerConnection->pPacer;
 
-    // Drop the peer connection lock before starting the pacer timer to avoid
-    // lock-order-inversion: this path acquires peerConnectionObjLock then
-    // timer queue lock, while timer callbacks (e.g. onNewIceLocalCandidate)
-    // acquire timer queue lock then peerConnectionObjLock.
-    MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
-    locked = FALSE;
+    // Apply config to the existing pacer
+    MUTEX_LOCK(pPacer->lock);
+    if (pConfig != NULL) {
+        if (pConfig->initialBitrateBps > 0) {
+            pPacer->targetBitrateBps = pConfig->initialBitrateBps;
+        }
+        if (pConfig->maxQueueSize > 0) {
+            pPacer->maxQueueSize = pConfig->maxQueueSize;
+        }
+        if (pConfig->maxQueueBytes > 0) {
+            pPacer->maxQueueBytes = pConfig->maxQueueBytes;
+        }
+        if (pConfig->pacingFactor > 0) {
+            pPacer->pacingFactor = pConfig->pacingFactor;
+        }
+        pPacer->maxQueueTimeKvs = pConfig->maxQueueTimeKvs;
+    }
+    pPacer->enabled = TRUE;
+    MUTEX_UNLOCK(pPacer->lock);
 
-    // Start the pacer without holding peerConnectionObjLock
     CHK_STATUS(pacerStart(pPacer, pKvsPeerConnection));
 
     DLOGI("Pacing enabled for peer connection");
 
 CleanUp:
-    if (locked) {
-        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
-    }
     CHK_LOG_ERR(retStatus);
 
     LEAVES();
@@ -2547,7 +2599,9 @@ STATUS twccManagerOnPacketSent(PKvsPeerConnection pKvsPeerConnection, PRtpPacket
     PTwccRtpPacketInfo pTwccRtpPktInfo = NULL;
 
     CHK(pKvsPeerConnection != NULL && pRtpPacket != NULL, STATUS_NULL_ARG);
-    CHK(pKvsPeerConnection->onSenderBandwidthEstimation != NULL && pKvsPeerConnection->pTwccManager != NULL, STATUS_SUCCESS);
+    CHK((pKvsPeerConnection->onSenderBandwidthEstimation != NULL || pKvsPeerConnection->onTwccPacketReport != NULL) &&
+            pKvsPeerConnection->pTwccManager != NULL,
+        STATUS_SUCCESS);
     CHK(TWCC_EXT_PROFILE == pRtpPacket->header.extensionProfile, STATUS_SUCCESS);
 
     MUTEX_LOCK(pKvsPeerConnection->twccLock);
