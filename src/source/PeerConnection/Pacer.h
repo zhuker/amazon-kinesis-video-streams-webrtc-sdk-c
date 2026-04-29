@@ -71,6 +71,17 @@ typedef struct {
 } PacerStats, *PPacerStats;
 
 /**
+ * Callback fired after a packet is successfully sent on the wire.
+ * Called under pPacer->lock. The data is the encrypted RTP packet
+ * (header is still readable — SRTP only encrypts payload).
+ *
+ * @param[in] customData User-provided context
+ * @param[in] pData Encrypted RTP bytes (header readable for SSRC extraction)
+ * @param[in] wireLen Actual bytes sent (including SRTP auth tag)
+ */
+typedef VOID (*PacerOnPacketSent)(UINT64 customData, PBYTE pData, UINT32 wireLen);
+
+/**
  * Pacer structure
  */
 typedef struct __Pacer {
@@ -98,6 +109,10 @@ typedef struct __Pacer {
 
     // Parent peer connection (for sending) - stored as PVOID to avoid circular dependency
     PVOID pKvsPeerConnection;
+
+    // Callback for per-packet stats accounting
+    PacerOnPacketSent onPacketSent;
+    UINT64 onPacketSentCustomData;
 
     // Statistics
     PacerStats stats;

@@ -286,7 +286,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
     PKvsPeerConnection pKvsPeerConnection = NULL;
     PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
     PRtpPacket pPacketList = NULL, pRtpPacket = NULL;
-    UINT32 i = 0, packetLen = 0, headerLen = 0, allocSize;
+    UINT32 i = 0, packetLen = 0, allocSize;
     PBYTE rawPacket = NULL;
     PPayloadArray pPayloadArray = NULL;
     RtpPayloadFunc rtpPayloadFunc = NULL;
@@ -294,11 +294,10 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
     UINT64 rtpTimestamp = 0;
     UINT64 now = GETTIME();
 
-    // stats updates
+    // stats updates (bytesSent/packetsSent/headerBytesSent now tracked via pacer onPacketSent callback)
     DOUBLE fps = 0.0;
-    UINT32 frames = 0, keyframes = 0, bytesSent = 0, packetsSent = 0, headerBytesSent = 0, framesSent = 0;
+    UINT32 frames = 0, keyframes = 0, framesSent = 0;
     UINT32 packetsDiscardedOnSend = 0, bytesDiscardedOnSend = 0, framesDiscardedOnSend = 0;
-    UINT64 lastPacketSentTimestamp = 0;
 
     // temp vars :(
     UINT64 tmpFrames, tmpTime;
@@ -449,32 +448,21 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             pPacerPackets[pacerPacketCount].size = packetLen;
             pacerPacketCount++;
             rawPacket = NULL;
-
-            headerLen = RTP_HEADER_LEN(pRtpPacket);
-            bytesSent += packetLen + SRTP_AUTH_TAG_OVERHEAD - headerLen;
-            packetsSent++;
-            lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
-            headerBytesSent += headerLen;
         } else {
             // Send immediately through pacer send function (assigns TWSN, encrypts, sends)
+            // Stats (bytesSent, packetsSent, headerBytesSent) updated via onPacketSent callback
             MUTEX_LOCK(pKvsPeerConnection->pPacer->lock);
             sendStatus = pacerSendRtpPacket(pKvsPeerConnection->pPacer, rawPacket, packetLen);
             MUTEX_UNLOCK(pKvsPeerConnection->pPacer->lock);
 
             if (sendStatus == STATUS_SEND_DATA_FAILED) {
                 packetsDiscardedOnSend++;
-                bytesDiscardedOnSend += packetLen + SRTP_AUTH_TAG_OVERHEAD - headerLen;
+                bytesDiscardedOnSend += packetLen;
                 framesDiscardedOnSend = 1;
                 SAFE_MEMFREE(rawPacket);
                 continue;
             }
             CHK_STATUS(sendStatus);
-
-            headerLen = RTP_HEADER_LEN(pRtpPacket);
-            bytesSent += packetLen + SRTP_AUTH_TAG_OVERHEAD - headerLen;
-            packetsSent++;
-            lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
-            headerBytesSent += headerLen;
 
             SAFE_MEMFREE(rawPacket);
         }
@@ -512,12 +500,8 @@ CleanUp:
     }
     pKvsRtpTransceiver->sender.lastKnownFrameCountTime = now;
     pKvsRtpTransceiver->sender.lastKnownFrameCount = pKvsRtpTransceiver->outboundStats.framesEncoded;
-    pKvsRtpTransceiver->outboundStats.sent.bytesSent += bytesSent;
-    pKvsRtpTransceiver->outboundStats.sent.packetsSent += packetsSent;
-    if (lastPacketSentTimestamp > 0) {
-        pKvsRtpTransceiver->outboundStats.lastPacketSentTimestamp = lastPacketSentTimestamp;
-    }
-    pKvsRtpTransceiver->outboundStats.headerBytesSent += headerBytesSent;
+    // bytesSent, packetsSent, headerBytesSent, lastPacketSentTimestamp now updated
+    // via pacerOnPacketSentCallback when packets actually hit the wire
     pKvsRtpTransceiver->outboundStats.framesSent += framesSent;
     if (pKvsRtpTransceiver->outboundStats.framesPerSecond > 0.0) {
         if (pFrame->size >=

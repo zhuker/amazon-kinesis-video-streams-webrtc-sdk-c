@@ -1250,6 +1250,46 @@ PVOID resolveStunIceServerIp(PVOID args)
 }
 #endif
 
+static UINT32 rtpHeaderLenFromBytes(PBYTE pData, UINT32 len)
+{
+    if (pData == NULL || len < MIN_HEADER_LENGTH) {
+        return 0;
+    }
+    UINT8 cc = pData[0] & 0x0F;
+    BOOL hasExtension = (pData[0] >> 4) & 0x01;
+    UINT32 headerLen = MIN_HEADER_LENGTH + cc * CSRC_LENGTH;
+    if (hasExtension && len >= headerLen + 4) {
+        UINT16 extWords = getUnalignedInt16BigEndian(pData + headerLen + 2);
+        headerLen += 4 + extWords * 4;
+    }
+    return headerLen;
+}
+
+static VOID pacerOnPacketSentCallback(UINT64 customData, PBYTE pData, UINT32 wireLen)
+{
+    PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
+    PKvsRtpTransceiver pTransceiver = NULL;
+    UINT32 ssrc, headerLen;
+
+    if (pKvsPeerConnection == NULL || pData == NULL || wireLen < MIN_HEADER_LENGTH) {
+        return;
+    }
+
+    ssrc = getUnalignedInt32BigEndian(pData + SSRC_OFFSET);
+    if (STATUS_FAILED(findTransceiverBySsrc(pKvsPeerConnection, &pTransceiver, ssrc))) {
+        return;
+    }
+
+    headerLen = rtpHeaderLenFromBytes(pData, wireLen);
+
+    MUTEX_LOCK(pTransceiver->statsLock);
+    pTransceiver->outboundStats.sent.bytesSent += wireLen - headerLen;
+    pTransceiver->outboundStats.sent.packetsSent++;
+    pTransceiver->outboundStats.lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+    pTransceiver->outboundStats.headerBytesSent += headerLen;
+    MUTEX_UNLOCK(pTransceiver->statsLock);
+}
+
 STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection* ppPeerConnection)
 {
     ENTERS();
@@ -1356,6 +1396,8 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
         defaultPacerConfig.enabled = FALSE;
         CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &defaultPacerConfig));
         pKvsPeerConnection->pPacer->pKvsPeerConnection = pKvsPeerConnection;
+        pKvsPeerConnection->pPacer->onPacketSent = pacerOnPacketSentCallback;
+        pKvsPeerConnection->pPacer->onPacketSentCustomData = (UINT64) pKvsPeerConnection;
     }
 
     // RFC 3611 RRTR -> DLRR state.

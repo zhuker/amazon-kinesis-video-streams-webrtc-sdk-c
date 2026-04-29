@@ -544,6 +544,10 @@ STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen)
         twccManagerOnPacedPacketSent(pKvsPeerConnection, twsn, plainLen, GETTIME());
     }
 
+    if (pPacer->onPacketSent != NULL) {
+        pPacer->onPacketSent(pPacer->onPacketSentCustomData, pData, (UINT32) encLen);
+    }
+
 CleanUp:
     CHK_LOG_ERR(retStatus);
     LEAVES();
