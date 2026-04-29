@@ -30,8 +30,8 @@ extern "C" {
  * Packet info for batch enqueue (frame-based pacing)
  */
 typedef struct {
-    PBYTE pData;  //!< Plain (unencrypted) RTP data; buffer has SRTP_AUTH_TAG_OVERHEAD extra bytes. Pacer takes ownership.
-    UINT32 size;  //!< Plain RTP size in bytes (not including SRTP overhead)
+    PBYTE pData; //!< Plain (unencrypted) RTP data; buffer has SRTP_AUTH_TAG_OVERHEAD extra bytes. Pacer takes ownership.
+    UINT32 size; //!< Plain RTP size in bytes (not including SRTP overhead)
 } PacerPacketInfo, *PPacerPacketInfo;
 
 /**
@@ -78,8 +78,9 @@ typedef struct {
  * @param[in] customData User-provided context
  * @param[in] pData Encrypted RTP bytes (header readable for SSRC extraction)
  * @param[in] wireLen Actual bytes sent (including SRTP auth tag)
+ * @param[in] enqueueTimeKvs When the packet was enqueued (100ns units); equals send time for non-paced packets
  */
-typedef VOID (*PacerOnPacketSent)(UINT64 customData, PBYTE pData, UINT32 wireLen);
+typedef VOID (*PacerOnPacketSent)(UINT64 customData, PBYTE pData, UINT32 wireLen, UINT64 enqueueTimeKvs);
 
 /**
  * Pacer structure
@@ -259,9 +260,10 @@ UINT64 pacerGetMaxQueueTime(PPacer pPacer);
  * @param[in] pPacer Pacer instance (for pKvsPeerConnection access)
  * @param[in,out] pData Plain RTP bytes; encrypted in place on return
  * @param[in] plainLen Plain RTP size (not including SRTP overhead)
+ * @param[in] enqueueTimeKvs When the packet was enqueued (100ns units); pass GETTIME() for non-paced sends
  * @return STATUS code from iceAgentSendPacket (or encryption failure)
  */
-STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen);
+STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen, UINT64 enqueueTimeKvs);
 
 //
 // Internal functions (exposed for unit testing)

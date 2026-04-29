@@ -1265,7 +1265,7 @@ static UINT32 rtpHeaderLenFromBytes(PBYTE pData, UINT32 len)
     return headerLen;
 }
 
-static VOID pacerOnPacketSentCallback(UINT64 customData, PBYTE pData, UINT32 wireLen)
+static VOID pacerOnPacketSentCallback(UINT64 customData, PBYTE pData, UINT32 wireLen, UINT64 enqueueTimeKvs)
 {
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) customData;
     PKvsRtpTransceiver pTransceiver = NULL;
@@ -1283,12 +1283,15 @@ static VOID pacerOnPacketSentCallback(UINT64 customData, PBYTE pData, UINT32 wir
     headerLen = rtpHeaderLenFromBytes(pData, wireLen);
 
     BOOL marker = (pData[1] >> MARKER_SHIFT) & MARKER_MASK;
+    UINT64 now = GETTIME();
+    UINT64 sendDelayKvs = (now >= enqueueTimeKvs) ? (now - enqueueTimeKvs) : 0;
 
     MUTEX_LOCK(pTransceiver->statsLock);
     pTransceiver->outboundStats.sent.bytesSent += wireLen - headerLen;
     pTransceiver->outboundStats.sent.packetsSent++;
-    pTransceiver->outboundStats.lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
+    pTransceiver->outboundStats.lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(now, HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
     pTransceiver->outboundStats.headerBytesSent += headerLen;
+    pTransceiver->outboundStats.totalPacketSendDelay += sendDelayKvs;
     if (marker && pTransceiver->sender.track.kind == MEDIA_STREAM_TRACK_KIND_VIDEO) {
         pTransceiver->outboundStats.framesSent++;
     }

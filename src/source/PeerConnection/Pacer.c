@@ -506,7 +506,7 @@ UINT32 pacerCalculateBudget(PPacer pPacer, UINT64 elapsedTimeKvs)
     return (UINT32) MIN(bytesPerInterval, MAX_UINT32);
 }
 
-STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen)
+STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen, UINT64 enqueueTimeKvs)
 {
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
@@ -545,7 +545,7 @@ STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen)
     }
 
     if (pPacer->onPacketSent != NULL) {
-        pPacer->onPacketSent(pPacer->onPacketSentCustomData, pData, (UINT32) encLen);
+        pPacer->onPacketSent(pPacer->onPacketSentCustomData, pData, (UINT32) encLen, enqueueTimeKvs);
     }
 
 CleanUp:
@@ -621,7 +621,7 @@ STATUS pacerDrainQueue(PPacer pPacer)
         }
 
         // Assign TWSN, encrypt, and send
-        retStatus = pacerSendRtpPacket(pPacer, pPacket->pData, pPacket->size);
+        retStatus = pacerSendRtpPacket(pPacer, pPacket->pData, pPacket->size, pPacket->enqueueTimeKvs);
         if (STATUS_SUCCEEDED(retStatus)) {
             bytesSent += pPacket->size;
             pPacer->stats.packetsSent++;

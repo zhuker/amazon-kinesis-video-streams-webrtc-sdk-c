@@ -452,7 +452,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             // Send immediately through pacer send function (assigns TWSN, encrypts, sends)
             // Stats (bytesSent, packetsSent, headerBytesSent) updated via onPacketSent callback
             MUTEX_LOCK(pKvsPeerConnection->pPacer->lock);
-            sendStatus = pacerSendRtpPacket(pKvsPeerConnection->pPacer, rawPacket, packetLen);
+            sendStatus = pacerSendRtpPacket(pKvsPeerConnection->pPacer, rawPacket, packetLen, GETTIME());
             MUTEX_UNLOCK(pKvsPeerConnection->pPacer->lock);
 
             if (sendStatus == STATUS_SEND_DATA_FAILED) {
@@ -481,7 +481,6 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
         }
     }
 
-
     if (pKvsRtpTransceiver->sender.firstFrameWallClockTime == 0) {
         pKvsRtpTransceiver->sender.rtpTimeOffset = randomRtpTimeoffset;
         pKvsRtpTransceiver->sender.firstFrameWallClockTime = now;
@@ -505,8 +504,7 @@ CleanUp:
             pKvsRtpTransceiver->outboundStats.hugeFramesSent++;
         }
     }
-    // iceAgentSendPacket tries to send packet immediately, explicitly settings totalPacketSendDelay to 0
-    pKvsRtpTransceiver->outboundStats.totalPacketSendDelay = 0;
+    // totalPacketSendDelay now accumulated per-packet in pacerOnPacketSentCallback
 
     pKvsRtpTransceiver->outboundStats.framesDiscardedOnSend += framesDiscardedOnSend;
     pKvsRtpTransceiver->outboundStats.packetsDiscardedOnSend += packetsDiscardedOnSend;
@@ -542,7 +540,7 @@ STATUS writeRtpPacket(PKvsPeerConnection pKvsPeerConnection, PRtpPacket pRtpPack
     MEMCPY(pRawPacket, pRtpPacket->pRawPacket, pRtpPacket->rawPacketLength);
 
     MUTEX_LOCK(pKvsPeerConnection->pPacer->lock);
-    retStatus = pacerSendRtpPacket(pKvsPeerConnection->pPacer, pRawPacket, pRtpPacket->rawPacketLength);
+    retStatus = pacerSendRtpPacket(pKvsPeerConnection->pPacer, pRawPacket, pRtpPacket->rawPacketLength, GETTIME());
     MUTEX_UNLOCK(pKvsPeerConnection->pPacer->lock);
 
     if (STATUS_SUCCEEDED(retStatus)) {
