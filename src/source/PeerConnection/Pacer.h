@@ -30,19 +30,17 @@ extern "C" {
  * Packet info for batch enqueue (frame-based pacing)
  */
 typedef struct {
-    PBYTE pData;       //!< Packet data (pacer takes ownership)
-    UINT32 size;       //!< Packet size in bytes
-    UINT16 twccSeqNum; //!< TWCC sequence number
+    PBYTE pData;  //!< Plain (unencrypted) RTP data; buffer has SRTP_AUTH_TAG_OVERHEAD extra bytes. Pacer takes ownership.
+    UINT32 size;  //!< Plain RTP size in bytes (not including SRTP overhead)
 } PacerPacketInfo, *PPacerPacketInfo;
 
 /**
  * Queued packet for paced sending
  */
 typedef struct __PacerPacket {
-    PBYTE pData;                 //!< Encrypted packet data (owned by pacer)
-    UINT32 size;                 //!< Packet size in bytes
+    PBYTE pData;                 //!< Plain (unencrypted) RTP data; buffer has SRTP_AUTH_TAG_OVERHEAD extra bytes
+    UINT32 size;                 //!< Plain RTP size in bytes (not including SRTP overhead)
     UINT64 enqueueTimeKvs;       //!< When packet was enqueued
-    UINT16 twccSeqNum;           //!< TWCC sequence number for tracking
     struct __PacerPacket* pNext; //!< Next packet in queue
 } PacerPacket, *PPacerPacket;
 
@@ -146,15 +144,15 @@ STATUS pacerStop(PPacer pPacer);
 
 /**
  * Enqueue a packet for paced sending
- * The pacer takes ownership of the packet data
+ * The pacer takes ownership of the packet data.
+ * pData must have SRTP_AUTH_TAG_OVERHEAD extra bytes allocated beyond size.
  *
  * @param[in] pPacer Pacer instance
- * @param[in] pData Packet data (pacer takes ownership, will free)
- * @param[in] size Packet size in bytes
- * @param[in] twccSeqNum TWCC sequence number for the packet
+ * @param[in] pData Plain (unencrypted) RTP data (pacer takes ownership, will free)
+ * @param[in] size Plain RTP size in bytes (not including SRTP overhead)
  * @return STATUS code (STATUS_SUCCESS or STATUS_NOT_ENOUGH_MEMORY if queue full)
  */
-STATUS pacerEnqueuePacket(PPacer pPacer, PBYTE pData, UINT32 size, UINT16 twccSeqNum);
+STATUS pacerEnqueuePacket(PPacer pPacer, PBYTE pData, UINT32 size);
 
 /**
  * Enqueue multiple packets as a frame (batch enqueue with single lock)
@@ -235,6 +233,20 @@ STATUS pacerSetMaxQueueTime(PPacer pPacer, UINT64 maxQueueTimeKvs);
  * @return Current max queue time in 100ns units (0 if disabled)
  */
 UINT64 pacerGetMaxQueueTime(PPacer pPacer);
+
+/**
+ * Send a plain RTP packet: assign TWSN, patch TWCC extension, PCAP capture,
+ * SRTP-encrypt in place, iceAgentSendPacket, TWCC tracking.
+ *
+ * Caller MUST hold pPacer->lock. The buffer must have SRTP_AUTH_TAG_OVERHEAD
+ * extra bytes beyond plainLen for in-place encryption.
+ *
+ * @param[in] pPacer Pacer instance (for pKvsPeerConnection access)
+ * @param[in,out] pData Plain RTP bytes; encrypted in place on return
+ * @param[in] plainLen Plain RTP size (not including SRTP overhead)
+ * @return STATUS code from iceAgentSendPacket (or encryption failure)
+ */
+STATUS pacerSendRtpPacket(PPacer pPacer, PBYTE pData, UINT32 plainLen);
 
 //
 // Internal functions (exposed for unit testing)

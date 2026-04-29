@@ -1344,6 +1344,20 @@ STATUS createPeerConnection(PRtcConfiguration pConfiguration, PRtcPeerConnection
     CHK_STATUS(createTwccReceiverManager(&pKvsPeerConnection->pTwccReceiverManager));
     pKvsPeerConnection->twccFeedbackTimerId = MAX_UINT32; // Invalid timer ID
 
+    // Always create pacer so its lock can serialize TWSN assignment + SRTP encryption.
+    // Pacing is disabled by default; peerConnectionEnablePacing() turns it on.
+    {
+        PacerConfig defaultPacerConfig;
+        MEMSET(&defaultPacerConfig, 0, SIZEOF(PacerConfig));
+        defaultPacerConfig.initialBitrateBps = 300000;
+        defaultPacerConfig.maxQueueSize = PACER_DEFAULT_MAX_QUEUE_SIZE;
+        defaultPacerConfig.maxQueueBytes = PACER_DEFAULT_MAX_QUEUE_BYTES;
+        defaultPacerConfig.pacingFactor = PACER_DEFAULT_PACING_FACTOR;
+        defaultPacerConfig.enabled = FALSE;
+        CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &defaultPacerConfig));
+        pKvsPeerConnection->pPacer->pKvsPeerConnection = pKvsPeerConnection;
+    }
+
     // RFC 3611 RRTR -> DLRR state.
     pKvsPeerConnection->rtcpXrLock = MUTEX_CREATE(TRUE);
 #ifdef ENABLE_NATIVE_SCTP
@@ -1685,49 +1699,37 @@ STATUS peerConnectionEnablePacing(PRtcPeerConnection pRtcPeerConnection, PRtcPac
     ENTERS();
     STATUS retStatus = STATUS_SUCCESS;
     PKvsPeerConnection pKvsPeerConnection = (PKvsPeerConnection) pRtcPeerConnection;
-    BOOL locked = FALSE;
-    PacerConfig pacerConfig;
     PPacer pPacer = NULL;
 
-    CHK(pKvsPeerConnection != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection != NULL && pKvsPeerConnection->pPacer != NULL, STATUS_NULL_ARG);
 
-    MUTEX_LOCK(pKvsPeerConnection->peerConnectionObjLock);
-    locked = TRUE;
-
-    // Don't create if already exists
-    CHK(pKvsPeerConnection->pPacer == NULL, retStatus);
-
-    // Convert public config to internal config
-    MEMSET(&pacerConfig, 0, SIZEOF(PacerConfig));
-    if (pConfig != NULL) {
-        pacerConfig.initialBitrateBps = pConfig->initialBitrateBps;
-        pacerConfig.maxQueueSize = pConfig->maxQueueSize;
-        pacerConfig.maxQueueBytes = pConfig->maxQueueBytes;
-        pacerConfig.pacingFactor = pConfig->pacingFactor;
-        pacerConfig.maxQueueTimeKvs = pConfig->maxQueueTimeKvs;
-    }
-    pacerConfig.enabled = TRUE;
-
-    // Create the pacer
-    CHK_STATUS(createPacer(&pKvsPeerConnection->pPacer, pKvsPeerConnection->timerQueueHandle, &pacerConfig));
     pPacer = pKvsPeerConnection->pPacer;
 
-    // Drop the peer connection lock before starting the pacer timer to avoid
-    // lock-order-inversion: this path acquires peerConnectionObjLock then
-    // timer queue lock, while timer callbacks (e.g. onNewIceLocalCandidate)
-    // acquire timer queue lock then peerConnectionObjLock.
-    MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
-    locked = FALSE;
+    // Apply config to the existing pacer
+    MUTEX_LOCK(pPacer->lock);
+    if (pConfig != NULL) {
+        if (pConfig->initialBitrateBps > 0) {
+            pPacer->targetBitrateBps = pConfig->initialBitrateBps;
+        }
+        if (pConfig->maxQueueSize > 0) {
+            pPacer->maxQueueSize = pConfig->maxQueueSize;
+        }
+        if (pConfig->maxQueueBytes > 0) {
+            pPacer->maxQueueBytes = pConfig->maxQueueBytes;
+        }
+        if (pConfig->pacingFactor > 0) {
+            pPacer->pacingFactor = pConfig->pacingFactor;
+        }
+        pPacer->maxQueueTimeKvs = pConfig->maxQueueTimeKvs;
+    }
+    pPacer->enabled = TRUE;
+    MUTEX_UNLOCK(pPacer->lock);
 
-    // Start the pacer without holding peerConnectionObjLock
     CHK_STATUS(pacerStart(pPacer, pKvsPeerConnection));
 
     DLOGI("Pacing enabled for peer connection");
 
 CleanUp:
-    if (locked) {
-        MUTEX_UNLOCK(pKvsPeerConnection->peerConnectionObjLock);
-    }
     CHK_LOG_ERR(retStatus);
 
     LEAVES();

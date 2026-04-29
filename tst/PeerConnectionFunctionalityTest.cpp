@@ -976,9 +976,9 @@ TEST_F(PeerConnectionFunctionalityTest, exchangeMedia)
     EXPECT_EQ(STATUS_SUCCESS, getRtpOutboundStats(offerPc, offerVideoTransceiver, &stats));
     EXPECT_EQ(206, stats.sent.packetsSent);
 #ifdef KVS_USE_MBEDTLS
-    EXPECT_EQ(248026, stats.sent.bytesSent);
+    EXPECT_EQ(245966, stats.sent.bytesSent);
 #else
-    EXPECT_EQ(246790, stats.sent.bytesSent);
+    EXPECT_EQ(245966, stats.sent.bytesSent);
 #endif
     EXPECT_EQ(2, stats.framesSent);
     // Each RTP packet header: 12 bytes base + 8 bytes TWCC extension = 20 bytes

@@ -285,7 +285,6 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
     STATUS retStatus = STATUS_SUCCESS;
     PKvsPeerConnection pKvsPeerConnection = NULL;
     PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
-    BOOL locked = FALSE, bufferAfterEncrypt = FALSE;
     PRtpPacket pPacketList = NULL, pRtpPacket = NULL;
     UINT32 i = 0, packetLen = 0, headerLen = 0, allocSize;
     PBYTE rawPacket = NULL;
@@ -303,7 +302,6 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
 
     // temp vars :(
     UINT64 tmpFrames, tmpTime;
-    UINT16 twsn;
     UINT32 extpayload;
     STATUS sendStatus;
 
@@ -330,8 +328,6 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
         }
     }
 
-    MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
-    locked = TRUE;
     CHK(pKvsPeerConnection->pSrtpSession != NULL, STATUS_SRTP_NOT_READY_YET); // Discard packets till SRTP is ready
     BOOL useOpusRed = FALSE;
     UINT8 effectivePayloadType = pKvsRtpTransceiver->sender.payloadType;
@@ -419,9 +415,7 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
                                    pKvsRtpTransceiver->sender.ssrc, pPacketList, pPayloadArray->payloadSubLenSize));
     pKvsRtpTransceiver->sender.sequenceNumber = GET_UINT16_SEQ_NUM(pKvsRtpTransceiver->sender.sequenceNumber + pPayloadArray->payloadSubLenSize);
 
-    bufferAfterEncrypt = (pKvsRtpTransceiver->sender.payloadType == pKvsRtpTransceiver->sender.rtxPayloadType);
-
-    // Check if batch pacing should be used (video only, pacing enabled)
+    // Queue video in the pacer when pacing is enabled; audio always sends immediately
     useBatchPacing = (pKvsPeerConnection->pPacer != NULL && pacerIsEnabled(pKvsPeerConnection->pPacer) &&
                       pKvsRtpTransceiver->sender.track.kind == MEDIA_STREAM_TRACK_KIND_VIDEO);
     if (useBatchPacing) {
@@ -431,70 +425,51 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
 
     for (i = 0; i < pPayloadArray->payloadSubLenSize; i++) {
         pRtpPacket = pPacketList + i;
-        if (pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {
+        if (pKvsPeerConnection->twccExtId != 0) {
             pRtpPacket->header.extension = TRUE;
             pRtpPacket->header.extensionProfile = TWCC_EXT_PROFILE;
             pRtpPacket->header.extensionLength = SIZEOF(UINT32);
-            twsn = (UINT16) ATOMIC_INCREMENT(&pKvsRtpTransceiver->pKvsPeerConnection->transportWideSequenceNumber);
-            extpayload = TWCC_PAYLOAD(pKvsRtpTransceiver->pKvsPeerConnection->twccExtId, twsn);
+            // Placeholder TWSN=0; real value assigned at send time by pacerSendRtpPacket
+            extpayload = TWCC_PAYLOAD(pKvsPeerConnection->twccExtId, 0);
             pRtpPacket->header.extensionPayload = (PBYTE) &extpayload;
         }
-        // Get the required size first
         CHK_STATUS(createBytesFromRtpPacket(pRtpPacket, NULL, &packetLen));
 
-        // Account for SRTP authentication tag
         allocSize = packetLen + SRTP_AUTH_TAG_OVERHEAD;
         CHK(NULL != (rawPacket = (PBYTE) MEMALLOC(allocSize)), STATUS_NOT_ENOUGH_MEMORY);
         CHK_STATUS(createBytesFromRtpPacket(pRtpPacket, rawPacket, &packetLen));
 
-        if (!bufferAfterEncrypt) {
-            pRtpPacket->pRawPacket = rawPacket;
-            pRtpPacket->rawPacketLength = packetLen;
-            CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
-        }
+        // Always buffer unencrypted bytes for RTX retransmission
+        pRtpPacket->pRawPacket = rawPacket;
+        pRtpPacket->rawPacketLength = packetLen;
+        CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
 
-        // PCAP: capture unencrypted outbound RTP (main send path)
-        if (pKvsPeerConnection->pPcapDump != NULL) {
-            pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, rawPacket, packetLen, FALSE, PCAP_PACKET_DIRECTION_SEND);
-        }
-
-        CHK_STATUS(encryptRtpPacket(pKvsPeerConnection->pSrtpSession, rawPacket, (PINT32) &packetLen));
-
-        // Check if pacing is enabled (only for video - audio bypasses pacer to avoid latency)
         if (useBatchPacing) {
-            // Collect packet for batch enqueue after loop completes.
-            // This ensures the pacer sees the full frame atomically, so
-            // deadline-based budget calculation uses the correct queue size.
             pPacerPackets[pacerPacketCount].pData = rawPacket;
             pPacerPackets[pacerPacketCount].size = packetLen;
-            pPacerPackets[pacerPacketCount].twccSeqNum = twsn;
             pacerPacketCount++;
-            rawPacket = NULL; // Will be owned by pacer after batch enqueue
+            rawPacket = NULL;
 
-            // Update stats (packet will be sent by pacer)
             headerLen = RTP_HEADER_LEN(pRtpPacket);
             bytesSent += packetLen - headerLen;
             packetsSent++;
             lastPacketSentTimestamp = KVS_CONVERT_TIMESCALE(GETTIME(), HUNDREDS_OF_NANOS_IN_A_SECOND, 1000);
             headerBytesSent += headerLen;
         } else {
-            // No pacing - send immediately
-            sendStatus = iceAgentSendPacket(pKvsPeerConnection->pIceAgent, rawPacket, packetLen);
+            // Send immediately through pacer send function (assigns TWSN, encrypts, sends)
+            MUTEX_LOCK(pKvsPeerConnection->pPacer->lock);
+            sendStatus = pacerSendRtpPacket(pKvsPeerConnection->pPacer, rawPacket, packetLen);
+            MUTEX_UNLOCK(pKvsPeerConnection->pPacer->lock);
+
             if (sendStatus == STATUS_SEND_DATA_FAILED) {
                 packetsDiscardedOnSend++;
                 bytesDiscardedOnSend += packetLen - headerLen;
-                // TODO is frame considered discarded when at least one of its packets is discarded or all of its packets discarded?
                 framesDiscardedOnSend = 1;
                 SAFE_MEMFREE(rawPacket);
                 continue;
-            } else if (sendStatus == STATUS_SUCCESS && pKvsRtpTransceiver->pKvsPeerConnection->twccExtId != 0) {
-                pRtpPacket->sentTime = GETTIME();
-                twccManagerOnPacketSent(pKvsPeerConnection, pRtpPacket);
             }
             CHK_STATUS(sendStatus);
 
-            // https://tools.ietf.org/html/rfc3550#section-6.4.1
-            // The total number of payload octets (i.e., not including header or padding) transmitted in RTP data packets by the sender
             headerLen = RTP_HEADER_LEN(pRtpPacket);
             bytesSent += packetLen - headerLen;
             packetsSent++;
@@ -502,16 +477,6 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
             headerBytesSent += headerLen;
 
             SAFE_MEMFREE(rawPacket);
-        }
-
-        if (bufferAfterEncrypt) {
-            // Note: when pacing, rawPacket is NULL here, but the rolling buffer
-            // was already populated before encryption if !bufferAfterEncrypt
-            if (rawPacket != NULL) {
-                pRtpPacket->pRawPacket = rawPacket;
-                pRtpPacket->rawPacketLength = packetLen;
-                CHK_STATUS(rtpRollingBufferAddRtpPacket(pKvsRtpTransceiver->sender.packetBuffer, pRtpPacket));
-            }
         }
     }
 
@@ -538,9 +503,6 @@ STATUS writeFrame(PRtcRtpTransceiver pRtcRtpTransceiver, PFrame pFrame)
     }
 
 CleanUp:
-    if (locked) {
-        MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
-    }
     MUTEX_LOCK(pKvsRtpTransceiver->statsLock);
     pKvsRtpTransceiver->outboundStats.totalEncodedBytesTarget += pFrame->size;
     pKvsRtpTransceiver->outboundStats.framesEncoded += frames;
@@ -590,31 +552,24 @@ CleanUp:
 STATUS writeRtpPacket(PKvsPeerConnection pKvsPeerConnection, PRtpPacket pRtpPacket)
 {
     STATUS retStatus = STATUS_SUCCESS;
-    BOOL locked = FALSE;
     PBYTE pRawPacket = NULL;
-    INT32 rawLen = 0;
 
     CHK(pKvsPeerConnection != NULL && pRtpPacket != NULL && pRtpPacket->pRawPacket != NULL, STATUS_NULL_ARG);
+    CHK(pKvsPeerConnection->pSrtpSession != NULL && pKvsPeerConnection->pPacer != NULL, STATUS_SUCCESS);
 
-    MUTEX_LOCK(pKvsPeerConnection->pSrtpSessionLock);
-    locked = TRUE;
-    CHK(pKvsPeerConnection->pSrtpSession != NULL, STATUS_SUCCESS);               // Discard packets till SRTP is ready
-    pRawPacket = MEMALLOC(pRtpPacket->rawPacketLength + SRTP_AUTH_TAG_OVERHEAD); // For SRTP authentication tag
-    rawLen = pRtpPacket->rawPacketLength;
+    pRawPacket = MEMALLOC(pRtpPacket->rawPacketLength + SRTP_AUTH_TAG_OVERHEAD);
+    CHK(pRawPacket != NULL, STATUS_NOT_ENOUGH_MEMORY);
     MEMCPY(pRawPacket, pRtpPacket->pRawPacket, pRtpPacket->rawPacketLength);
 
-    // PCAP: capture unencrypted outbound RTP
-    if (pKvsPeerConnection->pPcapDump != NULL) {
-        pcapDumpWritePacket(pKvsPeerConnection->pPcapDump, pRawPacket, rawLen, FALSE, PCAP_PACKET_DIRECTION_SEND);
-    }
+    MUTEX_LOCK(pKvsPeerConnection->pPacer->lock);
+    retStatus = pacerSendRtpPacket(pKvsPeerConnection->pPacer, pRawPacket, pRtpPacket->rawPacketLength);
+    MUTEX_UNLOCK(pKvsPeerConnection->pPacer->lock);
 
-    CHK_STATUS(encryptRtpPacket(pKvsPeerConnection->pSrtpSession, pRawPacket, &rawLen));
-    CHK_STATUS(iceAgentSendPacket(pKvsPeerConnection->pIceAgent, pRawPacket, rawLen));
+    if (STATUS_SUCCEEDED(retStatus)) {
+        pRawPacket = NULL; // encrypted in place, don't free
+    }
 
 CleanUp:
-    if (locked) {
-        MUTEX_UNLOCK(pKvsPeerConnection->pSrtpSessionLock);
-    }
     SAFE_MEMFREE(pRawPacket);
 
     return retStatus;
