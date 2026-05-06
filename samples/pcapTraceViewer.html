@@ -583,7 +583,7 @@ const LAYOUT = {
   framesH: 88,
   videoH: 32,
   audioH: 18,
-  rtcpH: 26,
+  rtcpH: 22,    // height per RTCP row (one row per direction)
   bitrateH: 120,
   pktrateH: 80,
   gap: 4,
@@ -597,7 +597,8 @@ function trackOffsets() {
   o.frames = y; y += LAYOUT.framesH + LAYOUT.gap;
   o.video = y;  y += LAYOUT.videoH + LAYOUT.gap;
   o.audio = y;  y += LAYOUT.audioH + LAYOUT.gap;
-  o.rtcp = y;   y += LAYOUT.rtcpH + LAYOUT.gap;
+  o.rtcpSend = y; y += LAYOUT.rtcpH + LAYOUT.gap;
+  o.rtcpRecv = y; y += LAYOUT.rtcpH + LAYOUT.gap;
   o.bitrate = y; y += LAYOUT.bitrateH + LAYOUT.gap;
   o.pktrate = y; y += LAYOUT.pktrateH + LAYOUT.gap;
   o.total = y;
@@ -653,6 +654,13 @@ class Viewer {
       const next = s.idx + dir;
       if (next < 0 || next >= arr.length) return;
       this.selection = { kind: "packet", kindStream: s.kindStream, idx: next };
+    } else if (s.kind === "rtcp") {
+      const events = this.model.rtcpEvents;
+      const curDir = events[s.idx].direction;
+      let i = s.idx + dir;
+      while (i >= 0 && i < events.length && events[i].direction !== curDir) i += dir;
+      if (i < 0 || i >= events.length) return;
+      this.selection = { kind: "rtcp", idx: i };
     } else {
       return;
     }
@@ -667,6 +675,8 @@ class Viewer {
     else if (this.selection.kind === "packet") {
       const arr = this.selection.kindStream === "video" ? this.model.videoPkts : this.model.audioPkts;
       tsUs = arr[this.selection.idx].sendTsUs;
+    } else if (this.selection.kind === "rtcp") {
+      tsUs = this.model.rtcpEvents[this.selection.idx].tsUs;
     }
     if (tsUs == null) return;
     if (tsUs < this.viewStartUs || tsUs > this.viewEndUs) {
@@ -824,8 +834,10 @@ class Viewer {
     this.drawPackets(o.video, LAYOUT.videoH, this.model.videoPkts, true);
     this.drawTrackBg(o.audio, LAYOUT.audioH, "Audio pkts");
     this.drawPackets(o.audio, LAYOUT.audioH, this.model.audioPkts, false);
-    this.drawTrackBg(o.rtcp, LAYOUT.rtcpH, "RTCP");
-    this.drawRtcp(o.rtcp);
+    this.drawTrackBg(o.rtcpSend, LAYOUT.rtcpH, "RTCP send");
+    this.drawRtcp(o.rtcpSend, "SEND");
+    this.drawTrackBg(o.rtcpRecv, LAYOUT.rtcpH, "RTCP recv");
+    this.drawRtcp(o.rtcpRecv, "RECV");
     this.drawTrackBg(o.bitrate, LAYOUT.bitrateH, "Bitrate (kbps)");
     this.drawBitrate(o.bitrate);
     this.drawTrackBg(o.pktrate, LAYOUT.pktrateH, "Packet rate (pps)");
@@ -966,10 +978,11 @@ class Viewer {
     }
   }
 
-  drawRtcp(yTop) {
+  drawRtcp(yTop, direction) {
     const ctx = this.ctx;
     const events = this.model.rtcpEvents;
     for (const ev of events) {
+      if (ev.direction !== direction) continue;
       if (ev.tsUs < this.viewStartUs || ev.tsUs > this.viewEndUs) continue;
       const x = this.xOf(ev.tsUs);
       let color, h = LAYOUT.rtcpH - 4;
@@ -979,7 +992,7 @@ class Viewer {
       else if (ev.type === "SR") color = "#8b5cf6";
       else if (ev.type === "FIR") color = "#dc2626";
       else if (ev.type === "REMB") color = "#0ea5e9";
-      else if (ev.type === "TWCC") { color = "#d1d5db"; h = 4; }
+      else if (ev.type === "TWCC") { color = ev.lost > 0 ? "#ef4444" : "#d1d5db"; h = ev.lost > 0 ? 8 : 4; }
       ctx.fillStyle = color;
       ctx.fillRect(x, yTop + (LAYOUT.rtcpH - h) / 2, 2, h);
     }
@@ -1098,17 +1111,22 @@ class Viewer {
     if (y >= o.audio && y < o.audio + LAYOUT.audioH) {
       return this.hitTestPackets(x, this.model.audioPkts, "audio");
     }
-    if (y >= o.rtcp && y < o.rtcp + LAYOUT.rtcpH) {
-      const events = this.model.rtcpEvents;
-      let bestIdx = -1, bestDx = 4;
-      for (let i = 0; i < events.length; i++) {
-        const ev = events[i];
-        if (ev.tsUs < this.viewStartUs || ev.tsUs > this.viewEndUs) continue;
-        const dx = Math.abs(this.xOf(ev.tsUs) - x);
-        if (dx < bestDx) { bestDx = dx; bestIdx = i; }
-      }
-      if (bestIdx >= 0) return { kind: "rtcp", idx: bestIdx };
+    if (y >= o.rtcpSend && y < o.rtcpSend + LAYOUT.rtcpH) return this.hitTestRtcp(x, "SEND");
+    if (y >= o.rtcpRecv && y < o.rtcpRecv + LAYOUT.rtcpH) return this.hitTestRtcp(x, "RECV");
+    return null;
+  }
+
+  hitTestRtcp(x, direction) {
+    const events = this.model.rtcpEvents;
+    let bestIdx = -1, bestDx = 4;
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      if (ev.direction !== direction) continue;
+      if (ev.tsUs < this.viewStartUs || ev.tsUs > this.viewEndUs) continue;
+      const dx = Math.abs(this.xOf(ev.tsUs) - x);
+      if (dx < bestDx) { bestDx = dx; bestIdx = i; }
     }
+    if (bestIdx >= 0) return { kind: "rtcp", idx: bestIdx };
     return null;
   }
 
