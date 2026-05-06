@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pcapTraceViewer</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; color: #1f2937; background: #f9fafb; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  #header { flex: 0 0 auto; padding: 8px 12px; background: #ffffff; border-bottom: 1px solid #e5e7eb; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  #header h1 { margin: 0; font-size: 14px; font-weight: 600; color: #111827; }
+  #header .stat { color: #6b7280; }
+  #header .stat b { color: #111827; font-weight: 600; }
+  #header input[type=file] { font-size: 12px; }
+  #legend { display: flex; gap: 12px; align-items: center; font-size: 11px; color: #6b7280; }
+  .swatch { display: inline-block; width: 10px; height: 10px; vertical-align: middle; margin-right: 3px; border-radius: 2px; }
+  #main { flex: 1 1 auto; display: flex; min-height: 0; }
+  #canvasWrap { flex: 1 1 auto; position: relative; min-width: 0; }
+  #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #details { flex: 0 0 360px; background: #ffffff; border-left: 1px solid #e5e7eb; overflow: auto; padding: 12px; }
+  #details h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  #details .row { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid #f3f4f6; }
+  #details .row .k { color: #6b7280; }
+  #details .row .v { font-family: ui-monospace, SFMono-Regular, monospace; color: #111827; }
+  #details table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; }
+  #details table th, #details table td { padding: 2px 4px; text-align: right; border-bottom: 1px solid #f3f4f6; }
+  #details table th { background: #f9fafb; color: #6b7280; font-weight: 600; position: sticky; top: 0; }
+  #details table td.lost { color: #dc2626; }
+  #details table td.slow { color: #ca8a04; }
+  #details table td.fast { color: #16a34a; }
+  #dropOverlay { position: fixed; inset: 0; background: rgba(59, 130, 246, 0.12); border: 4px dashed #3b82f6; pointer-events: none; display: none; align-items: center; justify-content: center; font-size: 24px; color: #1d4ed8; font-weight: 600; }
+  #dropOverlay.active { display: flex; }
+  #help { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.9); border: 1px solid #e5e7eb; border-radius: 4px; padding: 6px 8px; font-size: 11px; color: #6b7280; pointer-events: none; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: #9ca3af; font-size: 14px; }
+  #empty.hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>pcapTraceViewer</h1>
+  <input type="file" id="fileInput" accept=".pcap">
+  <span class="stat" id="fileStat"></span>
+  <span class="stat" id="countStat"></span>
+  <span class="stat" id="zoomStat"></span>
+  <span class="stat">origin:
+    <select id="originSel">
+      <option value="pcap">pcap (0)</option>
+      <option value="video">first video pkt</option>
+      <option value="audio">first audio pkt</option>
+    </select>
+  </span>
+  <div id="legend">
+    <span><span class="swatch" style="background:#22d3ee"></span>key</span>
+    <span><span class="swatch" style="background:#3b82f6"></span>delta</span>
+    <span><span class="swatch" style="background:#22c55e"></span>&lt;50ms</span>
+    <span><span class="swatch" style="background:#eab308"></span>50-200ms</span>
+    <span><span class="swatch" style="background:#ef4444"></span>&gt;200ms / lost</span>
+    <span><span class="swatch" style="background:#9ca3af"></span>audio</span>
+  </div>
+</div>
+<div id="main">
+  <div id="canvasWrap">
+    <canvas id="canvas"></canvas>
+    <div id="empty">Drop a <code>.pcap</code> file anywhere, or use the file picker above.</div>
+    <div id="help">wheel: zoom &middot; shift+wheel / alt-drag: pan &middot; click: details &middot; 0: fit &middot; +/-: zoom</div>
+  </div>
+  <div id="details">
+    <h2>Details</h2>
+    <div id="detailsBody">Click a frame, packet, or RTCP marker.</div>
+  </div>
+</div>
+<div id="dropOverlay">Drop pcap to load</div>
+<script>
+"use strict";
+
+// =====================================================================
+// PCAP parsing
+// =====================================================================
+
+function parsePcap(buf) {
+  const view = new DataView(buf);
+  if (view.byteLength < 24) throw new Error("file too small");
+  const magic = view.getUint32(0, true);
+  if (magic !== 0xA1B2C3D4) {
+    if (magic === 0x0A0D0D0A) throw new Error("pcapng not supported (use classic pcap)");
+    throw new Error("not a classic pcap (bad magic 0x" + magic.toString(16) + ")");
+  }
+  const linktype = view.getUint32(20, true);
+  if (linktype !== 1) throw new Error("unsupported linktype " + linktype + " (need Ethernet=1)");
+  const records = [];
+  let off = 24;
+  const end = view.byteLength;
+  while (off + 16 <= end) {
+    const tsSec = view.getUint32(off, true);
+    const tsUsec = view.getUint32(off + 4, true);
+    const inclLen = view.getUint32(off + 8, true);
+    off += 16;
+    if (inclLen > 65535 + 42 || off + inclLen > end) break;
+    records.push({
+      tsUs: tsSec * 1_000_000 + tsUsec,
+      payload: new Uint8Array(buf, off, inclLen)
+    });
+    off += inclLen;
+  }
+  return records;
+}
+
+// =====================================================================
+// RTP / RTCP / TWCC parsing
+// =====================================================================
+
+const ETH_HDR = 14;
+const IP_HDR = 20;
+const UDP_HDR = 8;
+const TRANSPORT_HDR = ETH_HDR + IP_HDR + UDP_HDR;
+const PCAP_RTP_PORT = 5004;
+const PCAP_RTCP_PORT = 5005;
+const TWCC_EXT_PROFILE = 0xBEDE;
+
+function readU16BE(p, off) { return ((p[off] << 8) | p[off + 1]) >>> 0; }
+function readU32BE(p, off) { return ((p[off] * 0x1000000) + ((p[off + 1] << 16) | (p[off + 2] << 8) | p[off + 3])) >>> 0; }
+
+function ipMatches(p, off, ip) {
+  return p[off] === ip[0] && p[off + 1] === ip[1] && p[off + 2] === ip[2] && p[off + 3] === ip[3];
+}
+const SEND_IP = [10, 0, 0, 1];
+const RECV_IP = [10, 0, 0, 2];
+
+function parseRtpPacket(rtp, sendTsUs) {
+  if (rtp.length < 12) return null;
+  if (((rtp[0] >> 6) & 3) !== 2) return null;
+  const padding = (rtp[0] >> 5) & 1;
+  const x = (rtp[0] >> 4) & 1;
+  const cc = rtp[0] & 0xF;
+  const marker = (rtp[1] >> 7) & 1;
+  const pt = rtp[1] & 0x7F;
+  const seq = readU16BE(rtp, 2);
+  const rtpTs = readU32BE(rtp, 4);
+  const ssrc = readU32BE(rtp, 8);
+
+  let off = 12 + cc * 4;
+  let twccSeq = -1;
+  let twccExtId = -1;
+
+  if (x && off + 4 <= rtp.length) {
+    const extProfile = readU16BE(rtp, off);
+    const extLenWords = readU16BE(rtp, off + 2);
+    const extBytes = extLenWords * 4;
+    if (extProfile === TWCC_EXT_PROFILE && off + 4 + extBytes <= rtp.length) {
+      const extStart = off + 4;
+      let p = extStart;
+      const extEnd = extStart + extBytes;
+      while (p < extEnd) {
+        const b = rtp[p];
+        if (b === 0) { p++; continue; }
+        const id = (b >> 4) & 0xF;
+        const len = (b & 0xF) + 1;
+        if (id === 15) break;
+        if (p + 1 + len > extEnd) break;
+        // TWCC carries 2 bytes; first 2-byte ext wins (matches typical SDK behavior)
+        if (len === 2 && twccSeq < 0) {
+          twccSeq = readU16BE(rtp, p + 1);
+          twccExtId = id;
+        }
+        p += 1 + len;
+      }
+    }
+    off += 4 + extBytes;
+  }
+
+  // The ‘payload’ subarray is the start of the RTP payload after CSRCs and ext.
+  // We slice up to the padding-trimmed length so NAL parsers don't see padding bytes.
+  let payloadEnd = rtp.length;
+  if (padding && rtp.length > 0) {
+    const padLen = rtp[rtp.length - 1];
+    if (padLen > 0 && off + padLen <= rtp.length) payloadEnd = rtp.length - padLen;
+  }
+  const payload = rtp.subarray(off, payloadEnd);
+
+  return {
+    sendTsUs,
+    sizeBytes: rtp.length,
+    pt, seq, rtpTs, ssrc,
+    marker: !!marker, isPadding: !!padding,
+    twccSeq, twccExtId,
+    payload,
+    arrivalUs: null, owdMs: null,
+    frameId: null
+  };
+}
+
+function extractNalTypes(payload) {
+  if (payload.length < 1) return [];
+  const out = new Set();
+  const nalu = payload[0] & 0x1F;
+  if (nalu >= 1 && nalu <= 23) {
+    out.add(nalu);
+  } else if (nalu === 24) { // STAP-A
+    let p = 1;
+    while (p + 2 <= payload.length) {
+      const len = readU16BE(payload, p);
+      p += 2;
+      if (len < 1 || p + len > payload.length) break;
+      const inner = payload[p] & 0x1F;
+      if (inner >= 1 && inner <= 23) out.add(inner);
+      p += len;
+    }
+  } else if (nalu === 28 || nalu === 29) { // FU-A / FU-B
+    if (payload.length >= 2 && (payload[1] & 0x80)) {
+      const inner = payload[1] & 0x1F;
+      if (inner >= 1 && inner <= 23) out.add(inner);
+    }
+  }
+  return [...out];
+}
+
+function parseTwccFeedback(buf) {
+  // buf is the TWCC payload after RTCP header + senderSsrc + mediaSsrc (i.e. 12 bytes stripped)
+  if (buf.length < 8) return null;
+  const baseSeq = readU16BE(buf, 0);
+  const count = readU16BE(buf, 2);
+  const refTime = (buf[4] << 16) | (buf[5] << 8) | buf[6];   // 24-bit, in 64ms ticks
+  const fbPktCount = buf[7];
+
+  // First pass: locate delta start
+  let off = 8;
+  let rem = count;
+  while (rem > 0 && off + 2 <= buf.length) {
+    const chunk = readU16BE(buf, off);
+    if ((chunk & 0x8000) === 0) {
+      rem -= chunk & 0x1FFF;
+    } else {
+      const slots = (chunk & 0x4000) ? 7 : 14;
+      rem -= Math.min(slots, rem);
+    }
+    off += 2;
+  }
+  let deltaOff = off;
+
+  // Second pass: walk chunks, read deltas
+  const deltas = [];
+  let received = 0, lost = 0;
+  let seq = baseSeq;
+  let arrivalRelUs = refTime * 64 * 1000; // convert 64ms ticks → µs
+
+  off = 8;
+  rem = count;
+  while (rem > 0 && off + 2 <= buf.length) {
+    const chunk = readU16BE(buf, off);
+    if ((chunk & 0x8000) === 0) {
+      const status = (chunk >> 13) & 0x3;
+      const c = chunk & 0x1FFF;
+      const n = Math.min(c, rem);
+      for (let i = 0; i < n; i++) {
+        if (status === 0) {
+          lost++;
+          deltas.push({ twccSeq: seq, arrivalRelUs: null });
+        } else {
+          received++;
+          let d = 0;
+          if (status === 1 && deltaOff < buf.length) {
+            d = buf[deltaOff++]; // unsigned 0..255 in 250µs ticks
+          } else if (status === 2 && deltaOff + 1 < buf.length) {
+            let v = readU16BE(buf, deltaOff);
+            if (v & 0x8000) v -= 0x10000;
+            d = v; // signed 16-bit in 250µs ticks
+            deltaOff += 2;
+          }
+          arrivalRelUs += d * 250;
+          deltas.push({ twccSeq: seq, arrivalRelUs });
+        }
+        seq = (seq + 1) & 0xFFFF;
+        rem--;
+      }
+    } else {
+      const isTwoBit = (chunk & 0x4000) !== 0;
+      const slots = isTwoBit ? 7 : 14;
+      const stepBits = isTwoBit ? 2 : 1;
+      const mask = isTwoBit ? 0x3 : 0x1;
+      const n = Math.min(slots, rem);
+      for (let i = 0; i < n; i++) {
+        const shift = (slots - 1 - i) * stepBits;
+        const status = (chunk >> shift) & mask;
+        if (status === 0) {
+          lost++;
+          deltas.push({ twccSeq: seq, arrivalRelUs: null });
+        } else {
+          received++;
+          let d = 0;
+          if (status === 1 && deltaOff < buf.length) {
+            d = buf[deltaOff++];
+          } else if (status === 2 && deltaOff + 1 < buf.length) {
+            let v = readU16BE(buf, deltaOff);
+            if (v & 0x8000) v -= 0x10000;
+            d = v;
+            deltaOff += 2;
+          }
+          arrivalRelUs += d * 250;
+          deltas.push({ twccSeq: seq, arrivalRelUs });
+        }
+        seq = (seq + 1) & 0xFFFF;
+        rem--;
+      }
+    }
+    off += 2;
+  }
+
+  return { baseSeq, count, refTimeMs: refTime * 64, fbPktCount, received, lost, deltas };
+}
+
+function walkRtcp(buf, tsUs, direction, out) {
+  let off = 0;
+  while (off + 4 <= buf.length) {
+    const fmt = buf[off] & 0x1F;
+    const pt = buf[off + 1];
+    const lenWords = readU16BE(buf, off + 2);
+    const packetBytes = (lenWords + 1) * 4;
+    if (off + packetBytes > buf.length) break;
+    const sub = buf.subarray(off, off + packetBytes);
+
+    if (pt === 200 && sub.length >= 28) {
+      const ntpMSW = readU32BE(sub, 8);
+      const ntpLSW = readU32BE(sub, 12);
+      const ntpUnix = (ntpMSW - 2208988800) + ntpLSW / 4294967296;
+      out.push({ type: "SR", tsUs, direction, ntpUnix, mediaSsrc: readU32BE(sub, 4) });
+    } else if (pt === 201 && sub.length >= 32 && fmt >= 1) {
+      const fracLost = sub[12];
+      const cumLost = (sub[13] << 16) | (sub[14] << 8) | sub[15];
+      const jitterTs = readU32BE(sub, 20);
+      const dlsr = readU32BE(sub, 24);
+      out.push({
+        type: "RR", tsUs, direction,
+        fracLost, cumLost, jitterTs,
+        dlsrMs: dlsr * 1000 / 65536
+      });
+    } else if (pt === 205 && fmt === 1 && sub.length >= 12) {
+      const mediaSsrc = readU32BE(sub, 8);
+      const nackedSeqs = [];
+      for (let p = 12; p + 4 <= sub.length; p += 4) {
+        const pid = readU16BE(sub, p);
+        const blp = readU16BE(sub, p + 2);
+        nackedSeqs.push(pid);
+        for (let b = 0; b < 16; b++) if (blp & (1 << b)) nackedSeqs.push((pid + b + 1) & 0xFFFF);
+      }
+      out.push({ type: "NACK", tsUs, direction, mediaSsrc, nackedSeqs });
+    } else if (pt === 205 && fmt === 15 && sub.length >= 20) {
+      const fb = parseTwccFeedback(sub.subarray(12));
+      if (fb) out.push({ type: "TWCC", tsUs, direction, ...fb });
+    } else if (pt === 206 && fmt === 1 && sub.length >= 12) {
+      out.push({ type: "PLI", tsUs, direction, mediaSsrc: readU32BE(sub, 8) });
+    } else if (pt === 206 && fmt === 4) {
+      out.push({ type: "FIR", tsUs, direction });
+    } else if (pt === 206 && fmt === 15) {
+      out.push({ type: "REMB", tsUs, direction });
+    }
+
+    off += packetBytes;
+  }
+}
+
+// =====================================================================
+// Top-level extraction + correlation
+// =====================================================================
+
+function extractAndCorrelate(records) {
+  let firstTsUs = null;
+  let lastTsUs = null;
+  // First pass: collect RTP from BOTH directions, tag each packet with direction.
+  // We'll pick whichever direction has more RTP as the "primary" stream so the viewer
+  // works on both SEND-side and RECV-side captures without configuration.
+  const allRtp = [];
+  const rtcpEvents = [];
+  const ptStatsByDir = { SEND: new Map(), RECV: new Map() };
+  const dirRtpCount = { SEND: 0, RECV: 0 };
+
+  for (const rec of records) {
+    if (firstTsUs === null) firstTsUs = rec.tsUs;
+    lastTsUs = rec.tsUs;
+    const tsUs = rec.tsUs - firstTsUs;
+    const p = rec.payload;
+    if (p.length < TRANSPORT_HDR) continue;
+    if (p[ETH_HDR + 9] !== 0x11) continue; // not UDP
+
+    const isSend = ipMatches(p, ETH_HDR + 12, SEND_IP);
+    const dir = isSend ? "SEND" : "RECV";
+    const srcPort = readU16BE(p, ETH_HDR + IP_HDR);
+    const dstPort = readU16BE(p, ETH_HDR + IP_HDR + 2);
+    const xport = p.subarray(TRANSPORT_HDR);
+
+    const isRtpPort = (srcPort === PCAP_RTP_PORT || dstPort === PCAP_RTP_PORT);
+    const isRtcpPort = (srcPort === PCAP_RTCP_PORT || dstPort === PCAP_RTCP_PORT);
+
+    if (isRtpPort) {
+      const pkt = parseRtpPacket(xport, tsUs);
+      if (!pkt) continue;
+      pkt.dir = dir;
+      const stats = ptStatsByDir[dir];
+      const s = stats.get(pkt.pt) || { count: 0, totalSize: 0, ssrc: pkt.ssrc };
+      s.count++; s.totalSize += pkt.sizeBytes;
+      stats.set(pkt.pt, s);
+      dirRtpCount[dir]++;
+      allRtp.push(pkt);
+    } else if (isRtcpPort) {
+      walkRtcp(xport, tsUs, dir, rtcpEvents);
+    }
+  }
+
+  // Pick primary direction: whichever has more RTP. The TWCC feedback is on the OPPOSITE side.
+  const primaryDir = dirRtpCount.SEND >= dirRtpCount.RECV ? "SEND" : "RECV";
+  const ptStats = ptStatsByDir[primaryDir];
+  const allSendRtp = allRtp.filter(p => p.dir === primaryDir);
+
+  // Classify PTs into video / audio.
+  // Heuristic: prefer well-known defaults (125, 111). Otherwise: highest-mean-size = video, second = audio.
+  let videoPt = null, audioPt = null;
+  if (ptStats.has(125)) videoPt = 125;
+  if (ptStats.has(111)) audioPt = 111;
+  if (videoPt === null || audioPt === null) {
+    const sorted = [...ptStats.entries()]
+      .map(([pt, s]) => ({ pt, mean: s.totalSize / s.count, count: s.count, ssrc: s.ssrc }))
+      .filter(x => x.count > 10)
+      .sort((a, b) => b.mean - a.mean);
+    if (videoPt === null && sorted.length >= 1 && sorted[0].pt !== audioPt) videoPt = sorted[0].pt;
+    for (const e of sorted) {
+      if (audioPt === null && e.pt !== videoPt) { audioPt = e.pt; break; }
+    }
+  }
+  const videoSsrc = videoPt !== null && ptStats.get(videoPt) ? ptStats.get(videoPt).ssrc : null;
+  const audioSsrc = audioPt !== null && ptStats.get(audioPt) ? ptStats.get(audioPt).ssrc : null;
+
+  // Split by classification, extracting NAL types only for video.
+  const videoPkts = [], audioPkts = [];
+  let twccExtId = -1;
+  for (const pkt of allSendRtp) {
+    if (pkt.twccExtId >= 0 && twccExtId < 0) twccExtId = pkt.twccExtId;
+    if (pkt.pt === videoPt) {
+      pkt.nalTypes = extractNalTypes(pkt.payload);
+      videoPkts.push(pkt);
+    } else if (pkt.pt === audioPt) {
+      audioPkts.push(pkt);
+    }
+  }
+
+  // Sort packets by sendTsUs (mostly already sorted, but safe).
+  videoPkts.sort((a, b) => a.sendTsUs - b.sendTsUs);
+  audioPkts.sort((a, b) => a.sendTsUs - b.sendTsUs);
+
+  // TWCC seq → packet via time-windowed sliding map (handles 16-bit wrap correctly:
+  // captures with > 65536 video packets reuse twccSeq values, but feedbacks always
+  // reference recently-sent packets, so a window of recent packets suffices).
+  const twccEvents = rtcpEvents.filter(e => e.type === "TWCC");
+  const window = new Map();        // twccSeq → packet index
+  const WINDOW_US = 10_000_000;
+  let pktCursor = 0, pktFront = 0;
+  let anchorUs = null;
+
+  for (const fb of twccEvents) {
+    // Advance window to include all packets sent up to feedback time.
+    while (pktCursor < videoPkts.length && videoPkts[pktCursor].sendTsUs <= fb.tsUs) {
+      const p = videoPkts[pktCursor];
+      if (p.twccSeq >= 0) window.set(p.twccSeq, pktCursor);
+      pktCursor++;
+    }
+    // Evict packets older than the window.
+    const evictBefore = fb.tsUs - WINDOW_US;
+    while (pktFront < pktCursor && videoPkts[pktFront].sendTsUs < evictBefore) {
+      const p = videoPkts[pktFront];
+      if (p.twccSeq >= 0 && window.get(p.twccSeq) === pktFront) window.delete(p.twccSeq);
+      pktFront++;
+    }
+
+    // Establish anchor on first feedback that matches a windowed packet.
+    if (anchorUs === null) {
+      for (const d of fb.deltas) {
+        if (d.arrivalRelUs == null) continue;
+        const idx = window.get(d.twccSeq);
+        if (idx == null) continue;
+        anchorUs = videoPkts[idx].sendTsUs - d.arrivalRelUs;
+        break;
+      }
+      if (anchorUs === null) continue;
+    }
+
+    for (const d of fb.deltas) {
+      if (d.arrivalRelUs == null) continue;
+      const idx = window.get(d.twccSeq);
+      if (idx == null) continue;
+      const pkt = videoPkts[idx];
+      if (pkt.arrivalUs != null) continue;
+      pkt.arrivalUs = d.arrivalRelUs + anchorUs;
+      pkt.owdMs = (pkt.arrivalUs - pkt.sendTsUs) / 1000;
+    }
+  }
+
+  // Frame assembly: group video packets by rtpTs.
+  const byRtpTs = new Map();
+  for (let i = 0; i < videoPkts.length; i++) {
+    const p = videoPkts[i];
+    let arr = byRtpTs.get(p.rtpTs);
+    if (!arr) { arr = []; byRtpTs.set(p.rtpTs, arr); }
+    arr.push(i);
+  }
+  const frames = [];
+  for (const [rtpTs, idxs] of byRtpTs) {
+    let minTs = Infinity, maxTs = -Infinity, totalSize = 0;
+    let seqStart = -1, seqEnd = -1;
+    const nalTypes = new Set();
+    for (const i of idxs) {
+      const p = videoPkts[i];
+      if (p.sendTsUs < minTs) { minTs = p.sendTsUs; seqStart = p.seq; }
+      if (p.sendTsUs > maxTs) { maxTs = p.sendTsUs; seqEnd = p.seq; }
+      totalSize += p.sizeBytes;
+      if (p.nalTypes) for (const t of p.nalTypes) nalTypes.add(t);
+    }
+    frames.push({
+      tsUs: minTs, endTsUs: maxTs, rtpTs,
+      seqStart, seqEnd, sizeBytes: totalSize,
+      nalTypes: [...nalTypes].sort((a, b) => a - b),
+      frameType: (nalTypes.has(5) || nalTypes.has(7)) ? "key" : "delta",
+      pktIdxs: idxs
+    });
+  }
+  frames.sort((a, b) => a.tsUs - b.tsUs);
+  for (let i = 0; i < frames.length; i++) {
+    frames[i].id = i;
+    for (const idx of frames[i].pktIdxs) videoPkts[idx].frameId = i;
+  }
+
+  // Bitrate / packet-rate bins (100ms).
+  const durationUs = lastTsUs !== null ? lastTsUs - firstTsUs : 0;
+  const binMs = 100, binUs = binMs * 1000;
+  const nBins = Math.max(1, Math.ceil(durationUs / binUs));
+  const bitrateBins = new Array(nBins);
+  const packetRateBins = new Array(nBins);
+  for (let i = 0; i < nBins; i++) {
+    bitrateBins[i] = { tsUs: i * binUs, videoBps: 0, audioBps: 0 };
+    packetRateBins[i] = { tsUs: i * binUs, videoPps: 0, audioPps: 0 };
+  }
+  const binIdx = (ts) => Math.min(nBins - 1, Math.max(0, Math.floor(ts / binUs)));
+  for (const p of videoPkts) {
+    const i = binIdx(p.sendTsUs);
+    bitrateBins[i].videoBps += p.sizeBytes * 8 * 10;
+    packetRateBins[i].videoPps += 10;
+  }
+  for (const p of audioPkts) {
+    const i = binIdx(p.sendTsUs);
+    bitrateBins[i].audioBps += p.sizeBytes * 8 * 10;
+    packetRateBins[i].audioPps += 10;
+  }
+
+  // Earliest RTP timestamp per stream — used as the zero point for the derived
+  // "RTP time" (ms) shown alongside the raw RTP timestamp in the details panel.
+  // Take the minimum to be robust against light reorder on RECV-side captures
+  // (32-bit RTP-ts wrap is not a concern for minutes-long captures: 90 kHz wraps
+  // in ~13.3 h, 48 kHz in ~24.9 h).
+  let firstVideoRtpTs = null;
+  for (const p of videoPkts) if (firstVideoRtpTs === null || p.rtpTs < firstVideoRtpTs) firstVideoRtpTs = p.rtpTs;
+  let firstAudioRtpTs = null;
+  for (const p of audioPkts) if (firstAudioRtpTs === null || p.rtpTs < firstAudioRtpTs) firstAudioRtpTs = p.rtpTs;
+
+  return {
+    firstPcapTsUs: firstTsUs, durationUs,
+    primaryDir,
+    videoPt, audioPt, videoSsrc, audioSsrc, twccExtId,
+    videoPkts, audioPkts, frames, rtcpEvents,
+    bitrateBins, packetRateBins, binMs, anchorUs,
+    firstVideoRtpTs, firstAudioRtpTs,
+    videoClockHz: 90000, audioClockHz: 48000
+  };
+}
+
+// =====================================================================
+// Renderer
+// =====================================================================
+
+const NAL_NAMES = {
+  1: "NON-IDR", 5: "IDR", 6: "SEI", 7: "SPS", 8: "PPS", 9: "AUD",
+  24: "STAP-A", 28: "FU-A", 29: "FU-B"
+};
+
+const LAYOUT = {
+  ruler: 24,
+  framesH: 88,
+  videoH: 32,
+  audioH: 18,
+  rtcpH: 26,
+  bitrateH: 120,
+  pktrateH: 80,
+  gap: 4,
+  leftPad: 6, rightPad: 6
+};
+
+function trackOffsets() {
+  const o = {};
+  let y = 0;
+  o.ruler = y; y += LAYOUT.ruler + LAYOUT.gap;
+  o.frames = y; y += LAYOUT.framesH + LAYOUT.gap;
+  o.video = y;  y += LAYOUT.videoH + LAYOUT.gap;
+  o.audio = y;  y += LAYOUT.audioH + LAYOUT.gap;
+  o.rtcp = y;   y += LAYOUT.rtcpH + LAYOUT.gap;
+  o.bitrate = y; y += LAYOUT.bitrateH + LAYOUT.gap;
+  o.pktrate = y; y += LAYOUT.pktrateH + LAYOUT.gap;
+  o.total = y;
+  return o;
+}
+
+function colorForOwd(p) {
+  if (p.arrivalUs == null && p.twccSeq >= 0) return "#ef4444"; // tracked but never reported → lost
+  if (p.arrivalUs == null) return "#9ca3af";                   // untracked
+  const o = p.owdMs;
+  if (o < 50) return "#22c55e";
+  if (o < 200) return "#eab308";
+  return "#ef4444";
+}
+
+function lowerBound(arr, key, getter) {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (getter(arr[mid]) < key) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+class Viewer {
+  constructor(canvas, model, detailsEl) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.model = model;
+    this.detailsEl = detailsEl;
+    this.viewStartUs = 0;
+    this.viewEndUs = Math.max(model.durationUs, 1000);
+    this.dpr = Math.max(1, window.devicePixelRatio || 1);
+    this.hover = null;
+    this.selection = null;
+    this._dragging = null;
+    this.timeOrigin = "pcap";
+    this.originUs = 0;
+    this.bind();
+    this.resize();
+    this.renderDetails();
+  }
+
+  stepSelection(dir) {
+    const s = this.selection;
+    if (!s) return;
+    if (s.kind === "frame") {
+      const next = s.id + dir;
+      if (next < 0 || next >= this.model.frames.length) return;
+      this.selection = { kind: "frame", id: next };
+    } else if (s.kind === "packet") {
+      const arr = s.kindStream === "video" ? this.model.videoPkts : this.model.audioPkts;
+      const next = s.idx + dir;
+      if (next < 0 || next >= arr.length) return;
+      this.selection = { kind: "packet", kindStream: s.kindStream, idx: next };
+    } else {
+      return;
+    }
+    this.ensureSelectionVisible();
+    this.renderDetails();
+    this.render();
+  }
+
+  ensureSelectionVisible() {
+    let tsUs = null;
+    if (this.selection.kind === "frame") tsUs = this.model.frames[this.selection.id].tsUs;
+    else if (this.selection.kind === "packet") {
+      const arr = this.selection.kindStream === "video" ? this.model.videoPkts : this.model.audioPkts;
+      tsUs = arr[this.selection.idx].sendTsUs;
+    }
+    if (tsUs == null) return;
+    if (tsUs < this.viewStartUs || tsUs > this.viewEndUs) {
+      const range = this.viewEndUs - this.viewStartUs;
+      this.viewStartUs = tsUs - range / 2;
+      this.viewEndUs = tsUs + range / 2;
+      this.clampView();
+    }
+  }
+
+  setTimeOrigin(mode) {
+    this.timeOrigin = mode;
+    if (mode === "video" && this.model.videoPkts.length) {
+      this.originUs = this.model.videoPkts[0].sendTsUs;
+    } else if (mode === "audio" && this.model.audioPkts.length) {
+      this.originUs = this.model.audioPkts[0].sendTsUs;
+    } else {
+      this.originUs = 0;
+    }
+    this.render();
+    this.renderDetails();
+  }
+
+  bind() {
+    this.canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      if (e.shiftKey) this.panByPixels(-e.deltaY);
+      else this.zoomAt(e.offsetX, Math.pow(1.2, -e.deltaY / 100));
+    }, { passive: false });
+
+    this.canvas.addEventListener("mousedown", (e) => {
+      if (e.button === 1 || (e.button === 0 && e.altKey)) {
+        e.preventDefault();
+        this._dragging = { x: e.clientX, viewStartUs: this.viewStartUs, viewEndUs: this.viewEndUs };
+      }
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!this._dragging) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const dx = e.clientX - this._dragging.x;
+      const range = this._dragging.viewEndUs - this._dragging.viewStartUs;
+      const dUs = -dx * range / Math.max(1, rect.width - LAYOUT.leftPad - LAYOUT.rightPad);
+      this.viewStartUs = this._dragging.viewStartUs + dUs;
+      this.viewEndUs = this._dragging.viewEndUs + dUs;
+      this.clampView();
+      this.render();
+    });
+    window.addEventListener("mouseup", () => { this._dragging = null; });
+
+    this.canvas.addEventListener("mousemove", (e) => {
+      if (this._dragging) return;
+      const hit = this.hitTest(e.offsetX, e.offsetY);
+      if (hit !== this.hover) {
+        this.hover = hit;
+        this.canvas.style.cursor = hit ? "pointer" : "crosshair";
+      }
+    });
+
+    this.canvas.addEventListener("click", (e) => {
+      const hit = this.hitTest(e.offsetX, e.offsetY);
+      this.selection = hit;
+      this.renderDetails();
+      this.render();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      const k = e.key.toLowerCase();
+      if (e.key === "0" || k === "f") { this.fitAll(); }
+      else if (e.key === "+" || e.key === "=") { this.zoomAt(this.canvas.clientWidth / 2, 1.5); }
+      else if (e.key === "-" || e.key === "_") { this.zoomAt(this.canvas.clientWidth / 2, 1 / 1.5); }
+      else if (e.key === "ArrowLeft") { this.panByPixels(-80); }
+      else if (e.key === "ArrowRight") { this.panByPixels(80); }
+      else if (k === "a" || k === "d") { this.stepSelection(k === "d" ? 1 : -1); }
+      else return;
+      e.preventDefault();
+    });
+
+    window.addEventListener("resize", () => { this.resize(); });
+  }
+
+  resize() {
+    const rect = this.canvas.getBoundingClientRect();
+    this.canvas.width = Math.max(1, Math.floor(rect.width * this.dpr));
+    this.canvas.height = Math.max(1, Math.floor(rect.height * this.dpr));
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.render();
+  }
+
+  fitAll() {
+    this.viewStartUs = 0;
+    this.viewEndUs = Math.max(this.model.durationUs, 1000);
+    this.render();
+  }
+
+  zoomAt(px, factor) {
+    const W = this.plotWidth();
+    if (W <= 0) return;
+    const xFrac = Math.min(1, Math.max(0, (px - LAYOUT.leftPad) / W));
+    const focus = this.viewStartUs + xFrac * (this.viewEndUs - this.viewStartUs);
+    const newRange = (this.viewEndUs - this.viewStartUs) / factor;
+    this.viewStartUs = focus - xFrac * newRange;
+    this.viewEndUs = focus + (1 - xFrac) * newRange;
+    this.clampView();
+    this.render();
+  }
+
+  panByPixels(dx) {
+    const W = this.plotWidth();
+    if (W <= 0) return;
+    const range = this.viewEndUs - this.viewStartUs;
+    const dUs = dx * range / W;
+    this.viewStartUs += dUs; this.viewEndUs += dUs;
+    this.clampView();
+    this.render();
+  }
+
+  clampView() {
+    const minRange = 100;
+    if (this.viewEndUs - this.viewStartUs < minRange) {
+      const mid = (this.viewStartUs + this.viewEndUs) / 2;
+      this.viewStartUs = mid - minRange / 2;
+      this.viewEndUs = mid + minRange / 2;
+    }
+  }
+
+  plotWidth() {
+    const rect = this.canvas.getBoundingClientRect();
+    return Math.max(1, rect.width - LAYOUT.leftPad - LAYOUT.rightPad);
+  }
+
+  xOf(tsUs) {
+    const W = this.plotWidth();
+    return LAYOUT.leftPad + (tsUs - this.viewStartUs) * W / (this.viewEndUs - this.viewStartUs);
+  }
+  usOf(x) {
+    const W = this.plotWidth();
+    return this.viewStartUs + (x - LAYOUT.leftPad) * (this.viewEndUs - this.viewStartUs) / W;
+  }
+
+  // -----------------------------------------------------------------
+  // Render
+  // -----------------------------------------------------------------
+  render() {
+    const rect = this.canvas.getBoundingClientRect();
+    const W = rect.width, H = rect.height;
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, W, H);
+
+    const o = trackOffsets();
+    this.drawRuler(o.ruler);
+    this.drawTrackBg(o.frames, LAYOUT.framesH, "Frames");
+    this.drawFrames(o.frames);
+    this.drawTrackBg(o.video, LAYOUT.videoH, "Video pkts");
+    this.drawPackets(o.video, LAYOUT.videoH, this.model.videoPkts, true);
+    this.drawTrackBg(o.audio, LAYOUT.audioH, "Audio pkts");
+    this.drawPackets(o.audio, LAYOUT.audioH, this.model.audioPkts, false);
+    this.drawTrackBg(o.rtcp, LAYOUT.rtcpH, "RTCP");
+    this.drawRtcp(o.rtcp);
+    this.drawTrackBg(o.bitrate, LAYOUT.bitrateH, "Bitrate (kbps)");
+    this.drawBitrate(o.bitrate);
+    this.drawTrackBg(o.pktrate, LAYOUT.pktrateH, "Packet rate (pps)");
+    this.drawPacketRate(o.pktrate);
+
+    // Selection highlight
+    if (this.selection) this.drawSelectionMarker(o);
+
+    // Update top-bar zoom stat
+    document.getElementById("zoomStat").innerHTML = `view: <b>${formatDuration(this.viewStartUs - this.originUs)}</b> .. <b>${formatDuration(this.viewEndUs - this.originUs)}</b> (range <b>${formatDuration(this.viewEndUs - this.viewStartUs)}</b>)`;
+  }
+
+  drawTrackBg(y, h, label) {
+    const ctx = this.ctx;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, y, this.canvas.clientWidth, h);
+    ctx.fillStyle = "#9ca3af";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.textBaseline = "top";
+    ctx.fillText(label, LAYOUT.leftPad + 2, y + 2);
+  }
+
+  drawRuler(y) {
+    const ctx = this.ctx;
+    const W = this.plotWidth();
+    ctx.fillStyle = "#f3f4f6";
+    ctx.fillRect(0, y, this.canvas.clientWidth, LAYOUT.ruler);
+    // Tick spacing: aim for ~80px between ticks. Tick values align to multiples
+    // of step in display time (pcap time minus origin), so labels read as nice
+    // numbers regardless of the chosen origin.
+    const range = this.viewEndUs - this.viewStartUs;
+    const targetTicks = Math.max(2, Math.floor(W / 80));
+    const rawStep = range / targetTicks;
+    const step = niceStep(rawStep);
+    const dispStart = this.viewStartUs - this.originUs;
+    const dispEnd = this.viewEndUs - this.originUs;
+    const firstDisp = Math.ceil(dispStart / step) * step;
+    ctx.strokeStyle = "#d1d5db";
+    ctx.fillStyle = "#374151";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.textBaseline = "alphabetic";
+    ctx.beginPath();
+    for (let dt = firstDisp; dt <= dispEnd; dt += step) {
+      const x = this.xOf(dt + this.originUs);
+      ctx.moveTo(x, y); ctx.lineTo(x, y + LAYOUT.ruler);
+      ctx.fillText(formatDuration(dt), x + 2, y + LAYOUT.ruler - 4);
+    }
+    ctx.stroke();
+  }
+
+  drawFrames(yTop) {
+    const ctx = this.ctx;
+    const frames = this.model.frames;
+    if (!frames.length) return;
+    // Frames are sorted by tsUs. Step back one to catch a frame whose span includes viewStart.
+    let startIdx = Math.max(0, lowerBound(frames, this.viewStartUs, f => f.tsUs) - 1);
+    let maxSize = 1;
+    for (let i = startIdx; i < frames.length; i++) {
+      if (frames[i].tsUs > this.viewEndUs) break;
+      if (frames[i].endTsUs < this.viewStartUs) continue;
+      if (frames[i].sizeBytes > maxSize) maxSize = frames[i].sizeBytes;
+    }
+    const trackH = LAYOUT.framesH - 4;
+    for (let i = startIdx; i < frames.length; i++) {
+      const f = frames[i];
+      if (f.tsUs > this.viewEndUs) break;
+      if (f.endTsUs < this.viewStartUs) continue;
+      const x0 = this.xOf(f.tsUs);
+      const x1 = this.xOf(f.endTsUs);
+      const w = Math.max(1, x1 - x0);
+      const hh = Math.max(2, Math.sqrt(f.sizeBytes / maxSize) * trackH);
+      const color = f.frameType === "key" ? "#22d3ee" : "#3b82f6";
+      ctx.fillStyle = color;
+      ctx.fillRect(x0, yTop + 2 + (trackH - hh), w, hh);
+      // selection outline
+      if (this.selection && this.selection.kind === "frame" && this.selection.id === f.id) {
+        ctx.strokeStyle = "#111827";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x0 - 0.5, yTop + 2 + (trackH - hh) - 0.5, w + 1, hh + 1);
+      }
+    }
+  }
+
+  drawPackets(yTop, h, pkts, isVideo) {
+    const ctx = this.ctx;
+    if (!pkts.length) return;
+    const startIdx = lowerBound(pkts, this.viewStartUs, p => p.sendTsUs);
+    const endIdx = lowerBound(pkts, this.viewEndUs, p => p.sendTsUs);
+    const visibleCount = endIdx - startIdx;
+    const W = this.plotWidth();
+    const usPerPx = (this.viewEndUs - this.viewStartUs) / W;
+    if (visibleCount > W) {
+      // Downsample: bucket per 1px column, keep worst color.
+      const cols = Math.ceil(W);
+      const colColor = new Array(cols).fill(null);
+      const colSize = new Float32Array(cols);
+      const colPriority = new Int8Array(cols); // higher = redder
+      for (let i = startIdx; i < pkts.length; i++) {
+        const p = pkts[i];
+        if (p.sendTsUs > this.viewEndUs) break;
+        const col = Math.floor((this.xOf(p.sendTsUs) - LAYOUT.leftPad));
+        if (col < 0 || col >= cols) continue;
+        const c = isVideo ? colorForOwd(p) : "#9ca3af";
+        const prio = c === "#ef4444" ? 4 : c === "#eab308" ? 3 : c === "#22c55e" ? 2 : 1;
+        if (prio > colPriority[col]) {
+          colPriority[col] = prio;
+          colColor[col] = c;
+        }
+        colSize[col] += p.sizeBytes;
+      }
+      let maxColSize = 1;
+      for (let i = 0; i < cols; i++) if (colSize[i] > maxColSize) maxColSize = colSize[i];
+      for (let i = 0; i < cols; i++) {
+        if (!colColor[i]) continue;
+        ctx.fillStyle = colColor[i];
+        const hh = Math.max(2, (colSize[i] / maxColSize) * (h - 4));
+        ctx.fillRect(LAYOUT.leftPad + i, yTop + (h - 2) - hh, 1, hh);
+      }
+    } else {
+      for (let i = startIdx; i < pkts.length; i++) {
+        const p = pkts[i];
+        if (p.sendTsUs > this.viewEndUs) break;
+        const x = this.xOf(p.sendTsUs);
+        ctx.fillStyle = isVideo ? colorForOwd(p) : "#9ca3af";
+        const w = Math.max(1, Math.min(6, 1 / Math.max(usPerPx, 1e-6)));
+        ctx.fillRect(x, yTop + 2, w, h - 4);
+      }
+    }
+    // Selection mark
+    if (this.selection && this.selection.kind === "packet" && this.selection.kindStream === (isVideo ? "video" : "audio")) {
+      const p = pkts[this.selection.idx];
+      if (p) {
+        const x = this.xOf(p.sendTsUs);
+        ctx.strokeStyle = "#111827";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - 1.5, yTop + 1.5, Math.max(2, 4), h - 3);
+      }
+    }
+  }
+
+  drawRtcp(yTop) {
+    const ctx = this.ctx;
+    const events = this.model.rtcpEvents;
+    for (const ev of events) {
+      if (ev.tsUs < this.viewStartUs || ev.tsUs > this.viewEndUs) continue;
+      const x = this.xOf(ev.tsUs);
+      let color, h = LAYOUT.rtcpH - 4;
+      if (ev.type === "PLI") color = "#ef4444";
+      else if (ev.type === "NACK") color = "#f97316";
+      else if (ev.type === "RR") color = "#3b82f6";
+      else if (ev.type === "SR") color = "#8b5cf6";
+      else if (ev.type === "FIR") color = "#dc2626";
+      else if (ev.type === "REMB") color = "#0ea5e9";
+      else if (ev.type === "TWCC") { color = "#d1d5db"; h = 4; }
+      ctx.fillStyle = color;
+      ctx.fillRect(x, yTop + (LAYOUT.rtcpH - h) / 2, 2, h);
+    }
+  }
+
+  drawBitrate(yTop) {
+    const ctx = this.ctx;
+    const bins = this.model.bitrateBins;
+    if (!bins.length) return;
+    const binUs = this.model.binMs * 1000;
+    let max = 1;
+    for (const b of bins) {
+      const t = b.videoBps + b.audioBps;
+      if (t > max) max = t;
+    }
+    const h = LAYOUT.bitrateH - 14;
+    const yBase = yTop + LAYOUT.bitrateH - 2;
+    // Stacked area: video on bottom, audio on top.
+    const drawArea = (key, color) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(this.xOf(0), yBase);
+      for (const b of bins) {
+        const x = this.xOf(b.tsUs + binUs / 2);
+        const y = yBase - (key === "videoBps" ? b.videoBps : (b.videoBps + b.audioBps)) / max * h;
+        ctx.lineTo(x, y);
+      }
+      const last = bins[bins.length - 1];
+      ctx.lineTo(this.xOf(last.tsUs + binUs), yBase);
+      ctx.closePath();
+      ctx.fill();
+    };
+    drawArea("totalBps", "rgba(249, 115, 22, 0.5)"); // audio (on top of total)
+    drawArea("videoBps", "rgba(34, 211, 238, 0.7)"); // video (lower stack)
+    // Y-axis label
+    ctx.fillStyle = "#6b7280";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.textBaseline = "top";
+    ctx.fillText(`max ${(max / 1000).toFixed(0)} kbps`, LAYOUT.leftPad + 60, yTop + 2);
+  }
+
+  drawPacketRate(yTop) {
+    const ctx = this.ctx;
+    const bins = this.model.packetRateBins;
+    if (!bins.length) return;
+    const binUs = this.model.binMs * 1000;
+    let max = 1;
+    for (const b of bins) {
+      if (b.videoPps > max) max = b.videoPps;
+      if (b.audioPps > max) max = b.audioPps;
+    }
+    const h = LAYOUT.pktrateH - 14;
+    const yBase = yTop + LAYOUT.pktrateH - 2;
+    const drawLine = (key, color) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      let started = false;
+      for (const b of bins) {
+        const x = this.xOf(b.tsUs + binUs / 2);
+        const y = yBase - b[key] / max * h;
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    drawLine("videoPps", "#22d3ee");
+    drawLine("audioPps", "#f97316");
+    ctx.fillStyle = "#6b7280";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.textBaseline = "top";
+    ctx.fillText(`max ${max} pps`, LAYOUT.leftPad + 90, yTop + 2);
+  }
+
+  drawSelectionMarker(o) {
+    const ctx = this.ctx;
+    if (!this.selection) return;
+    let tsUs = null;
+    if (this.selection.kind === "frame") tsUs = this.model.frames[this.selection.id].tsUs;
+    else if (this.selection.kind === "packet") {
+      const arr = this.selection.kindStream === "video" ? this.model.videoPkts : this.model.audioPkts;
+      tsUs = arr[this.selection.idx].sendTsUs;
+    } else if (this.selection.kind === "rtcp") tsUs = this.model.rtcpEvents[this.selection.idx].tsUs;
+    if (tsUs === null) return;
+    const x = this.xOf(tsUs);
+    if (x < LAYOUT.leftPad - 2 || x > this.canvas.clientWidth - LAYOUT.rightPad + 2) return;
+    ctx.strokeStyle = "rgba(17, 24, 39, 0.4)";
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, o.ruler);
+    ctx.lineTo(x, o.total);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // -----------------------------------------------------------------
+  // Hit testing
+  // -----------------------------------------------------------------
+  hitTest(x, y) {
+    const o = trackOffsets();
+    if (y >= o.frames && y < o.frames + LAYOUT.framesH) {
+      const tUs = this.usOf(x);
+      const frames = this.model.frames;
+      const idx = lowerBound(frames, tUs, f => f.endTsUs);
+      // try both this and prev (frame may have started earlier)
+      for (const i of [idx, idx - 1]) {
+        if (i < 0 || i >= frames.length) continue;
+        const f = frames[i];
+        const x0 = this.xOf(f.tsUs);
+        const x1 = this.xOf(f.endTsUs);
+        if (x >= x0 - 1 && x <= x1 + 1) return { kind: "frame", id: f.id };
+      }
+    }
+    if (y >= o.video && y < o.video + LAYOUT.videoH) {
+      return this.hitTestPackets(x, this.model.videoPkts, "video");
+    }
+    if (y >= o.audio && y < o.audio + LAYOUT.audioH) {
+      return this.hitTestPackets(x, this.model.audioPkts, "audio");
+    }
+    if (y >= o.rtcp && y < o.rtcp + LAYOUT.rtcpH) {
+      const events = this.model.rtcpEvents;
+      let bestIdx = -1, bestDx = 4;
+      for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        if (ev.tsUs < this.viewStartUs || ev.tsUs > this.viewEndUs) continue;
+        const dx = Math.abs(this.xOf(ev.tsUs) - x);
+        if (dx < bestDx) { bestDx = dx; bestIdx = i; }
+      }
+      if (bestIdx >= 0) return { kind: "rtcp", idx: bestIdx };
+    }
+    return null;
+  }
+
+  hitTestPackets(x, pkts, kindStream) {
+    if (!pkts.length) return null;
+    const tUs = this.usOf(x);
+    const idx = lowerBound(pkts, tUs, p => p.sendTsUs);
+    let bestIdx = -1, bestDx = 5;
+    for (const i of [idx - 1, idx, idx + 1]) {
+      if (i < 0 || i >= pkts.length) continue;
+      const dx = Math.abs(this.xOf(pkts[i].sendTsUs) - x);
+      if (dx < bestDx) { bestDx = dx; bestIdx = i; }
+    }
+    if (bestIdx >= 0) return { kind: "packet", kindStream, idx: bestIdx };
+    return null;
+  }
+
+  // -----------------------------------------------------------------
+  // Details panel
+  // -----------------------------------------------------------------
+  renderDetails() {
+    const el = this.detailsEl;
+    if (!this.selection) {
+      el.innerHTML = this.statsSummary();
+      return;
+    }
+    const s = this.selection;
+    if (s.kind === "frame") {
+      const f = this.model.frames[s.id];
+      const pkts = f.pktIdxs.map(i => this.model.videoPkts[i]).sort((a, b) => a.seq - b.seq);
+      el.innerHTML = `
+        <div class="row"><span class="k">Frame</span><span class="v">#${f.id} (${f.frameType})</span></div>
+        <div class="row"><span class="k">RTP timestamp</span><span class="v">${f.rtpTs}</span></div>
+        <div class="row"><span class="k">RTP time</span><span class="v">${rtpRel(f.rtpTs, this.model.firstVideoRtpTs, this.model.videoClockHz)}</span></div>
+        <div class="row"><span class="k">Seq range</span><span class="v">${f.seqStart}..${f.seqEnd} (${pkts.length} pkts)</span></div>
+        <div class="row"><span class="k">Span</span><span class="v">${formatDuration(f.tsUs - this.originUs)} → ${formatDuration(f.endTsUs - this.originUs)} (${formatDuration(f.endTsUs - f.tsUs)})</span></div>
+        <div class="row"><span class="k">Size</span><span class="v">${f.sizeBytes.toLocaleString()} B</span></div>
+        <div class="row"><span class="k">NAL types</span><span class="v">${f.nalTypes.map(t => `${t}${NAL_NAMES[t] ? "(" + NAL_NAMES[t] + ")" : ""}`).join(", ") || "—"}</span></div>
+        <h2 style="margin-top:12px;">Packets</h2>
+        ${packetsTable(pkts, this.originUs)}
+      `;
+    } else if (s.kind === "packet") {
+      const arr = s.kindStream === "video" ? this.model.videoPkts : this.model.audioPkts;
+      const p = arr[s.idx];
+      el.innerHTML = `
+        <div class="row"><span class="k">Stream</span><span class="v">${s.kindStream} (PT=${p.pt}, SSRC=0x${p.ssrc.toString(16)})</span></div>
+        <div class="row"><span class="k">Seq</span><span class="v">${p.seq}</span></div>
+        <div class="row"><span class="k">TWCC seq</span><span class="v">${p.twccSeq < 0 ? "—" : p.twccSeq}</span></div>
+        <div class="row"><span class="k">Send time</span><span class="v">${formatSec(p.sendTsUs - this.originUs)}</span></div>
+        <div class="row"><span class="k">Arrival</span><span class="v">${p.arrivalUs == null ? "—" : formatDuration(p.arrivalUs - this.originUs)}</span></div>
+        <div class="row"><span class="k">OWD</span><span class="v">${p.owdMs == null ? "—" : p.owdMs.toFixed(2) + " ms"}</span></div>
+        <div class="row"><span class="k">Size</span><span class="v">${p.sizeBytes} B</span></div>
+        <div class="row"><span class="k">RTP timestamp</span><span class="v">${p.rtpTs}</span></div>
+        <div class="row"><span class="k">RTP time</span><span class="v">${s.kindStream === "video"
+          ? rtpRel(p.rtpTs, this.model.firstVideoRtpTs, this.model.videoClockHz)
+          : rtpRel(p.rtpTs, this.model.firstAudioRtpTs, this.model.audioClockHz)}</span></div>
+        <div class="row"><span class="k">Marker</span><span class="v">${p.marker ? "yes" : "no"}</span></div>
+        <div class="row"><span class="k">Padding</span><span class="v">${p.isPadding ? "yes" : "no"}</span></div>
+        <div class="row"><span class="k">Frame</span><span class="v">${p.frameId == null ? "—" : "#" + p.frameId}</span></div>
+        ${p.nalTypes ? `<div class="row"><span class="k">NAL types</span><span class="v">${p.nalTypes.map(t => `${t}${NAL_NAMES[t] ? "(" + NAL_NAMES[t] + ")" : ""}`).join(", ") || "—"}</span></div>` : ""}
+      `;
+    } else if (s.kind === "rtcp") {
+      const ev = this.model.rtcpEvents[s.idx];
+      let body = `
+        <div class="row"><span class="k">Type</span><span class="v">${ev.type}</span></div>
+        <div class="row"><span class="k">Direction</span><span class="v">${ev.direction}</span></div>
+        <div class="row"><span class="k">Time</span><span class="v">${formatDuration(ev.tsUs - this.originUs)}</span></div>
+      `;
+      if (ev.type === "TWCC") {
+        body += `
+          <div class="row"><span class="k">Base seq</span><span class="v">${ev.baseSeq}</span></div>
+          <div class="row"><span class="k">Count</span><span class="v">${ev.count}</span></div>
+          <div class="row"><span class="k">Received / lost</span><span class="v">${ev.received} / ${ev.lost}</span></div>
+          <div class="row"><span class="k">Ref time</span><span class="v">${ev.refTimeMs.toFixed(0)} ms</span></div>
+        `;
+      } else if (ev.type === "RR") {
+        body += `
+          <div class="row"><span class="k">Frac lost</span><span class="v">${ev.fracLost} (${(ev.fracLost * 100 / 256).toFixed(1)}%)</span></div>
+          <div class="row"><span class="k">Cumulative lost</span><span class="v">${ev.cumLost}</span></div>
+          <div class="row"><span class="k">Jitter</span><span class="v">${ev.jitterTs} ts-units</span></div>
+          <div class="row"><span class="k">DLSR</span><span class="v">${ev.dlsrMs.toFixed(2)} ms</span></div>
+        `;
+      } else if (ev.type === "NACK") {
+        body += `
+          <div class="row"><span class="k">Media SSRC</span><span class="v">0x${ev.mediaSsrc.toString(16)}</span></div>
+          <div class="row"><span class="k">Nacked seqs</span><span class="v">${ev.nackedSeqs.length}</span></div>
+        `;
+        if (ev.nackedSeqs.length) {
+          body += `<div style="font-family: ui-monospace; font-size: 11px; color:#374151; max-height: 200px; overflow:auto;">${ev.nackedSeqs.join(", ")}</div>`;
+        }
+      } else if (ev.type === "SR") {
+        body += `<div class="row"><span class="k">NTP unix</span><span class="v">${ev.ntpUnix.toFixed(3)}</span></div>`;
+      }
+      el.innerHTML = body;
+    }
+  }
+
+  statsSummary() {
+    const m = this.model;
+    return `
+      <div class="row"><span class="k">Duration</span><span class="v">${formatDuration(m.durationUs)}</span></div>
+      <div class="row"><span class="k">Primary direction</span><span class="v">${m.primaryDir}</span></div>
+      <div class="row"><span class="k">Video PT</span><span class="v">${m.videoPt ?? "—"}${m.videoSsrc ? " (SSRC 0x" + m.videoSsrc.toString(16) + ")" : ""}</span></div>
+      <div class="row"><span class="k">Audio PT</span><span class="v">${m.audioPt ?? "—"}${m.audioSsrc ? " (SSRC 0x" + m.audioSsrc.toString(16) + ")" : ""}</span></div>
+      <div class="row"><span class="k">TWCC ext id</span><span class="v">${m.twccExtId < 0 ? "—" : m.twccExtId}</span></div>
+      <div class="row"><span class="k">Video frames</span><span class="v">${m.frames.length}</span></div>
+      <div class="row"><span class="k">Video pkts</span><span class="v">${m.videoPkts.length}</span></div>
+      <div class="row"><span class="k">Audio pkts</span><span class="v">${m.audioPkts.length}</span></div>
+      <div class="row"><span class="k">RTCP events</span><span class="v">${m.rtcpEvents.length}</span></div>
+      <div class="row"><span class="k">— PLI</span><span class="v">${m.rtcpEvents.filter(e => e.type === "PLI").length}</span></div>
+      <div class="row"><span class="k">— NACK</span><span class="v">${m.rtcpEvents.filter(e => e.type === "NACK").length}</span></div>
+      <div class="row"><span class="k">— RR</span><span class="v">${m.rtcpEvents.filter(e => e.type === "RR").length}</span></div>
+      <div class="row"><span class="k">— SR</span><span class="v">${m.rtcpEvents.filter(e => e.type === "SR").length}</span></div>
+      <div class="row"><span class="k">— TWCC</span><span class="v">${m.rtcpEvents.filter(e => e.type === "TWCC").length}</span></div>
+      ${m.anchorUs == null
+        ? `<div style="margin-top:8px; color:#dc2626;">No TWCC anchor found — arrival times unavailable.</div>`
+        : `<div style="margin-top:8px; color:#6b7280;">TWCC anchored. Click a packet for OWD.</div>`}
+      <div style="margin-top:12px; color:#9ca3af;">Click any frame, packet, or RTCP marker for details.</div>
+    `;
+  }
+}
+
+function packetsTable(pkts, originUs) {
+  let rows = "";
+  for (const p of pkts) {
+    const owdClass = p.owdMs == null ? "lost" : p.owdMs < 50 ? "fast" : p.owdMs < 200 ? "slow" : "lost";
+    rows += `<tr>
+      <td>${p.seq}</td>
+      <td>${p.twccSeq < 0 ? "—" : p.twccSeq}</td>
+      <td>${formatDuration(p.sendTsUs - originUs)}</td>
+      <td>${p.arrivalUs == null ? "—" : formatDuration(p.arrivalUs - originUs)}</td>
+      <td class="${owdClass}">${p.owdMs == null ? "—" : p.owdMs.toFixed(2)}</td>
+      <td>${p.sizeBytes}</td>
+      <td>${p.marker ? "M" : ""}${p.isPadding ? "P" : ""}</td>
+    </tr>`;
+  }
+  return `<table>
+    <thead><tr><th>seq</th><th>twcc</th><th>send</th><th>arrival</th><th>owd ms</th><th>sz</th><th>flg</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+// =====================================================================
+// Misc helpers
+// =====================================================================
+
+function niceStep(raw) {
+  const pow = Math.pow(10, Math.floor(Math.log10(Math.max(1, raw))));
+  const norm = raw / pow;
+  let mult = 1;
+  if (norm < 1.5) mult = 1;
+  else if (norm < 3.5) mult = 2;
+  else if (norm < 7.5) mult = 5;
+  else mult = 10;
+  return mult * pow;
+}
+
+function formatDuration(us) {
+  const sign = us < 0 ? "-" : "";
+  const a = Math.abs(us);
+  if (a < 1000) return `${sign}${a.toFixed(0)} µs`;
+  if (a < 1_000_000) return `${sign}${(a / 1000).toFixed(a < 10_000 ? 2 : 1)} ms`;
+  return `${sign}${(a / 1_000_000).toFixed(a < 10_000_000 ? 3 : 2)} s`;
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MiB`;
+}
+
+function formatSec(us) {
+  if (us == null) return "—";
+  return (us / 1_000_000).toFixed(3) + " s";
+}
+
+function rtpRel(ts, first, clockHz) {
+  if (first == null || clockHz == null) return "—";
+  return ((ts - first) / clockHz).toFixed(3) + " s";
+}
+
+// =====================================================================
+// Wire-up
+// =====================================================================
+
+const canvas = document.getElementById("canvas");
+const fileInput = document.getElementById("fileInput");
+const fileStat = document.getElementById("fileStat");
+const countStat = document.getElementById("countStat");
+const detailsBody = document.getElementById("detailsBody");
+const empty = document.getElementById("empty");
+const dropOverlay = document.getElementById("dropOverlay");
+const originSel = document.getElementById("originSel");
+
+let viewer = null;
+
+originSel.addEventListener("change", () => {
+  if (viewer) viewer.setTimeOrigin(originSel.value);
+});
+
+function refreshOriginOptions(model) {
+  const optVid = originSel.querySelector('option[value="video"]');
+  const optAud = originSel.querySelector('option[value="audio"]');
+  optVid.disabled = !model.videoPkts.length;
+  optAud.disabled = !model.audioPkts.length;
+  if (originSel.options[originSel.selectedIndex].disabled) originSel.value = "pcap";
+}
+
+async function loadFile(file) {
+  fileStat.innerHTML = `loading <b>${file.name}</b>...`;
+  countStat.textContent = "";
+  empty.classList.add("hidden");
+  try {
+    const buf = await file.arrayBuffer();
+    const t0 = performance.now();
+    const records = parsePcap(buf);
+    const t1 = performance.now();
+    const model = extractAndCorrelate(records);
+    const t2 = performance.now();
+    fileStat.innerHTML = `<b>${file.name}</b> (${formatBytes(buf.byteLength)})`;
+    countStat.innerHTML = `<b>${records.length.toLocaleString()}</b> records, <b>${model.frames.length}</b> frames, <b>${model.videoPkts.length}</b>+<b>${model.audioPkts.length}</b> pkts &middot; parsed in <b>${(t1 - t0).toFixed(0)}</b>+<b>${(t2 - t1).toFixed(0)}</b>ms`;
+    if (viewer) viewer = null;
+    refreshOriginOptions(model);
+    viewer = new Viewer(canvas, model, detailsBody);
+    viewer.setTimeOrigin(originSel.value);
+  } catch (err) {
+    fileStat.innerHTML = `<span style="color:#dc2626;">error: ${err.message}</span>`;
+    countStat.textContent = "";
+    empty.classList.remove("hidden");
+    console.error(err);
+  }
+}
+
+fileInput.addEventListener("change", (e) => {
+  if (e.target.files && e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+window.addEventListener("dragenter", (e) => { e.preventDefault(); dropOverlay.classList.add("active"); });
+window.addEventListener("dragover", (e) => { e.preventDefault(); });
+window.addEventListener("dragleave", (e) => {
+  if (e.relatedTarget === null) dropOverlay.classList.remove("active");
+});
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropOverlay.classList.remove("active");
+  if (e.dataTransfer.files && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+// Allow ?file= query parameter would require fetch (blocked on file://). Skip.
+</script>
+</body>
+</html>
