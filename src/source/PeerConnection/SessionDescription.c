@@ -175,7 +175,7 @@ STATUS setPayloadTypesForOffer(PHashTable codecTable, PHashTable redTable, BOOL 
     CHK_STATUS(hashTableUpsert(codecTable, RTC_CODEC_H265, DEFAULT_PAYLOAD_H265));
 
     if (useRedForOpus && redTable != NULL) {
-        CHK_STATUS(hashTableUpsert(redTable, RTC_RED_CODEC_OPUS, DEFAULT_PAYLOAD_RED));
+        CHK_STATUS(hashTableUpsert(redTable, RTC_CODEC_OPUS, DEFAULT_PAYLOAD_RED));
     }
 
 CleanUp:
@@ -287,7 +287,7 @@ STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PHas
                 }
                 if (fmtpValid) {
                     DLOGV("Found RED payload type %" PRId64 " (Opus inner PT %" PRId64 ")", parsedPayloadType, opusPtFromCodec);
-                    CHK_STATUS(hashTableUpsert(redTable, RTC_RED_CODEC_OPUS, parsedPayloadType));
+                    CHK_STATUS(hashTableUpsert(redTable, RTC_CODEC_OPUS, parsedPayloadType));
                 } else {
                     DLOGW("Remote offered RED PT %" PRId64 " but fmtp missing/invalid — falling back to plain Opus", parsedPayloadType);
                 }
@@ -312,10 +312,13 @@ STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PHas
             }
 
             if ((end = STRSTR(attributeValue, RTX_CODEC_VALUE)) != NULL) {
+                // attributeValue is an fmtp value with the "fmtp:" prefix already stripped by the
+                // deserializer, e.g. "120 apt=119": the leading token is the RTX payload type and
+                // "apt=" gives the primary payload type it repairs.
                 CHK_STATUS(STRTOUI64(end + STRLEN(RTX_CODEC_VALUE), NULL, 10, &parsedPayloadType));
-                if ((end = STRSTR(attributeValue, FMTP_VALUE)) != NULL) {
-                    CHK_STATUS(STRTOUI64(end + STRLEN(FMTP_VALUE), NULL, 10, &fmtpVal));
-                    aptFmtpVals[aptFmtpValCount++] = (UINT32) ((fmtpVal << 8u) & parsedPayloadType);
+                if ((end = STRCHR(attributeValue, ' ')) != NULL) {
+                    CHK_STATUS(STRTOUI64(attributeValue, end, 10, &fmtpVal));
+                    aptFmtpVals[aptFmtpValCount++] = (UINT16) ((fmtpVal << 8u) | parsedPayloadType);
                 }
             }
         }
@@ -329,7 +332,7 @@ STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PHas
             if (supportCodec) {
                 CHK_STATUS(hashTableGet(codecTable, RTC_CODEC_H265, &hashmapPayloadType));
                 if (aptVal == hashmapPayloadType) {
-                    CHK_STATUS(hashTableUpsert(rtxTable, RTC_RTX_CODEC_H265, fmtpVal));
+                    CHK_STATUS(hashTableUpsert(rtxTable, RTC_CODEC_H265, fmtpVal));
                     DLOGV("h265 found apt type %" PRId64 " for fmtp %" PRId64, aptVal, fmtpVal);
                 }
             }
@@ -338,7 +341,7 @@ STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PHas
             if (supportCodec) {
                 CHK_STATUS(hashTableGet(codecTable, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, &hashmapPayloadType));
                 if (aptVal == hashmapPayloadType) {
-                    CHK_STATUS(hashTableUpsert(rtxTable, RTC_RTX_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, fmtpVal));
+                    CHK_STATUS(hashTableUpsert(rtxTable, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, fmtpVal));
                     DLOGV("found apt type %" PRId64 " for fmtp %" PRId64, aptVal, fmtpVal);
                 }
             }
@@ -347,7 +350,7 @@ STATUS setPayloadTypesFromOffer(PHashTable codecTable, PHashTable rtxTable, PHas
             if (supportCodec) {
                 CHK_STATUS(hashTableGet(codecTable, RTC_CODEC_VP8, &hashmapPayloadType));
                 if (aptVal == hashmapPayloadType) {
-                    CHK_STATUS(hashTableUpsert(rtxTable, RTC_RTX_CODEC_VP8, fmtpVal));
+                    CHK_STATUS(hashTableUpsert(rtxTable, RTC_CODEC_VP8, fmtpVal));
                 }
             }
         }
@@ -371,7 +374,7 @@ STATUS setTransceiverPayloadTypes(PHashTable codecTable, PHashTable rtxTable, PH
     UINT64 opusPt = 0;
     BOOL redNegotiated = FALSE;
 
-    if (redTable != NULL && STATUS_SUCCEEDED(hashTableGet(redTable, RTC_RED_CODEC_OPUS, &redPt)) && redPt != 0 &&
+    if (redTable != NULL && STATUS_SUCCEEDED(hashTableGet(redTable, RTC_CODEC_OPUS, &redPt)) && redPt != 0 &&
         STATUS_SUCCEEDED(hashTableGet(codecTable, RTC_CODEC_OPUS, &opusPt)) && opusPt != 0) {
         redNegotiated = TRUE;
     }
@@ -575,12 +578,12 @@ STATUS populateSingleMediaSection(PKvsPeerConnection pKvsPeerConnection, PKvsRtp
     }
     if (pRtcMediaStreamTrack->kind == MEDIA_STREAM_TRACK_KIND_VIDEO) {
         if (pRtcMediaStreamTrack->codec == RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE) {
-            retStatus = hashTableGet(pKvsPeerConnection->pRtxTable, RTC_RTX_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
+            retStatus = hashTableGet(pKvsPeerConnection->pRtxTable, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE,
                                      &rtxPayloadType);
         } else if (pRtcMediaStreamTrack->codec == RTC_CODEC_VP8) {
-            retStatus = hashTableGet(pKvsPeerConnection->pRtxTable, RTC_RTX_CODEC_VP8, &rtxPayloadType);
+            retStatus = hashTableGet(pKvsPeerConnection->pRtxTable, RTC_CODEC_VP8, &rtxPayloadType);
         } else if (pRtcMediaStreamTrack->codec == RTC_CODEC_H265) {
-            retStatus = hashTableGet(pKvsPeerConnection->pRtxTable, RTC_RTX_CODEC_H265, &rtxPayloadType);
+            retStatus = hashTableGet(pKvsPeerConnection->pRtxTable, RTC_CODEC_H265, &rtxPayloadType);
             payloadType = DEFAULT_PAYLOAD_H265;
         } else {
             retStatus = STATUS_HASH_KEY_NOT_PRESENT;
@@ -602,7 +605,7 @@ STATUS populateSingleMediaSection(PKvsPeerConnection pKvsPeerConnection, PKvsRtp
         // prefers it in tie-breaks). Otherwise emit just the codec's PT as before.
         UINT64 redPt = 0;
         BOOL emitRed = (pRtcMediaStreamTrack->codec == RTC_CODEC_OPUS && pKvsPeerConnection->pRedTable != NULL &&
-                        STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pRedTable, RTC_RED_CODEC_OPUS, &redPt)) && redPt != 0);
+                        STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pRedTable, RTC_CODEC_OPUS, &redPt)) && redPt != 0);
         if (emitRed) {
             amountWritten = SNPRINTF(pSdpMediaDescription->mediaName, SIZEOF(pSdpMediaDescription->mediaName),
                                      "audio 9 UDP/TLS/RTP/SAVPF %" PRId64 " %" PRId64, redPt, payloadType);
@@ -739,7 +742,7 @@ STATUS populateSingleMediaSection(PKvsPeerConnection pKvsPeerConnection, PKvsRtp
 
         // RED rtpmap + fmtp emitted BEFORE Opus so the peer prefers RED.
         UINT64 redPt = 0;
-        if (pKvsPeerConnection->pRedTable != NULL && STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pRedTable, RTC_RED_CODEC_OPUS, &redPt)) &&
+        if (pKvsPeerConnection->pRedTable != NULL && STATUS_SUCCEEDED(hashTableGet(pKvsPeerConnection->pRedTable, RTC_CODEC_OPUS, &redPt)) &&
             redPt != 0) {
             APPEND_SDP_ATTR("rtpmap", "%" PRId64 " red/48000/2", redPt);
             // fmtp lists the Opus PT repeated (N+1) times where N is the redundancy level.
@@ -758,7 +761,7 @@ STATUS populateSingleMediaSection(PKvsPeerConnection pKvsPeerConnection, PKvsRtp
         APPEND_SDP_ATTR("rtpmap", "%" PRId64 " " VP8_VALUE, payloadType);
 
         if (containRtx) {
-            CHK_STATUS(hashTableGet(pKvsPeerConnection->pRtxTable, RTC_RTX_CODEC_VP8, &rtxPayloadType));
+            CHK_STATUS(hashTableGet(pKvsPeerConnection->pRtxTable, RTC_CODEC_VP8, &rtxPayloadType));
             APPEND_SDP_ATTR("rtpmap", "%" PRId64 " " RTX_VALUE, rtxPayloadType);
             APPEND_SDP_ATTR("fmtp", "%" PRId64 " apt=%" PRId64 "", rtxPayloadType, payloadType);
         }

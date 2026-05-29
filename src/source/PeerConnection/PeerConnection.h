@@ -43,19 +43,6 @@ extern "C" {
 
 #define MAX_ACCESS_THREADS_WEBRTC_CLIENT_CONTEXT 50
 
-typedef enum {
-    RTC_RTX_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE = 1,
-    RTC_RTX_CODEC_VP8 = 2,
-    RTC_RTX_CODEC_H265 = 3,
-} RTX_CODEC;
-
-// Internal-only keys for the RED codec table, mirroring the RTX_CODEC pattern.
-// Not exposed publicly because RED is not a codec in the application sense — it is
-// a wire-format wrapper around Opus.
-typedef enum {
-    RTC_RED_CODEC_OPUS = 1, //!< RFC 2198 RED wrapping Opus
-} RED_CODEC;
-
 typedef struct {
     UINT64 localTimeKvs;
     UINT64 remoteTimeKvs;
@@ -157,7 +144,7 @@ typedef struct {
     // When answering this is populated from the remote offer
     PHashTable pRtxTable;
 
-    // RFC 2198 RED payload types keyed by RED_CODEC. Only populated when the
+    // RFC 2198 RED payload types keyed by RTC_CODEC. Only populated when the
     // transceiver-level negotiation enabled RED (both local useRedForOpus=TRUE
     // and remote advertised red/48000/2). Otherwise empty.
     PHashTable pRedTable;
