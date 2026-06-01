@@ -293,7 +293,7 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_HasRtxType)
     EXPECT_EQ(STATUS_SUCCESS, hashTableCreate(&pCodecTable));
     EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pCodecTable, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, 1));
     EXPECT_EQ(STATUS_SUCCESS, hashTableCreate(&pRtxTable));
-    EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pRtxTable, RTC_RTX_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, 2));
+    EXPECT_EQ(STATUS_SUCCESS, hashTablePut(pRtxTable, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE, 2));
     EXPECT_EQ(STATUS_SUCCESS, doubleListCreate(&pTransceivers));
     EXPECT_EQ(STATUS_SUCCESS, doubleListInsertItemHead(pTransceivers, (UINT64)(&transceiver)));
     EXPECT_EQ(STATUS_SUCCESS, setTransceiverPayloadTypes(pCodecTable, pRtxTable, NULL, pTransceivers));
@@ -337,6 +337,111 @@ TEST_F(SdpApiTest, setTransceiverPayloadTypes_HasRtxType_H265)
     freeRtpRollingBuffer(&transceiver.sender.packetBuffer);
     freeRetransmitter(&transceiver.sender.retransmitter);
     doubleListFree(pTransceivers);
+}
+
+// Regression test for the RTX (RFC 4588) apt= parser.
+//
+// The offer below is the video m= section from a real Chrome offer (see browser.sdp).
+// Chrome offers H264 (profile-level-id=42e01f, packetization-mode=1) as PT 119 and its
+// retransmission stream as PT 120 via:
+//     a=rtpmap:120 rtx/90000
+//     a=fmtp:120 apt=119
+//
+// setPayloadTypesFromOffer() is supposed to parse "apt=119" + "fmtp:120", associate RTX
+// PT 120 with the negotiated H264 codec, and store it in the rtxTable so the answerer:
+//   1. sets sender.rtxPayloadType = 120 (distinct from sender.payloadType = 119), and
+//   2. echoes "a=rtpmap:120 rtx/90000" / "a=fmtp:120 apt=119" in the answer.
+//
+// Because of the bug at SessionDescription.c:318 ((fmtpVal << 8u) & parsedPayloadType
+// should be | ), the packed value is always 0, the rtxTable is never populated, RTX is
+// silently dropped, and the retransmitter falls back to the (broken since #73) same-PT
+// path. These assertions describe the CORRECT behavior, so today they FAIL — that is the
+// proof the parser is broken. They go green once the parser is fixed.
+TEST_F(SdpApiTest, rtxParser_BrowserOffer_NegotiatesRtxForH264)
+{
+    auto offer = std::string(R"(v=0
+o=- 8132691852567001757 2 IN IP4 127.0.0.1
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=msid-semantic: WMS
+m=video 54245 UDP/TLS/RTP/SAVPF 96 97 109 114 119 120
+c=IN IP4 192.168.237.50
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:xfns
+a=ice-pwd:8RkNRVtLueU8ilfjCloTTeP0
+a=ice-options:trickle
+a=fingerprint:sha-256 D8:AD:E8:7A:0E:2A:56:80:A1:48:E4:6A:3F:9A:15:86:09:39:1D:F9:E5:81:A2:E2:D6:05:52:40:8C:90:10:CA
+a=setup:actpass
+a=mid:0
+a=extmap:4 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01
+a=recvonly
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:96 VP8/90000
+a=rtcp-fb:96 nack
+a=rtcp-fb:96 nack pli
+a=rtpmap:97 rtx/90000
+a=fmtp:97 apt=96
+a=rtpmap:109 H264/90000
+a=rtcp-fb:109 nack
+a=rtcp-fb:109 nack pli
+a=fmtp:109 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f
+a=rtpmap:114 rtx/90000
+a=fmtp:114 apt=109
+a=rtpmap:119 H264/90000
+a=rtcp-fb:119 nack
+a=rtcp-fb:119 nack pli
+a=fmtp:119 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
+a=rtpmap:120 rtx/90000
+a=fmtp:120 apt=119
+)");
+
+    assertLFAndCRLF((PCHAR) offer.c_str(), offer.size(), [](PCHAR sdp) {
+        PRtcPeerConnection pRtcPeerConnection = NULL;
+        PRtcRtpTransceiver pRtcRtpTransceiver = NULL;
+        RtcConfiguration rtcConfiguration;
+        RtcMediaStreamTrack rtcMediaStreamTrack;
+        RtcRtpTransceiverInit rtcRtpTransceiverInit;
+        RtcSessionDescriptionInit rtcSessionDescriptionInit;
+
+        initRtcConfiguration(&rtcConfiguration);
+        MEMSET(&rtcMediaStreamTrack, 0x00, SIZEOF(RtcMediaStreamTrack));
+        MEMSET(&rtcSessionDescriptionInit, 0x00, SIZEOF(RtcSessionDescriptionInit));
+        MEMSET(&rtcRtpTransceiverInit, 0x00, SIZEOF(RtcRtpTransceiverInit));
+
+        EXPECT_EQ(createPeerConnection(&rtcConfiguration, &pRtcPeerConnection), STATUS_SUCCESS);
+        EXPECT_EQ(addSupportedCodec(pRtcPeerConnection, RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE), STATUS_SUCCESS);
+
+        // Server streams video to the browser -> sendonly transceiver.
+        rtcRtpTransceiverInit.direction = RTC_RTP_TRANSCEIVER_DIRECTION_SENDONLY;
+        rtcMediaStreamTrack.kind = MEDIA_STREAM_TRACK_KIND_VIDEO;
+        rtcMediaStreamTrack.codec = RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE;
+        STRCPY(rtcMediaStreamTrack.streamId, "myKvsVideoStream");
+        STRCPY(rtcMediaStreamTrack.trackId, "myTrack");
+        EXPECT_EQ(addTransceiver(pRtcPeerConnection, &rtcMediaStreamTrack, &rtcRtpTransceiverInit, &pRtcRtpTransceiver), STATUS_SUCCESS);
+
+        STRCPY(rtcSessionDescriptionInit.sdp, (PCHAR) sdp);
+        rtcSessionDescriptionInit.type = SDP_TYPE_OFFER;
+        EXPECT_EQ(setRemoteDescription(pRtcPeerConnection, &rtcSessionDescriptionInit), STATUS_SUCCESS);
+
+        // The browser offered H264 as PT 119 and its RTX as PT 120 (apt=119).
+        PKvsRtpTransceiver pKvsRtpTransceiver = (PKvsRtpTransceiver) pRtcRtpTransceiver;
+        EXPECT_EQ(119, pKvsRtpTransceiver->sender.payloadType);
+        // BUG: today rtxPayloadType == payloadType (119) because the apt parser produces 0
+        // and never populates the rtxTable. Correct behavior is RTX PT 120.
+        EXPECT_NE(pKvsRtpTransceiver->sender.payloadType, pKvsRtpTransceiver->sender.rtxPayloadType)
+            << "RTX not negotiated: rtxPayloadType collapsed onto payloadType -> same-PT retransmit path";
+        EXPECT_EQ(120, pKvsRtpTransceiver->sender.rtxPayloadType);
+
+        // The answer must advertise the RTX stream back (this is what is missing in browser.sdp).
+        EXPECT_EQ(createAnswer(pRtcPeerConnection, &rtcSessionDescriptionInit), STATUS_SUCCESS);
+        EXPECT_PRED_FORMAT2(testing::IsSubstring, "rtx/90000", rtcSessionDescriptionInit.sdp);
+        EXPECT_PRED_FORMAT2(testing::IsSubstring, "apt=119", rtcSessionDescriptionInit.sdp);
+
+        closePeerConnection(pRtcPeerConnection);
+        freePeerConnection(&pRtcPeerConnection);
+    });
 }
 
 TEST_F(SdpApiTest, populateSingleMediaSection_TestTxSendRecv)

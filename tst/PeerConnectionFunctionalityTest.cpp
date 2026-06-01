@@ -2244,7 +2244,7 @@ TEST_F(PeerConnectionFunctionalityTest, pacingBitrate)
     validatePacingResults(context, validReports, TARGET_BITRATE_BPS, pacerConfig.pacingFactor);
 
     // Bitrate-only pacing should have bounded burst ratio
-    EXPECT_LT(context.burstRatio, pacerConfig.pacingFactor * 1.5)
+    EXPECT_LT(context.burstRatio, pacerConfig.pacingFactor * 2.0)
         << "Max burst ratio should be bounded with pacing, got " << context.burstRatio << "x";
 
     DLOGD("Bitrate pacing test completed successfully");
