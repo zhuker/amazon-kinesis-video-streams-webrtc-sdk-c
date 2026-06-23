@@ -1489,7 +1489,7 @@ TEST_F(PeerConnectionFunctionalityTest, pliRequestTriggersKeyFrame)
     Frame videoFrame;
     PliTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(PliTestContext));
 
@@ -1636,7 +1636,7 @@ TEST_F(PeerConnectionFunctionalityTest, firRequestTriggersKeyFrame)
     Frame videoFrame;
     FirTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(FirTestContext));
 
@@ -1778,7 +1778,7 @@ TEST_F(PeerConnectionFunctionalityTest, twccFeedbackTriggersBandwidthEstimation)
     Frame videoFrame;
     TwccTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(TwccTestContext));
 
@@ -1909,7 +1909,7 @@ TEST_F(PeerConnectionFunctionalityTest, twccReceiverGeneratesFeedback)
     Frame videoFrame;
     TwccReceiverTestContext context;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     MEMSET(&context, 0x00, SIZEOF(TwccReceiverTestContext));
 
@@ -2070,7 +2070,7 @@ void PeerConnectionFunctionalityTest::runPacingTest(const RtcPacerConfig& pacerC
     PRtcRtpTransceiver offerVideoTransceiver, answerVideoTransceiver;
     Frame videoFrame;
 
-    MEMSET(&configuration, 0x00, SIZEOF(RtcConfiguration));
+    initRtcConfiguration(&configuration);
     MEMSET(&videoFrame, 0x00, SIZEOF(Frame));
     context.feedbackCount = 0;
     context.totalPackets = 0;
